@@ -1,0 +1,3367 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tablero Comercial & Logística - SGA</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  :root {
+    --bg: #0f172a;
+    --card-bg: #1e293b;
+    --card-border: #334155;
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --accent: #38bdf8;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --purple: #a855f7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+  body { background: var(--bg); color: var(--text-main); padding: 16px; min-height: 100vh; }
+  .header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 12px; }
+  .header h1 { font-size: 1.4rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px; }
+  .header .subtitle { font-size: 0.85rem; color: var(--text-muted); }
+  .badge-live { background: #064e3b; color: #34d399; font-size: 0.75rem; padding: 4px 10px; border-radius: 9999px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+  .badge-live::before { content: ""; width: 8px; height: 8px; background: #34d399; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.8); } 100% { opacity: 1; transform: scale(1); } }
+
+  .access-banner { background: #431407; border: 1px solid var(--warning); color: #fed7aa; font-size: 0.82rem; line-height: 1.45; padding: 10px 14px; border-radius: 10px; margin-bottom: 16px; display: flex; gap: 8px; align-items: flex-start; }
+  .access-banner b { color: #fff; }
+
+  .login-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 5000; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .login-overlay.hidden { display: none; }
+  .login-box { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 14px; padding: 28px; width: 100%; max-width: 360px; }
+  .login-box h2 { color: #fff; font-size: 1.1rem; margin-bottom: 4px; }
+  .login-box .sub { color: var(--text-muted); font-size: 0.8rem; margin-bottom: 18px; }
+  .login-field { margin-bottom: 12px; }
+  .login-field label { display: block; font-size: 0.75rem; color: var(--text-muted); font-weight: 600; margin-bottom: 4px; }
+  .login-field input { width: 100%; background: #0f172a; border: 1px solid var(--card-border); color: #fff; padding: 9px 10px; border-radius: 8px; font-size: 0.88rem; outline: none; }
+  .login-field input:focus { border-color: var(--accent); }
+  .login-btn { width: 100%; background: var(--accent); color: #0f172a; border: none; border-radius: 8px; padding: 10px; font-weight: 700; font-size: 0.9rem; cursor: pointer; margin-top: 6px; }
+  .login-btn:disabled { opacity: 0.6; cursor: wait; }
+  .login-error { color: #f87171; font-size: 0.78rem; margin-top: 10px; min-height: 1em; }
+  .app-root.hidden { display: none; }
+  .logout-link { background: transparent; border: 1px solid #475569; color: #94a3b8; font-size: 0.72rem; padding: 5px 10px; border-radius: 6px; cursor: pointer; margin-left: 10px; }
+  .logout-link:hover { color: #fff; border-color: var(--accent); }
+  .user-pill { font-size: 0.72rem; color: var(--text-muted); }
+
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .kpi-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 14px; position: relative; overflow: hidden; cursor: pointer; transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; user-select: none; }
+  .kpi-card .label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
+  .kpi-card .value { font-size: 1.6rem; font-weight: 700; margin-top: 4px; }
+  .kpi-card .sub { font-size: 0.72rem; color: var(--text-muted); margin-top: 4px; }
+  .kpi-card.ready { border-left: 4px solid var(--success); }
+  .kpi-card.urgent { border-left: 4px solid var(--danger); }
+  .kpi-card.process { border-left: 4px solid var(--warning); }
+  .kpi-card.rep { border-left: 4px solid var(--purple); }
+  .kpi-card.moldeo { border-left: 4px solid var(--accent); }
+  .kpi-card.cancel { border-left: 4px solid #64748b; }
+  .kpi-card.prep { border-left: 4px solid #2dd4bf; }
+  .kpi-card.priority-combo { cursor: default; }
+  .kpi-card.priority-combo:hover { transform: none; box-shadow: none; border-color: var(--card-border); }
+  .priority-row { display: flex; justify-content: space-between; align-items: baseline; padding: 3px 6px; margin: 4px -6px 0; border-radius: 6px; cursor: pointer; transition: background 0.15s; }
+  .priority-row:hover { background: rgba(255,255,255,0.06); }
+  .priority-row .priority-label { font-size: 0.78rem; font-weight: 600; color: var(--text-muted); }
+  .priority-row .priority-value { font-size: 1.25rem; font-weight: 700; }
+  .priority-row.active { background: rgba(56, 189, 248, 0.14); box-shadow: inset 0 0 0 1px var(--accent); }
+  .kpi-card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,0.35); border-color: #64748b; }
+  .kpi-card.active { box-shadow: 0 0 0 2px var(--accent), 0 8px 20px rgba(56, 189, 248, 0.3); }
+  .kpi-card.ready.active { box-shadow: 0 0 0 2px var(--success), 0 8px 20px rgba(16, 185, 129, 0.3); }
+  .kpi-card.urgent.active { box-shadow: 0 0 0 2px var(--danger), 0 8px 20px rgba(239, 68, 68, 0.3); }
+  .kpi-card.process.active { box-shadow: 0 0 0 2px var(--warning), 0 8px 20px rgba(245, 158, 11, 0.3); }
+  .kpi-card.rep.active { box-shadow: 0 0 0 2px var(--purple), 0 8px 20px rgba(168, 85, 247, 0.3); }
+
+  .filters-section { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 14px; margin-bottom: 20px; }
+  .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .filter-group label { display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
+  .filter-group select, .filter-group input { width: 100%; background: #0f172a; border: 1px solid var(--card-border); color: #fff; padding: 8px 10px; border-radius: 8px; font-size: 0.85rem; outline: none; }
+  .filter-group select:focus, .filter-group input:focus { border-color: var(--accent); }
+
+  .quick-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid #334155; }
+  .chip { background: #334155; color: #cbd5e1; font-size: 0.75rem; padding: 5px 12px; border-radius: 6px; cursor: pointer; border: none; font-weight: 500; transition: 0.2s; }
+  .chip:hover { background: #475569; color: #fff; }
+  .chip.active { background: var(--accent); color: #0f172a; font-weight: 700; }
+  .chip.ready-active { background: var(--success); color: #0f172a; font-weight: 700; }
+  .chip.rep-active { background: var(--purple); color: #fff; }
+  .chip.alert-active { background: var(--danger); color: #fff; }
+  .chip-clear { margin-left: auto; background: transparent; border: 1px solid #475569; color: #94a3b8; }
+  .chip-clear:hover { background: #334155; color: #fff; border-color: var(--accent); }
+
+  .result-info { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px; padding: 0 4px; gap: 8px; }
+  .result-info b { color: var(--accent); }
+  .view-toggle-btn { background: #1e293b; color: #cbd5e1; border: 1px solid #475569; padding: 5px 12px; border-radius: 8px; font-size: 0.75rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s; }
+  .view-toggle-btn:hover { background: #334155; color: #fff; }
+
+  .split-layout { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+  .split-layout.split-active { grid-template-columns: 340px 1fr; }
+  @media (max-width: 1080px) { .split-layout.split-active { grid-template-columns: 1fr; } }
+
+  .window-panel { display: none; background: var(--card-bg); border: 1px solid rgba(168, 85, 247, 0.4); border-radius: 12px; padding: 14px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.25); position: sticky; top: 16px; animation: fadeInSlide 0.3s ease; }
+  .split-layout.split-active .window-panel { display: block; }
+  @keyframes fadeInSlide { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); } }
+
+  .badge-mat { font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; font-weight: 700; letter-spacing: 0.3px; display: inline-block; margin-top: 3px; }
+  .badge-sae { background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.35); }
+  .badge-nodular { background: rgba(249, 115, 22, 0.15); color: #fb923c; border: 1px solid rgba(249, 115, 22, 0.35); }
+  .mat-subfilter-bar { display: flex; gap: 6px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #334155; }
+  .mat-subbtn { flex: 1; background: #0f172a; border: 1px solid #334155; color: var(--text-muted); border-radius: 6px; padding: 5px 4px; font-size: 0.68rem; font-weight: 600; cursor: pointer; text-align: center; transition: all 0.2s; }
+  .mat-subbtn:hover { border-color: var(--accent); color: #fff; }
+  .mat-subbtn.active { background: rgba(56, 189, 248, 0.15); border-color: var(--accent); color: #38bdf8; }
+
+  .window-title { font-size: 0.82rem; font-weight: 700; color: #e9d5ff; display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #334155; }
+  .window-title .badge { background: rgba(168, 85, 247, 0.25); color: #c084fc; font-size: 0.68rem; padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(168, 85, 247, 0.4); }
+  .model-card { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; transition: all 0.2s ease; display: flex; justify-content: space-between; align-items: center; }
+  .model-card:hover { border-color: var(--accent); transform: translateX(3px); background: #1e293b; }
+  .model-card.active { border-color: var(--purple); background: rgba(168, 85, 247, 0.18); box-shadow: 0 0 0 1px var(--purple); }
+  .model-name { font-size: 0.76rem; font-weight: 600; color: #f1f5f9; }
+  .model-sub { font-size: 0.68rem; color: var(--text-muted); margin-top: 2px; }
+  .model-stats { text-align: right; font-variant-numeric: tabular-nums; }
+  .model-stats .qty { font-size: 1.05rem; font-weight: 700; color: #c084fc; }
+  .model-stats .kg { font-size: 0.7rem; color: var(--accent); font-weight: 600; }
+
+  .table-container { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; overflow-x: auto; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; text-align: left; }
+  th { background: #1e293b; color: #cbd5e1; padding: 12px 10px; font-weight: 600; border-bottom: 2px solid var(--card-border); white-space: nowrap; cursor: pointer; user-select: none; }
+  th:hover { color: var(--accent); }
+  td { padding: 10px; border-bottom: 1px solid #334155; vertical-align: middle; }
+  tr:hover td { background: rgba(56, 189, 248, 0.04); }
+
+  .col-cliente { width: 22%; min-width: 190px; }
+  .col-comprobante { width: 13%; min-width: 120px; }
+  .col-fecha { width: 9%; min-width: 85px; }
+  .col-alerta { width: 11%; min-width: 115px; }
+  .col-descripcion { width: 28%; min-width: 240px; }
+  .mobile-oc-mat { display: none; }
+  .col-pend { width: 5%; min-width: 60px; text-align: right; }
+  .col-kilos { width: 8%; min-width: 95px; text-align: right; }
+  .col-estado { width: 13%; min-width: 135px; }
+  .col-flujo { width: 7%; min-width: 80px; max-width: 95px; text-align: center; }
+  .col-prep { width: 12%; min-width: 150px; }
+  .col-prioridad { width: 8%; min-width: 110px; }
+
+  tr.row-priority-alta { box-shadow: inset 4px 0 0 var(--danger); }
+  tr.row-priority-alta td:first-child { background: rgba(239, 68, 68, 0.06); }
+  tr.row-priority-media { box-shadow: inset 4px 0 0 var(--warning); }
+  .prioridad-select { background: #0f172a; border: 1px solid var(--card-border); color: #fff; border-radius: 6px; padding: 5px 6px; font-size: 0.76rem; max-width: 110px; }
+  .prioridad-select.prioridad-alta { border-color: var(--danger); color: #f87171; font-weight: 700; }
+  .prioridad-select.prioridad-media { border-color: var(--warning); color: #fbbf24; font-weight: 700; }
+
+  tr.row-prepared td { opacity: 0.45; }
+  .prep-cell { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+  .prep-input { width: 54px; background: #0f172a; border: 1px solid var(--card-border); color: #fff; border-radius: 6px; padding: 5px 4px; font-size: 0.8rem; text-align: right; }
+  .prep-input:focus { border-color: var(--accent); outline: none; }
+  .prep-of { font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; }
+  .prep-btn { background: var(--accent); color: #0f172a; border: none; border-radius: 6px; padding: 6px 10px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
+  .prep-btn:hover { background: #60c7fb; }
+  .prep-btn:disabled { opacity: 0.5; cursor: wait; }
+  .prep-na { color: var(--text-muted); font-size: 0.78rem; }
+  .desp-btn { background: #a855f7; color: #fff; border: none; border-radius: 6px; padding: 6px 10px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
+  .desp-btn:hover { background: #c084fc; }
+  .desp-btn:disabled { opacity: 0.5; cursor: wait; }
+
+  .pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 6px; font-size: 0.72rem; font-weight: 600; white-space: nowrap; }
+  .pill-ready { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); font-weight: 700; }
+  .pill-warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+  .pill-danger { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+  .pill-info { background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); }
+  .pill-despachado { background: rgba(168, 85, 247, 0.18); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); font-weight: 700; }
+
+  .pipeline { display: inline-flex; gap: 3px; align-items: center; justify-content: center; }
+  .pipe-step { width: 13px; height: 13px; border-radius: 3px; font-size: 0.6rem; display: flex; align-items: center; justify-content: center; font-weight: 700; }
+  .pipe-si { background: #10b981; color: #fff; }
+  .pipe-cur { background: #f59e0b; color: #000; animation: blink 1.5s infinite; }
+  .pipe-wait { background: #475569; color: #94a3b8; }
+  .pipe-no { background: #ef4444; color: #fff; }
+  .pipe-manual { background: rgba(56, 189, 248, 0.22); color: #38bdf8; border: 1px dashed #38bdf8; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  .sticky-hscroll-wrap { position: fixed; bottom: 0; z-index: 60; display: none; pointer-events: none; }
+  .sticky-hscroll-wrap.visible { display: block; pointer-events: auto; }
+  .sticky-hscroll { overflow-x: auto; overflow-y: hidden; height: 18px; background: #16212f; border: 1px solid #3f4e68; border-bottom: none; border-radius: 8px 8px 0 0; box-shadow: 0 -4px 14px rgba(0,0,0,0.45); scrollbar-width: thin; scrollbar-color: #8392ab rgba(255,255,255,0.05); }
+  .sticky-hscroll::-webkit-scrollbar { height: 12px; }
+  .sticky-hscroll::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); }
+  .sticky-hscroll::-webkit-scrollbar-thumb { background: #8392ab; border-radius: 6px; border: 2px solid #16212f; }
+  .sticky-hscroll::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+  .sticky-hscroll-inner { height: 1px; }
+  @media (max-width: 760px) { .sticky-hscroll-wrap { display: none !important; } }
+
+  .tag-rep { background: rgba(168, 85, 247, 0.22); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.45); padding: 2px 6px; border-radius: 4px; font-size: 0.68rem; font-weight: 700; display: inline-block; margin-bottom: 3px; }
+  .tag-unid { background: rgba(148, 163, 184, 0.2); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.4); padding: 2px 6px; border-radius: 4px; font-size: 0.68rem; display: inline-block; margin-bottom: 3px; }
+  .text-dim { color: var(--text-muted); font-size: 0.72rem; }
+  .font-bold { font-weight: 600; color: #fff; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .kpi-card.desp { border-left: 4px solid #a855f7; }
+  .kpi-card.hoja { border-left: 4px solid #fb923c; }
+  .desp-day-header { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin: 16px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--card-border); }
+  .desp-day-header:first-child { margin-top: 0; }
+  .desp-day-title { font-weight: 700; color: #fff; font-size: 0.85rem; }
+  .desp-day-sub { font-size: 0.72rem; color: var(--text-muted); }
+
+  .kpi-card.stock { border-left: 4px solid #818cf8; }
+  .stock-section { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 16px; margin-bottom: 20px; }
+  .stock-card { background: #0f172a; border: 1px solid var(--card-border); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .stock-card .info .name { font-weight: 600; color: #f1f5f9; font-size: 0.85rem; }
+  .stock-card .info .sub { font-size: 0.72rem; color: var(--text-muted); margin-top: 2px; }
+  .stock-card .qty { font-size: 1.05rem; font-weight: 700; color: #a5b4fc; white-space: nowrap; }
+  .stock-card .qty .kg { font-size: 0.68rem; color: var(--text-muted); font-weight: 500; }
+  .stock-card .actions { display: flex; gap: 6px; }
+  .stock-card .actions button { background: #1e293b; border: 1px solid #475569; color: #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 0.72rem; font-weight: 600; cursor: pointer; }
+  .stock-card .actions button:hover { background: #334155; color: #fff; }
+
+  .stock-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1100; align-items: center; justify-content: center; padding: 16px; }
+  .stock-overlay.open { display: flex; }
+  .stock-dialog { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 14px; width: 100%; max-width: 420px; max-height: 85vh; overflow-y: auto; padding: 18px; }
+  .stock-dialog h3 { font-size: 0.95rem; margin-bottom: 12px; color: #fff; }
+  .stock-field { margin-bottom: 10px; }
+  .stock-field label { display: block; font-size: 0.72rem; color: var(--text-muted); font-weight: 600; margin-bottom: 4px; }
+  .stock-field input, .stock-field select { width: 100%; background: #0f172a; border: 1px solid var(--card-border); color: #fff; padding: 8px 10px; border-radius: 8px; font-size: 0.85rem; }
+  .stock-field input:focus, .stock-field select:focus { border-color: var(--accent); outline: none; }
+  .stock-buscar-resultados { margin-top: 6px; max-height: 180px; overflow-y: auto; border: 1px solid var(--card-border); border-radius: 8px; display: none; }
+  .stock-buscar-resultados.open { display: block; }
+  .stock-buscar-item { padding: 8px 10px; cursor: pointer; border-bottom: 1px solid var(--card-border); font-size: 0.78rem; }
+  .stock-buscar-item:last-child { border-bottom: none; }
+  .stock-buscar-item:hover { background: #1e293b; }
+  .stock-buscar-item .cod { color: #a5b4fc; font-weight: 700; margin-right: 6px; }
+  .stock-buscar-item .desc { color: #cbd5e1; }
+  .stock-actions { display: flex; gap: 8px; margin-top: 14px; }
+  .stock-actions button { flex: 1; padding: 10px; border-radius: 8px; border: none; font-weight: 700; cursor: pointer; font-size: 0.85rem; }
+  .stock-actions button:disabled { opacity: 0.6; cursor: wait; }
+  .stock-btn-primary { background: var(--accent); color: #0f172a; }
+  .stock-btn-cancel { background: #334155; color: #fff; }
+
+  .hoja-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1200; align-items: center; justify-content: center; padding: 16px; }
+  .hoja-overlay.open { display: flex; }
+  .hoja-dialog { background: var(--card-bg); border: 1px solid rgba(168,85,247,0.4); border-radius: 14px; width: 100%; max-width: 720px; max-height: 88vh; overflow-y: auto; padding: 20px; }
+  .hoja-dialog h3 { font-size: 1rem; color: #fff; margin-bottom: 4px; }
+  .hoja-sub { font-size: 0.78rem; color: var(--text-muted); margin-bottom: 16px; }
+  .hoja-field-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+  @media (max-width: 640px) { .hoja-field-row { grid-template-columns: 1fr; } }
+  .hoja-field label { display: block; font-size: 0.7rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; margin-bottom: 4px; }
+  .hoja-field input { width: 100%; background: #0f172a; border: 1px solid var(--card-border); color: #fff; padding: 8px 10px; border-radius: 7px; font-size: 0.85rem; }
+  .hoja-field input:focus { border-color: var(--accent); outline: none; }
+  .hoja-item-block { background: #0f172a; border: 1px solid var(--card-border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+  .hoja-item-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; gap: 10px; flex-wrap: wrap; }
+  .hoja-item-head .nom { font-weight: 700; font-size: 0.86rem; color: #fff; }
+  .hoja-item-head .cod { color: var(--text-muted); font-size: 0.72rem; white-space: nowrap; }
+  .hoja-item-fields { display: grid; grid-template-columns: 140px 1fr; gap: 10px; align-items: center; }
+  .hoja-item-fields label { font-size: 0.78rem; color: #cbd5e1; }
+  .hoja-item-fields input { background: #0f172a; border: 1px solid var(--card-border); color: #fff; padding: 7px 9px; border-radius: 6px; font-size: 0.85rem; }
+  .hoja-item-fields input:focus { border-color: var(--accent); outline: none; }
+  .hoja-kg-ref { font-size: 0.74rem; color: var(--text-muted); margin-top: 4px; }
+  .hoja-kg-ref b { color: #fbbf24; }
+  .hoja-renglon { background: #0b1220; border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+  .hoja-renglon-fields { display: grid; grid-template-columns: 90px 1fr 120px 30px; gap: 8px; align-items: end; }
+  @media (max-width: 640px) { .hoja-renglon-fields { grid-template-columns: 1fr 1fr; } }
+  .hoja-field-mini label { display: block; font-size: 0.68rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; margin-bottom: 3px; }
+  .hoja-field-mini input { width: 100%; background: #0f172a; border: 1px solid var(--card-border); color: #fff; padding: 6px 8px; border-radius: 6px; font-size: 0.82rem; box-sizing: border-box; }
+  .hoja-field-mini input:focus { border-color: var(--accent); outline: none; }
+  .hoja-renglon-del { background: transparent; border: 1px solid #475569; color: #f87171; width: 30px; height: 30px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; justify-self: start; }
+  .hoja-renglon-del:hover { background: #334155; }
+  .hoja-btn-add-renglon { background: transparent; border: 1px dashed var(--accent); color: var(--accent); padding: 6px 10px; border-radius: 7px; font-size: 0.74rem; cursor: pointer; margin-top: 2px; }
+  .hoja-btn-add-renglon:hover { background: rgba(56,189,248,0.12); }
+  .hoja-renglon-total { font-size: 0.74rem; color: var(--text-muted); margin-top: 8px; }
+  .hoja-renglon-total.over { color: #f87171; font-weight: 700; }
+  .hoja-actions { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+  .hoja-btn { padding: 10px 16px; border-radius: 8px; border: none; font-weight: 700; cursor: pointer; font-size: 0.85rem; }
+  .hoja-btn-confirm { background: #22c55e; color: #052e14; }
+  .hoja-btn-confirm:hover { background: #4ade80; }
+  .hoja-btn-primary { background: var(--accent); color: #0f172a; }
+  .hoja-btn-secondary { background: #334155; color: #fff; }
+  .hoja-btn:disabled { opacity: 0.6; cursor: wait; }
+  .hoja-confirmed-badge { display: flex; align-items: center; gap: 6px; background: rgba(34,197,94,0.15); border: 1px solid #22c55e; color: #4ade80; padding: 10px 14px; border-radius: 8px; font-weight: 700; font-size: 0.85rem; }
+  .hoja-confirm-check { flex-basis: 100%; background: rgba(251,191,36,0.12); border: 1px solid var(--warning); color: #fed7aa; padding: 10px 14px; border-radius: 8px; font-size: 0.82rem; line-height: 1.4; }
+  .hoja-note { font-size: 0.74rem; color: var(--text-muted); margin-top: 10px; line-height: 1.5; }
+  .hoja-note b { color: #fbbf24; }
+
+  .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(16px); z-index: 2000; background: #132033; border: 1px solid #334155; color: #f1f5f9; padding: 10px 18px; border-radius: 9999px; font-size: 0.85rem; font-weight: 600; box-shadow: 0 8px 24px rgba(0,0,0,0.45); opacity: 0; pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease; max-width: 90vw; text-align: center; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.success { border-color: #22c55e; }
+  .toast.success::before { content: '✅ '; }
+  .toast.error { border-color: var(--danger); }
+  .toast.error::before { content: '⚠️ '; }
+  @media (max-width: 760px) { .toast { bottom: 14px; font-size: 0.8rem; padding: 9px 14px; } }
+
+  @media (max-width: 760px) {
+    body { padding: 10px; }
+    .header h1 { font-size: 1.1rem; }
+    .header .subtitle { font-size: 0.75rem; }
+    .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .kpi-card { padding: 10px; }
+    .kpi-card .label { font-size: 0.66rem; }
+    .kpi-card .value { font-size: 1.25rem; }
+    .kpi-card .sub { font-size: 0.64rem; }
+    .filter-grid { grid-template-columns: 1fr; }
+    .filter-group select, .filter-group input { min-height: 40px; font-size: 0.9rem; }
+    .quick-chips { gap: 6px; }
+    .chip { padding: 8px 12px; font-size: 0.72rem; }
+    .result-info { flex-direction: column; align-items: flex-start; }
+    .view-toggle-btn { width: 100%; justify-content: center; padding: 8px 12px; }
+
+    .table-container { background: transparent; border: none; box-shadow: none; overflow-x: visible; }
+    table, thead, tbody, tr, th, td { display: block; width: 100%; }
+    thead { display: none; }
+    tbody { display: flex; flex-direction: column; gap: 8px; }
+    tr {
+      background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 10px;
+      padding: 10px 34px 10px 12px; position: relative; cursor: pointer;
+      display: grid; grid-template-columns: 1fr auto; column-gap: 10px; row-gap: 2px;
+    }
+    tr:hover td { background: transparent; }
+    tr.row-prepared { opacity: 0.55; }
+    tr::after { content: '›'; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 1.3rem; line-height: 1; }
+    td.col-prioridad, td.col-comprobante, td.col-alerta, td.col-kilos, td.col-estado, td.col-flujo, td.col-prep { display: none; }
+    td { padding: 0; border: none; text-align: left; }
+    td::before { display: none; }
+    td.col-cliente { grid-column: 1; grid-row: 1; }
+    td.col-cliente .font-bold { font-size: 0.9rem; }
+    td.col-cliente .text-dim { display: none; }
+    td.col-fecha { grid-column: 2; grid-row: 1; text-align: right; }
+    td.col-fecha .font-bold { font-size: 0.74rem; color: var(--text-muted); font-weight: 600; }
+    td.col-descripcion { grid-column: 1; grid-row: 2; }
+    td.col-descripcion > div:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.82rem; }
+    td.col-descripcion .text-dim { display: none; }
+    td.col-descripcion .mobile-oc-mat { display: block; font-size: 0.72rem; color: var(--text-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    td.col-pend { grid-column: 2; grid-row: 2; text-align: right; font-size: 0.78rem; color: var(--text-muted); }
+    td.col-pend::before { content: 'Pend: '; display: inline; font-size: inherit; color: inherit; text-transform: none; font-weight: 500; }
+    tr.row-priority-alta { padding-left: 14px; }
+    tr.row-priority-media { padding-left: 14px; }
+
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000; align-items: flex-end; justify-content: center; }
+    .modal-overlay.open { display: flex; }
+    .modal-panel { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 16px 16px 0 0; width: 100%; max-width: 480px; max-height: 85vh; overflow-y: auto; padding: 16px; }
+    .modal-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--card-border); }
+    .modal-header .modal-title { font-weight: 700; font-size: 0.95rem; color: #fff; }
+    .modal-close { background: #334155; border: none; color: #fff; width: 28px; height: 28px; min-width: 28px; border-radius: 50%; font-size: 0.9rem; cursor: pointer; flex-shrink: 0; }
+    .modal-row { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid #27303f; font-size: 0.85rem; }
+    .modal-row:last-child { border-bottom: none; }
+    .modal-row .k { color: var(--text-muted); font-weight: 600; font-size: 0.7rem; text-transform: uppercase; flex-shrink: 0; padding-top: 1px; }
+    .modal-row .v { text-align: right; color: #f1f5f9; }
+    .modal-section-title { margin-top: 14px; margin-bottom: 6px; font-size: 0.7rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; }
+    .group-item { background: #0f172a; border: 1px solid var(--card-border); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
+    .group-item:active { background: #1e293b; }
+  }
+
+  @media (min-width: 761px) {
+    .modal-overlay { display: none !important; }
+  }
+</style>
+</head>
+<body>
+
+  <div class="login-overlay" id="login-overlay">
+    <div class="login-box">
+      <h2>📋 Tablero Comercial AMRO</h2>
+      <div class="sub">Ingresá con tu cuenta para ver el tablero.</div>
+      <div class="login-field">
+        <label>Email</label>
+        <input type="email" id="login-email" autocomplete="username" placeholder="nombre@amro.com">
+      </div>
+      <div class="login-field">
+        <label>Contraseña</label>
+        <input type="password" id="login-password" autocomplete="current-password">
+      </div>
+      <button class="login-btn" id="login-btn" onclick="doLogin()">Ingresar</button>
+      <div class="login-error" id="login-error"></div>
+    </div>
+  </div>
+
+  <div class="app-root hidden" id="app-root">
+
+  <div class="header">
+    <div>
+      <h1>📋 Tablero Comercial & Control de Despachos</h1>
+      <div class="subtitle">Monitoreo por áreas de fabricación, cálculo de Kg y anticipación comercial — datos de SGA (Perfil Planeamiento, desde 01/02/2026)</div>
+    </div>
+    <div style="display:flex; align-items:center;">
+      <span class="badge-live" id="asof-badge">ACTUALIZADO</span>
+      <span class="user-pill" id="user-pill" style="margin-left:10px;"></span>
+      <button class="logout-link" onclick="doLogout()">Cerrar sesión</button>
+    </div>
+  </div>
+
+  <div class="access-banner" id="access-banner" style="display:none;"></div>
+
+  <div class="kpi-grid">
+    <div class="kpi-card active" id="card-all" onclick="setFilterFromCard('all')" title="Click para ver todas las órdenes">
+      <div class="label">Total Órdenes / Ítems</div>
+      <div class="value" id="kpi-total-items">0</div>
+      <div class="sub" id="kpi-total-kg"></div>
+    </div>
+    <div class="kpi-card moldeo" id="card-moldeo" onclick="setFilterFromCard('moldeo')" title="Click para filtrar En Moldeo / Fusión">
+      <div class="label">🔥 En Moldeo / Fusión</div>
+      <div class="value" id="kpi-moldeo" style="color: #38bdf8;">0</div>
+      <div class="sub" id="kpi-moldeo-kg"></div>
+    </div>
+    <div class="kpi-card ready" id="card-listas" onclick="setFilterFromCard('listas')" title="Click para filtrar En Terminación">
+      <div class="label">🔧 En Terminación (Fundidas)</div>
+      <div class="value" id="kpi-completed" style="color: #34d399;">0</div>
+      <div class="sub" id="kpi-listas-kg"></div>
+    </div>
+    <div class="kpi-card prep" id="card-preparado" onclick="setFilterFromCard('preparado')" title="Click para filtrar Preparado para Despachar">
+      <div class="label">📦 Preparado para Despachar</div>
+      <div class="value" id="kpi-preparado" style="color: #2dd4bf;">0</div>
+      <div class="sub" id="kpi-preparado-kg"></div>
+    </div>
+    <div class="kpi-card hoja" id="card-armar_hoja" style="display:none;" onclick="setFilterFromCard('armar_hoja')" title="Solo Inspección Final: armar una Hoja de Pesada a partir de piezas ya preparadas">
+      <div class="label">🧾 Armar Hoja de Pesada</div>
+      <div class="value" id="kpi-armar-hoja" style="color: #fb923c;">0</div>
+      <div class="sub">Piezas preparadas listas para pesar — pantalla de Inspección Final</div>
+    </div>
+    <div class="kpi-card desp" id="card-despachado" onclick="setFilterFromCard('despachado')" title="Click para ver el historial de Despachos">
+      <div class="label">🚚 Despachado</div>
+      <div class="value" id="kpi-despachado" style="color: #c084fc;">0</div>
+      <div class="sub" id="kpi-despachado-kg"></div>
+    </div>
+    <div class="kpi-card process" id="card-proceso" onclick="setFilterFromCard('proceso')" title="Click para filtrar Pendiente previo a Moldeo">
+      <div class="label">⏳ Pendiente Previo a Moldeo</div>
+      <div class="value" id="kpi-in-progress" style="color: #fbbf24;">0</div>
+      <div class="sub" id="kpi-progress-kg"></div>
+    </div>
+    <div class="kpi-card stock" id="card-stock" onclick="setFilterFromCard('stock')" title="Click para ver y gestionar el Stock sin pedido">
+      <div class="label">📦 Stock (sin pedido)</div>
+      <div class="value" id="kpi-stock" style="color: #a5b4fc;">0</div>
+      <div class="sub" id="kpi-stock-kg">Piezas fabricadas sin pedido — no suman al Total de arriba</div>
+    </div>
+    <div class="kpi-card rep" id="card-repuestos" onclick="setFilterFromCard('repuestos')" title="Click para ver resumen en 2 ventanas y filtrar Repuestos">
+      <div class="label">⚙️ Repuestos Reales (Código R)</div>
+      <div class="value" id="kpi-repuestos" style="color: #c084fc;">0</div>
+      <div class="sub" id="kpi-rep-kg"></div>
+    </div>
+    <div class="kpi-card urgent" id="card-vencidas" onclick="setFilterFromCard('vencidas')" title="Click para filtrar Vencidas en Fabricación">
+      <div class="label">⚠️ Vencidas en Fabricación</div>
+      <div class="value" id="kpi-urgent" style="color: #f87171;">0</div>
+      <div class="sub">Alerta sobre ítems ya contados arriba — no suma aparte</div>
+    </div>
+    <div class="kpi-card urgent" id="card-vencidas_term" onclick="setFilterFromCard('vencidas_term')" title="Click para filtrar Vencidas en Terminación">
+      <div class="label">⚠️ Vencidas en Terminación</div>
+      <div class="value" id="kpi-urgent-term" style="color: #f87171;">0</div>
+      <div class="sub">Fundidas, esperando en Terminación, con fecha ya pasada — ya contadas arriba, no suma aparte</div>
+    </div>
+    <div class="kpi-card priority-combo" title="La fija Planeamiento — tocá Alta o Media para filtrar cada una por separado">
+      <div class="label">🚩 Prioridades</div>
+      <div class="priority-row" id="card-prioridad_alta" onclick="setFilterFromCard('prioridad_alta')">
+        <span class="priority-label">🔴 Alta</span>
+        <span class="priority-value" id="kpi-prioridad" style="color: #f87171;">0</span>
+      </div>
+      <div class="priority-row" id="card-prioridad_media" onclick="setFilterFromCard('prioridad_media')">
+        <span class="priority-label">🟡 Media</span>
+        <span class="priority-value" id="kpi-prioridad-media" style="color: #fbbf24;">0</span>
+      </div>
+      <div class="sub" id="kpi-prioridad-kg">La fija Planeamiento — ya incluido arriba, no suma aparte</div>
+      <div class="sub" id="kpi-prioridad-media-kg" style="margin-top:2px;"></div>
+    </div>
+  </div>
+
+  <div class="filters-section">
+    <div class="filter-grid">
+      <div class="filter-group">
+        <label>Buscar (Cliente, Producto, OC, Código, Comentario)</label>
+        <input type="text" id="filter-search" placeholder="Escribe para buscar..." oninput="applyFilters()">
+      </div>
+      <div class="filter-group">
+        <label>Cliente</label>
+        <select id="filter-client" onchange="applyFilters()">
+          <option value="">Todos los Clientes</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Material</label>
+        <select id="filter-material" onchange="applyFilters()">
+          <option value="">Todos los Materiales</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Estado / Área Actual</label>
+        <select id="filter-area" onchange="applyFilters()">
+          <option value="">Todas las Áreas</option>
+          <option value="En Terminación">🔧 En Terminación (pendiente prep.)</option>
+          <option value="__PREPARADO__">📦 Preparado para Despachar</option>
+          <option value="Moldeo / Fusión">🔥 Moldeo / Fusión</option>
+          <option value="Pendiente Ingeniería">En Ingeniería / Producto</option>
+          <option value="No Planificado (Moldeo)">No Planificado (Moldeo)</option>
+          <option value="Pendiente Adm/Finanzas">En Adm. y Finanzas</option>
+          <option value="Cancelado">Cancelados (NO)</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Alerta / Fecha de Entrega</label>
+        <select id="filter-urgency" onchange="applyFilters()">
+          <option value="">Todas las Fechas</option>
+          <option value="EN TERMINACIÓN">🔧 En Terminación</option>
+          <option value="VENCIDA (FÁBRICA)">⚠️ Vencidas en Fabricación</option>
+          <option value="URGENTE (<=7d)">🟡 Próximas 7 días</option>
+          <option value="PRÓXIMA (<=15d)">🔵 Próximas 15 días</option>
+          <option value="EN FECHA">🟢 En Fecha de Fabricación</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Rango de Kg</label>
+        <select id="filter-kg" onchange="applyFilters()">
+          <option value="">Todos los pesos</option>
+          <option value="0-50">Hasta 50 Kg</option>
+          <option value="50-200">50 a 200 Kg</option>
+          <option value="200-1000">200 a 1.000 Kg</option>
+          <option value="1000+">Más de 1.000 Kg</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="quick-chips">
+      <button class="chip active" id="chip-all" onclick="setChipFilter('all')">Ver Todo</button>
+      <button class="chip" id="chip-moldeo" onclick="setChipFilter('moldeo')">🔥 En Moldeo / Fusión</button>
+      <button class="chip" id="chip-listas" onclick="setChipFilter('listas')">🔧 En Terminación</button>
+      <button class="chip" id="chip-preparado" onclick="setChipFilter('preparado')">📦 Preparado p/ Despacho</button>
+      <button class="chip" id="chip-armar_hoja" style="display:none;" onclick="setChipFilter('armar_hoja')">🧾 Armar Hoja de Pesada</button>
+      <button class="chip" id="chip-despachado" onclick="setChipFilter('despachado')">🚚 Despachado</button>
+      <button class="chip" id="chip-proceso" onclick="setChipFilter('proceso')">⏳ Pendiente Previo a Moldeo</button>
+      <button class="chip" id="chip-stock" onclick="setChipFilter('stock')">📦 Stock (sin pedido)</button>
+      <button class="chip" id="chip-repuestos" onclick="setChipFilter('repuestos')">⚙️ Solo Repuestos (Código R)</button>
+      <button class="chip" id="chip-vencidas" onclick="setChipFilter('vencidas')">🚨 Urgentes Comercial (Vencidas / &lt;7d)</button>
+      <button class="chip" id="chip-vencidas_term" onclick="setChipFilter('vencidas_term')">⚠️ Vencidas en Terminación</button>
+      <button class="chip" id="chip-prioridad_alta" onclick="setChipFilter('prioridad_alta')">🔴 Prioridad Alta</button>
+      <button class="chip" id="chip-prioridad_media" onclick="setChipFilter('prioridad_media')">🟡 Prioridad Media</button>
+      <button class="chip chip-clear" id="chip-clear" onclick="clearAllFilters()" title="Resetea el buscador, los selects y el filtro activo">🧹 Limpiar Filtros</button>
+    </div>
+  </div>
+
+  <div class="result-info">
+    <div>
+      <span>Mostrando <b id="count-filtered">0</b> de <b id="count-total">0</b> ítems</span>
+      <span> | Kg Reales: <b id="kg-filtered">0,00</b> Kg | Piezas: <b id="cant-filtered">0</b> u.</span>
+    </div>
+    <div>
+      <button class="view-toggle-btn" id="btn-toggle-split" onclick="toggleSplitMode()">
+        <span id="split-icon">◫</span> <span id="split-text">Modo: 2 Ventanas</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="split-layout" id="split-container">
+    <div class="window-panel" id="window-left">
+      <div class="window-title">
+        <span>⚙️ RESUMEN POR DESCRIPCIÓN</span>
+        <span class="badge">Click p/ filtrar</span>
+      </div>
+      <div class="mat-subfilter-bar" id="mat-subfilter-bar"></div>
+      <div id="model-cards"></div>
+    </div>
+
+    <div class="table-container" id="table-scroll-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="col-prioridad" onclick="sortTable('prioridad')">Prioridad</th>
+            <th class="col-cliente" onclick="sortTable('cliente')">Cliente</th>
+            <th class="col-comprobante" onclick="sortTable('comprobante')">Comprobante</th>
+            <th class="col-fecha" onclick="sortTable('fecha_entrega')">Fecha Entrega</th>
+            <th class="col-alerta" onclick="sortTable('alerta_entrega')">Alerta</th>
+            <th class="col-descripcion">Descripción</th>
+            <th class="col-pend num" onclick="sortTable('pend')">Pend.</th>
+            <th class="col-kilos num" onclick="sortTable('kilos')">Kilos</th>
+            <th class="col-estado">Estado / Área Actual</th>
+            <th class="col-flujo">Flujo Áreas</th>
+            <th class="col-prep">Preparado p/ Despacho</th>
+          </tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+
+  </div>
+
+  <div class="sticky-hscroll-wrap" id="sticky-hscroll-wrap">
+    <div class="sticky-hscroll" id="sticky-hscroll"><div class="sticky-hscroll-inner" id="sticky-hscroll-inner"></div></div>
+  </div>
+
+  <div class="stock-section" id="stock-section" style="display:none;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
+      <div>
+        <div style="font-weight:700; color:#fff; font-size:0.95rem;">📦 Piezas en Stock (sin pedido asociado)</div>
+        <div class="text-dim" style="margin-top:4px;">Piezas que Terminación fabricó de más, sin una nota de pedido todavía. Cuando aparezca un pedido de ese código, asignalas desde acá.</div>
+      </div>
+      <button class="view-toggle-btn" onclick="openAddStockDialog('')">+ Agregar a Stock</button>
+    </div>
+    <div id="stock-list"></div>
+  </div>
+
+  <div class="stock-overlay" id="stock-overlay" onclick="closeStockDialogOnOverlay(event)">
+    <div class="stock-dialog" id="stock-dialog-content"></div>
+  </div>
+
+  <div class="stock-section" id="despachado-section" style="display:none;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
+      <div>
+        <div style="font-weight:700; color:#fff; font-size:0.95rem;">🚚 Historial de Despachos</div>
+        <div class="text-dim" style="margin-top:4px;">Piezas marcadas como despachadas desde "Preparado para Despacho", agrupadas por día. Queda guardado para siempre, aunque SGA ya no traiga esa pieza al día siguiente (por estar facturada).</div>
+      </div>
+    </div>
+    <div id="despachado-list"></div>
+  </div>
+
+  <div class="stock-section" id="armar-hoja-section" style="display:none;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
+      <div>
+        <div style="font-weight:700; color:#fff; font-size:0.95rem;">🧾 Armar Hoja de Pesada — Inspección Final</div>
+        <div class="text-dim" style="margin-top:4px;">Elegí un cliente y tildá las piezas ya "Preparadas para Despacho" que vas a pesar ahora — de la selección sale UNA sola Hoja de Pesada, para ese cliente.</div>
+      </div>
+    </div>
+    <div class="filter-group" style="max-width:360px; margin-bottom:14px;">
+      <label>Cliente</label>
+      <select id="armar-hoja-cliente-select" onchange="setArmarHojaCliente(this.value)">
+        <option value="">— Elegí un cliente —</option>
+      </select>
+    </div>
+    <div id="armar-hoja-list"></div>
+  </div>
+
+  <div class="stock-overlay" id="despacho-overlay" onclick="closeDespachoDialogOnOverlay(event)">
+    <div class="stock-dialog" id="despacho-dialog-content"></div>
+  </div>
+
+  <div class="modal-overlay" id="detail-modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <span class="modal-title" id="modal-title">Detalle</span>
+        <button class="modal-close" onclick="closeDetailModal()">✕</button>
+      </div>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <div class="hoja-overlay" id="hoja-overlay" onclick="closeHojaModalOnOverlay(event)">
+    <div class="hoja-dialog" id="hoja-dialog-content"></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  </div><!-- /app-root -->
+
+  <script>/* MiniPdf — generador de PDF mínimo, sin dependencias externas (no hay red
+   disponible para traer jsPDF ni ninguna otra librería dentro de un artifact
+   publicado, que además solo puede cargar scripts externos desde hosts muy
+   limitados). Alcanza para un documento simple con texto (fuentes base14,
+   sin incrustar) y líneas/rectángulos — exactamente lo que necesita la
+   Hoja de Pesada. */
+(function (global) {
+  'use strict';
+
+  // ---------- aproximación de ancho de texto (Helvetica) ----------
+  // No es el ancho exacto de cada glifo (para eso haría falta la tabla AFM
+  // completa) — alcanza para decidir cuándo truncar con "…" dentro de una
+  // celda de la tabla, que es el único uso que le damos.
+  var NARROW = { i: 1, j: 1, l: 1, '.': 1, ',': 1, ':': 1, ';': 1, "'": 1, '!': 1, '|': 1, 'f': 1, 't': 1, 'r': 1 };
+  var WIDE = { m: 1, M: 1, W: 1, '@': 1, '%': 1 };
+  function approxTextWidth(str, fontSize, bold) {
+    str = String(str == null ? '' : str);
+    var w = 0;
+    for (var i = 0; i < str.length; i++) {
+      var ch = str.charAt(i);
+      var f = 0.56;
+      if (NARROW[ch]) f = 0.3;
+      else if (WIDE[ch]) f = 0.92;
+      else if (ch === ' ') f = 0.28;
+      else if (ch >= 'A' && ch <= 'Z') f = 0.68;
+      w += f * fontSize;
+    }
+    return w * (bold ? 1.06 : 1);
+  }
+  // "..." en vez del carácter unicode de elipsis (…): el documento solo
+  // usa WinAnsiEncoding de 1 byte (ver pdfEscapeText) y … queda fuera de
+  // ese rango — tres puntos ASCII se ven casi igual y nunca se rompen.
+  var ELLIPSIS = '...';
+  function truncateToWidth(str, maxWidth, fontSize, bold) {
+    str = String(str == null ? '' : str);
+    if (approxTextWidth(str, fontSize, bold) <= maxWidth) return str;
+    var lo = 0, hi = str.length;
+    while (lo < hi) {
+      var mid = Math.ceil((lo + hi) / 2);
+      var cand = str.slice(0, mid) + ELLIPSIS;
+      if (approxTextWidth(cand, fontSize, bold) <= maxWidth) lo = mid; else hi = mid - 1;
+    }
+    return str.slice(0, lo) + (lo < str.length ? ELLIPSIS : '');
+  }
+
+  // ---------- codificación PDF (WinAnsiEncoding — cubre español: áéíóúñ¿¡°) ----------
+  var UNSAFE_CHAR_MAP = {
+    '‘': "'", '’': "'", '“': '"', '”': '"',
+    '–': '-', '—': '-', '…': '...', '•': '-',
+  };
+  function pdfEscapeText(str) {
+    str = String(str == null ? '' : str);
+    var out = '';
+    for (var i = 0; i < str.length; i++) {
+      var raw = str.charAt(i);
+      var mapped = UNSAFE_CHAR_MAP[raw];
+      if (mapped) { out += mapped; continue; }
+      var code = str.charCodeAt(i);
+      if (code > 255) code = 63; // '?' — no deberíamos poner emoji/símbolos fuera de Latin-1 en el PDF
+      var ch = String.fromCharCode(code);
+      if (ch === '\\' || ch === '(' || ch === ')') out += '\\' + ch;
+      else out += ch;
+    }
+    return out;
+  }
+
+  // ---------- documento PDF mínimo ----------
+  function PdfDoc(opts) {
+    opts = opts || {};
+    this.pageW = opts.pageW || 841.89;
+    this.pageH = opts.pageH || 595.28;
+    this.pages = [];
+    this.curOps = [];
+    this.images = []; // XObjects de imagen (ver registerImage/image más abajo)
+  }
+  PdfDoc.prototype.registerImage = function (rgbBytes, width, height) {
+    var id = 'Im' + (this.images.length + 1);
+    this.images.push({ id: id, width: width, height: height, data: rgbBytes });
+    return id;
+  };
+  PdfDoc.prototype.image = function (x, y, w, h, imgId) {
+    var ops = 'q ' + w.toFixed(2) + ' 0 0 ' + h.toFixed(2) + ' ' + x.toFixed(2) + ' ' + y.toFixed(2) + ' cm /' + imgId + ' Do Q\n';
+    this.curOps.push(ops);
+  };
+  PdfDoc.prototype.newPage = function () {
+    this.pages.push(this.curOps.join('\n'));
+    this.curOps = [];
+  };
+  PdfDoc.prototype.text = function (x, y, str, opts) {
+    opts = opts || {};
+    var size = opts.size || 9;
+    var bold = !!opts.bold;
+    var font = bold ? 'F2' : 'F1';
+    var drawX = x;
+    if (opts.align === 'right' || opts.align === 'center') {
+      var w = approxTextWidth(str, size, bold);
+      drawX = opts.align === 'right' ? x - w : x - w / 2;
+    }
+    var ops = '';
+    if (opts.color) ops += opts.color[0] + ' ' + opts.color[1] + ' ' + opts.color[2] + ' rg\n';
+    ops += 'BT /' + font + ' ' + size + ' Tf ' + drawX.toFixed(2) + ' ' + y.toFixed(2) + ' Td (' + pdfEscapeText(str) + ') Tj ET\n';
+    if (opts.color) ops += '0 0 0 rg\n';
+    this.curOps.push(ops);
+  };
+  PdfDoc.prototype.rect = function (x, y, w, h, opts) {
+    opts = opts || {};
+    var ops = '';
+    if (opts.fill) ops += opts.fill[0] + ' ' + opts.fill[1] + ' ' + opts.fill[2] + ' rg\n';
+    if (opts.stroke) ops += opts.stroke[0] + ' ' + opts.stroke[1] + ' ' + opts.stroke[2] + ' RG\n';
+    ops += (opts.lineWidth != null ? opts.lineWidth : 1) + ' w\n';
+    ops += x.toFixed(2) + ' ' + y.toFixed(2) + ' ' + w.toFixed(2) + ' ' + h.toFixed(2) + ' re ';
+    if (opts.fill && opts.stroke) ops += 'B\n';
+    else if (opts.fill) ops += 'f\n';
+    else ops += 'S\n';
+    if (opts.fill) ops += '0 0 0 rg\n';
+    this.curOps.push(ops);
+  };
+  PdfDoc.prototype.line = function (x1, y1, x2, y2, opts) {
+    opts = opts || {};
+    var ops = '';
+    if (opts.stroke) ops += opts.stroke[0] + ' ' + opts.stroke[1] + ' ' + opts.stroke[2] + ' RG\n';
+    ops += (opts.lineWidth != null ? opts.lineWidth : 1) + ' w\n';
+    ops += x1.toFixed(2) + ' ' + y1.toFixed(2) + ' m ' + x2.toFixed(2) + ' ' + y2.toFixed(2) + ' l S\n';
+    this.curOps.push(ops);
+  };
+  function bytesToBinaryString(bytes) {
+    var CHUNK = 8192;
+    var parts = [];
+    for (var i = 0; i < bytes.length; i += CHUNK) {
+      parts.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + CHUNK, bytes.length))));
+    }
+    return parts.join('');
+  }
+  PdfDoc.prototype.build = function () {
+    this.newPage();
+    var pages = this.pages.length ? this.pages : [''];
+    var pageCount = pages.length;
+
+    var imageObjNums = {};
+    var nextNum = 5;
+    this.images.forEach(function (im) { imageObjNums[im.id] = nextNum++; });
+
+    var pageObjNums = [], contentObjNums = [];
+    for (var i = 0; i < pageCount; i++) { pageObjNums.push(nextNum++); contentObjNums.push(nextNum++); }
+
+    var objs = {};
+    objs[1] = '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n';
+    var kids = pageObjNums.map(function (n) { return n + ' 0 R'; }).join(' ');
+    objs[2] = '2 0 obj\n<< /Type /Pages /Kids [' + kids + '] /Count ' + pageCount + ' >>\nendobj\n';
+    objs[3] = '3 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\nendobj\n';
+    objs[4] = '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\nendobj\n';
+    this.images.forEach(function (im) {
+      var n = imageObjNums[im.id];
+      var raw = bytesToBinaryString(im.data);
+      objs[n] = n + ' 0 obj\n<< /Type /XObject /Subtype /Image /Width ' + im.width + ' /Height ' + im.height +
+        ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length ' + raw.length + ' >>\nstream\n' + raw + '\nendstream\nendobj\n';
+    });
+    var xobjDict = '';
+    if (this.images.length) {
+      xobjDict = ' /XObject << ' + this.images.map(function (im) { return '/' + im.id + ' ' + imageObjNums[im.id] + ' 0 R'; }).join(' ') + ' >>';
+    }
+    for (var p = 0; p < pageCount; p++) {
+      var pn = pageObjNums[p], cn = contentObjNums[p];
+      objs[pn] = pn + ' 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + this.pageW.toFixed(2) + ' ' + this.pageH.toFixed(2) + '] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>' + xobjDict + ' >> /Contents ' + cn + ' 0 R >>\nendobj\n';
+      var stream = pages[p] || '';
+      objs[cn] = cn + ' 0 obj\n<< /Length ' + stream.length + ' >>\nstream\n' + stream + 'endstream\nendobj\n';
+    }
+
+    var out = '%PDF-1.4\n';
+    var offsets = [0];
+    var maxObj = nextNum - 1;
+    for (var n = 1; n <= maxObj; n++) {
+      offsets[n] = out.length;
+      out += objs[n];
+    }
+    var xrefStart = out.length;
+    out += 'xref\n0 ' + (maxObj + 1) + '\n';
+    out += '0000000000 65535 f \n';
+    for (var m = 1; m <= maxObj; m++) {
+      var off = String(offsets[m]);
+      while (off.length < 10) off = '0' + off;
+      out += off + ' 00000 n \n';
+    }
+    out += 'trailer\n<< /Size ' + (maxObj + 1) + ' /Root 1 0 R >>\nstartxref\n' + xrefStart + '\n%%EOF';
+    return out;
+  };
+  PdfDoc.prototype.toBlob = function () {
+    var str = this.build();
+    var bytes = new Uint8Array(str.length);
+    for (var i = 0; i < str.length; i++) bytes[i] = str.charCodeAt(i) & 0xff;
+    return new Blob([bytes], { type: 'application/pdf' });
+  };
+  PdfDoc.prototype.toNodeBuffer = function () {
+    var str = this.build();
+    return Buffer.from(str, 'binary');
+  };
+
+  // ---------- logo de AMRO (header de la Hoja de Pesada) ----------
+  var AMRO_LOGO_PNG_BASE64 = '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';
+
+  var _logoPixelsPromise = null;
+  function loadAmroLogoPixels() {
+    if (_logoPixelsPromise) return _logoPixelsPromise;
+    _logoPixelsPromise = new Promise(function (resolve) {
+      if (typeof document === 'undefined' || typeof Image === 'undefined') { resolve(null); return; }
+      try {
+        var img = new Image();
+        img.onload = function () {
+          try {
+            var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+            var canvas = document.createElement('canvas');
+            canvas.width = w; canvas.height = h;
+            var ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+            var data = ctx.getImageData(0, 0, w, h).data; // RGBA
+            var rgb = new Uint8Array(w * h * 3);
+            for (var i = 0, j = 0; i < data.length; i += 4, j += 3) {
+              rgb[j] = data[i]; rgb[j + 1] = data[i + 1]; rgb[j + 2] = data[i + 2];
+            }
+            resolve({ width: w, height: h, rgb: rgb });
+          } catch (e) { console.error('No se pudo decodificar el logo de AMRO para el PDF:', e); resolve(null); }
+        };
+        img.onerror = function () { resolve(null); };
+        img.src = 'data:image/png;base64,' + AMRO_LOGO_PNG_BASE64;
+      } catch (e) { resolve(null); }
+    });
+    return _logoPixelsPromise;
+  }
+
+  var COL_DEFS = [
+    { key: 'cant', label: 'Cant.', w: 40, align: 'center' },
+    { key: 'detalle', label: 'Detalle', w: 176, align: 'left' },
+    { key: 'probeta', label: 'Probeta', w: 45, align: 'center' },
+    { key: 'material', label: 'Material', w: 68, align: 'left' },
+    { key: 'oc', label: 'O/C', w: 62, align: 'left' },
+    { key: 'precio', label: 'Precio', w: 57, align: 'center' },
+    { key: 'peso', label: 'Peso (pesado real)', w: 62, align: 'center' },
+    { key: 'importe', label: 'Importe', w: 62, align: 'center' },
+    { key: 'lista', label: 'Lista', w: 57, align: 'center' },
+    { key: 'remito', label: 'Remito', w: 62, align: 'center' },
+  ];
+
+  function drawTable(doc, x0, yTop, rows, headerRowH, rowH) {
+    var tableW = COL_DEFS.reduce(function (s, c) { return s + c.w; }, 0);
+    var n = rows.length;
+    var tableH = headerRowH + n * rowH;
+
+    doc.rect(x0, yTop - headerRowH, tableW, headerRowH, { fill: [0.12, 0.16, 0.22] });
+    var cx = x0;
+    COL_DEFS.forEach(function (col) {
+      var label = col.label.indexOf('(pesado real)') >= 0 ? 'Peso' : col.label;
+      doc.text(cx + col.w / 2, yTop - headerRowH + 13, label, { size: 7.4, bold: true, color: [1, 1, 1], align: 'center' });
+      if (col.label.indexOf('(pesado real)') >= 0) {
+        doc.text(cx + col.w / 2, yTop - headerRowH + 5, '(pesado real)', { size: 5.6, color: [0.85, 0.85, 0.9], align: 'center' });
+      }
+      cx += col.w;
+    });
+
+    rows.forEach(function (r, i) {
+      var ry = yTop - headerRowH - i * rowH;
+      var pesoColIdx = COL_DEFS.map(function (c) { return c.key; }).indexOf('peso');
+      var px = x0 + COL_DEFS.slice(0, pesoColIdx).reduce(function (s, c) { return s + c.w; }, 0);
+      doc.rect(px, ry - rowH, COL_DEFS[pesoColIdx].w, rowH, { fill: [0.996, 0.976, 0.765] });
+
+      cx = x0;
+      COL_DEFS.forEach(function (col) {
+        var pad = 4;
+        var maxW = col.w - pad * 2;
+        if (col.key === 'detalle') {
+          var desc = truncateToWidth(r.descripcion, maxW, 7.2, false);
+          doc.text(cx + pad, ry - rowH / 2 + 4, desc, { size: 7.2 });
+          if (r.trazabilidad) {
+            var traza = truncateToWidth('Trazabilidad: ' + r.trazabilidad, maxW, 6.8, false);
+            doc.text(cx + pad, ry - rowH / 2 - 7, traza, { size: 6.8, color: [0.12, 0.35, 0.75] });
+          }
+        } else {
+          var val = r[col.key] != null ? String(r[col.key]) : '';
+          var txt = truncateToWidth(val, maxW, 7.3, col.key === 'peso');
+          var align = col.align || 'left';
+          var tx = align === 'center' ? cx + col.w / 2 : (align === 'right' ? cx + col.w - pad : cx + pad);
+          doc.text(tx, ry - rowH / 2 - 2, txt, { size: 7.3, bold: col.key === 'peso', align: align === 'left' ? undefined : align });
+        }
+        cx += col.w;
+      });
+    });
+
+    doc.rect(x0, yTop - tableH, tableW, tableH, { stroke: [0.55, 0.6, 0.68], lineWidth: 0.7 });
+    cx = x0;
+    COL_DEFS.forEach(function (col) {
+      doc.line(cx, yTop - tableH, cx, yTop, { stroke: [0.55, 0.6, 0.68], lineWidth: 0.5 });
+      cx += col.w;
+    });
+    doc.line(cx, yTop - tableH, cx, yTop, { stroke: [0.55, 0.6, 0.68], lineWidth: 0.5 });
+    for (var i2 = 0; i2 <= n; i2++) {
+      var ly = yTop - headerRowH - i2 * rowH;
+      doc.line(x0, ly, x0 + tableW, ly, { stroke: [0.55, 0.6, 0.68], lineWidth: 0.5 });
+    }
+    doc.line(x0, yTop, x0 + tableW, yTop, { stroke: [0.55, 0.6, 0.68], lineWidth: 0.5 });
+    return yTop - tableH;
+  }
+
+  function drawPageHeader(doc, margin, data, logo) {
+    var y = doc.pageH - margin;
+    var textX = margin;
+    if (logo) {
+      var logoH = 54;
+      var logoW = logoH * (logo.width / logo.height);
+      doc.image(margin, y - 19 - logoH / 2, logoW, logoH, logo.id);
+      textX = margin + logoW + 12;
+    }
+    doc.text(textX, y, 'ACEROS MOLDEADOS ROSARIO S.A.', { size: 12.5, bold: true });
+    doc.text(textX, y - 13, 'FUNDICIÓN DE ACEROS - INOXIDABLES - NODULARES - BUJES CENTRIFUGADOS', { size: 7, color: [0.25, 0.25, 0.25] });
+    doc.text(textX, y - 22, 'ESPECIALES - REFRACTARIOS', { size: 7, color: [0.25, 0.25, 0.25] });
+    doc.text(textX, y - 36, 'Colombia 650 bis - 2000 Rosario - Santa Fe', { size: 7, color: [0.25, 0.25, 0.25] });
+    doc.text(textX, y - 45, 'Tel.: (0341) 456-2233 / 456-3322 / 456-2662', { size: 7, color: [0.25, 0.25, 0.25] });
+
+    doc.text(doc.pageW - margin, y, 'HOJA DE PESADA', { size: 15, bold: true, align: 'right' });
+    var boxW = 170, boxH = 34, boxX = doc.pageW - margin - boxW, boxY = y - 44;
+    doc.rect(boxX, boxY, boxW, boxH, { stroke: [0, 0, 0], lineWidth: 0.8 });
+    doc.line(boxX + boxW / 2, boxY, boxX + boxW / 2, boxY + boxH, { stroke: [0, 0, 0], lineWidth: 0.6 });
+    doc.line(boxX, boxY + boxH / 2, boxX + boxW, boxY + boxH / 2, { stroke: [0, 0, 0], lineWidth: 0.6 });
+    doc.text(boxX + 8, boxY + boxH - 12, 'Nº', { size: 8, bold: true });
+    doc.text(boxX + boxW / 2 + 8, boxY + boxH - 12, 'FECHA', { size: 8, bold: true });
+    doc.text(boxX + 8, boxY + 7, data.numero, { size: 9 });
+    doc.text(boxX + boxW / 2 + 8, boxY + 7, data.fechaStr, { size: 9 });
+
+    y -= 76;
+    doc.text(margin, y, 'Sres.:', { size: 8, bold: true });
+    doc.text(margin + 40, y, data.cliente, { size: 9 });
+    doc.line(margin + 38, y - 3, margin + 320, y - 3, { stroke: [0, 0, 0], lineWidth: 0.6 });
+    y -= 26;
+    doc.text(margin, y, 'Transporte:', { size: 8, bold: true });
+    doc.text(margin + 62, y, data.transporte || '', { size: 9 });
+    doc.line(margin + 60, y - 3, margin + 340, y - 3, { stroke: [0, 0, 0], lineWidth: 0.6 });
+    doc.text(margin + 360, y, 'Cond./Pago:', { size: 8, bold: true });
+    doc.text(margin + 428, y, data.condPago || '', { size: 9 });
+    doc.line(margin + 426, y - 3, doc.pageW - margin, y - 3, { stroke: [0, 0, 0], lineWidth: 0.6 });
+    y -= 20;
+    doc.line(margin, y, doc.pageW - margin, y, { stroke: [0.6, 0.63, 0.7], lineWidth: 0.6 });
+    y -= 22;
+    return y;
+  }
+
+  function buildHojaPesadaPdfBlob(data) {
+    var doc = new PdfDoc({ pageW: 841.89, pageH: 595.28 });
+    var margin = 40;
+    var headerRowH = 24;
+    var rowH = 34;
+    var headerBlockH = 190;
+    var footerReserve = 36;
+    var availH = doc.pageH - margin * 2 - headerBlockH - footerReserve;
+    var rowsPerPage = Math.max(1, Math.floor((availH - headerRowH) / (rowH + 11)));
+
+    var items = data.items || [];
+    var chunks = [];
+    for (var i = 0; i < items.length; i += rowsPerPage) chunks.push(items.slice(i, i + rowsPerPage));
+    if (!chunks.length) chunks.push([]);
+
+    var tableW = COL_DEFS.reduce(function (s, c) { return s + c.w; }, 0);
+    var x0 = (doc.pageW - tableW) / 2;
+
+    var logo = null;
+    if (data.logoPixels) {
+      var logoId = doc.registerImage(data.logoPixels.rgb, data.logoPixels.width, data.logoPixels.height);
+      logo = { id: logoId, width: data.logoPixels.width, height: data.logoPixels.height };
+    }
+
+    chunks.forEach(function (chunk, pageIdx) {
+      if (pageIdx > 0) doc.newPage();
+      var y = drawPageHeader(doc, margin, data, logo);
+      drawTable(doc, x0, y, chunk, headerRowH, rowH);
+    });
+
+    return doc.toBlob();
+  }
+
+  global.MiniPdf = {
+    PdfDoc: PdfDoc,
+    approxTextWidth: approxTextWidth,
+    truncateToWidth: truncateToWidth,
+    pdfEscapeText: pdfEscapeText,
+    buildHojaPesadaPdfBlob: buildHojaPesadaPdfBlob,
+    loadAmroLogoPixels: loadAmroLogoPixels,
+  };
+})(typeof window !== 'undefined' ? window : global);
+</script>
+  <script>// ---- Supabase client + auth + claude.use() shim (reemplaza la vieja
+// plataforma de artifacts: login real por cuenta, datos en vivo vía
+// Postgres Realtime en vez de Firestore) ----
+const SUPABASE_URL = "https://dazkgyltusmjmxenarwv.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_kw6cLjFSVQftkhLoQO-yeg_89kAeS1n";
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let CURRENT_USER_ID = null;
+let CURRENT_USER_EMAIL = null;
+let CURRENT_PROFILE = null; // { id, email, nombre, rol, es_inspector_final }
+
+// Tablas cuya clave primaria es item_id (no "id") — mismo patrón que usaba
+// la vieja colección Firestore .doc(itemId), ahora contra Postgres.
+const ITEM_KEYED_TABLES = new Set(['preparados', 'despachado', 'avance_manual', 'prioridades']);
+function pkColFor(table) { return ITEM_KEYED_TABLES.has(table) ? 'item_id' : 'id'; }
+
+// "prioridades.nivel" en la base tiene el check constraint ('Alta','Media')
+// con mayúscula inicial, pero toda la lógica de negocio portada (nivel ===
+// 'alta'/'media', PRIORIDAD_LABEL, etc.) usa minúsculas — se traduce acá,
+// en el borde, para no tocar ni una línea de esa lógica.
+function prioridadToDb(nivel) {
+  if (nivel === 'alta') return 'Alta';
+  if (nivel === 'media') return 'Media';
+  return nivel;
+}
+function prioridadFromDb(nivel) {
+  if (nivel === 'Alta') return 'alta';
+  if (nivel === 'Media') return 'media';
+  return nivel;
+}
+
+function makeDbRef() {
+  function collection(name) {
+    return {
+      doc(id) {
+        const pk = pkColFor(name);
+        return {
+          async set(obj) {
+            const row = { [pk]: (pk === 'item_id') ? Number(id) : id };
+            Object.assign(row, obj);
+            if (name === 'prioridades' && row.nivel) row.nivel = prioridadToDb(row.nivel);
+            if ('updated_by' in rowDefaultsFor(name)) row.updated_by = CURRENT_USER_ID;
+            if ('updated_at' in rowDefaultsFor(name)) row.updated_at = row.ts || new Date().toISOString();
+            delete row.ts; // "ts" era el nombre Firestore; la columna real es updated_at
+            const { error } = await supabaseClient.from(name).upsert(row, { onConflict: pk });
+            if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+          },
+          async get() {
+            const { data, error } = await supabaseClient.from(name).select('*').eq(pk, id).maybeSingle();
+            if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+            let row = data;
+            if (row && name === 'prioridades' && row.nivel) row = { ...row, nivel: prioridadFromDb(row.nivel) };
+            return { exists: !!row, data: () => row };
+          },
+          async delete() {
+            const { error } = await supabaseClient.from(name).delete().eq(pk, id);
+            if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+          },
+        };
+      },
+      async add(obj) {
+        const row = { ...obj, created_by: CURRENT_USER_ID };
+        delete row.ts; // los *_log usan "ts timestamptz default now()" solo si no se manda; dejamos que el default la ponga si no vino
+        if (obj.ts) row.ts = obj.ts;
+        const { data, error } = await supabaseClient.from(name).insert(row).select().single();
+        if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+        return { id: data ? data.id : null };
+      },
+      onSnapshot(cb, errCb) {
+        const pk = pkColFor(name);
+        let stopped = false;
+        async function fetchAndEmit() {
+          try {
+            const { data, error } = await supabaseClient.from(name).select('*');
+            if (error) throw error;
+            if (stopped) return;
+            // "catalogo_articulos" ya no es un conjunto de docs paginados
+            // {items:[[cod,desc,mat],...]} como en Firestore — ahora es una
+            // tabla plana, una fila por código. El caller (initDb) de este
+            // caso puntual espera exactamente ese array de filas crudo, así
+            // que acá emitimos los docs "normales" (uno por fila) y quien
+            // llama ya sabe (ver initDb) que para catalogo_articulos hay
+            // que leer d.data() directo, no d.data().items.
+            const docs = (data || []).map(row => {
+              let r = row;
+              if (name === 'prioridades' && r.nivel) r = { ...r, nivel: prioridadFromDb(r.nivel) };
+              return { id: String(r[pk]), exists: true, data: () => r };
+            });
+            cb({ docs });
+          } catch (e) {
+            console.error('onSnapshot(' + name + ') error:', e && e.code, e && e.message);
+            if (errCb) errCb(e);
+          }
+        }
+        fetchAndEmit();
+        const channel = supabaseClient.channel('rt:' + name + ':' + Math.random().toString(36).slice(2))
+          .on('postgres_changes', { event: '*', schema: 'public', table: name }, () => { if (!stopped) fetchAndEmit(); })
+          .subscribe();
+        return { unsubscribe() { stopped = true; try { supabaseClient.removeChannel(channel); } catch (e) {} } };
+      },
+    };
+  }
+  function rowDefaultsFor(name) {
+    // Solo las tablas con updated_by/updated_at (las "manuales" por ítem)
+    // llevan esas columnas — los *_log (preparados_log/despachos_log/
+    // stock_movimientos) usan created_by + ts/dia explícitos, puestos por
+    // la lógica de negocio misma (ver confirmDespacho, markHojaItemsPrepared, etc.)
+    if (ITEM_KEYED_TABLES.has(name)) return { updated_by: true, updated_at: true };
+    return {};
+  }
+  return { collection };
+}
+
+function makeUserRef() {
+  return {
+    async canEdit() { return !!(CURRENT_PROFILE && CURRENT_PROFILE.rol === 'editor'); },
+    async can(perm) {
+      if (perm !== 'data.write') return false;
+      return !!(CURRENT_PROFILE && (CURRENT_PROFILE.rol === 'colaborador' || CURRENT_PROFILE.rol === 'editor'));
+    },
+    async id() { return CURRENT_USER_ID; },
+  };
+}
+
+window.claude = {
+  use: async (name) => {
+    if (name === 'db') return makeDbRef();
+    if (name === 'user') return makeUserRef();
+    throw new Error('capability not supported: ' + name);
+  },
+};
+
+// ---- Login / logout ----
+function showLoginError(msg) {
+  const el = document.getElementById('login-error');
+  if (el) el.textContent = msg || '';
+}
+
+async function doLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const btn = document.getElementById('login-btn');
+  showLoginError('');
+  if (!email || !password) { showLoginError('Completá email y contraseña.'); return; }
+  btn.disabled = true; btn.textContent = 'Ingresando...';
+  try {
+    const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    // onAuthStateChange se encarga de arrancar la app apenas haya sesión.
+  } catch (e) {
+    console.error('Login falló:', e);
+    showLoginError('No se pudo ingresar: revisá el email y la contraseña.');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Ingresar';
+  }
+}
+
+async function doLogout() {
+  try { await supabaseClient.auth.signOut(); } catch (e) { console.error(e); }
+  window.location.reload();
+}
+
+// Enter en los campos de login también manda el formulario.
+['login-email', 'login-password'].forEach(id => {
+  document.addEventListener('DOMContentLoaded', () => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+  });
+});
+
+function showApp() {
+  document.getElementById('login-overlay').classList.add('hidden');
+  document.getElementById('app-root').classList.remove('hidden');
+}
+function showLogin() {
+  document.getElementById('login-overlay').classList.remove('hidden');
+  document.getElementById('app-root').classList.add('hidden');
+}
+
+let appBooted = false;
+
+supabaseClient.auth.onAuthStateChange((event, session) => {
+  if (session && session.user) {
+    CURRENT_USER_ID = session.user.id;
+    CURRENT_USER_EMAIL = session.user.email;
+    if (!appBooted) { appBooted = true; bootApp(); }
+  } else {
+    if (!appBooted) showLogin();
+  }
+});
+
+(async function initialSessionCheck() {
+  const { data } = await supabaseClient.auth.getSession();
+  if (data && data.session && data.session.user) {
+    CURRENT_USER_ID = data.session.user.id;
+    CURRENT_USER_EMAIL = data.session.user.email;
+    if (!appBooted) { appBooted = true; bootApp(); }
+  } else {
+    showLogin();
+  }
+})();
+
+// ---- Fecha de hoy (Argentina) para el badge "ACTUALIZADO AL" y TODAY_ISO ----
+function computeTodayStr() {
+  try {
+    const parts = new Intl.DateTimeFormat('es-AR', {
+      timeZone: 'America/Argentina/Buenos_Aires', day: '2-digit', month: '2-digit', year: 'numeric',
+    }).formatToParts(new Date());
+    const d = parts.find(p => p.type === 'day').value;
+    const m = parts.find(p => p.type === 'month').value;
+    const y = parts.find(p => p.type === 'year').value;
+    return `${d}/${m}/${y}`;
+  } catch (e) {
+    const now = new Date();
+    return `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
+  }
+}
+
+let DATA = [];
+const TODAY_STR = computeTodayStr();
+
+async function bootApp() {
+  showApp();
+  document.getElementById('asof-badge').textContent = 'ACTUALIZADO AL ' + TODAY_STR;
+
+  // Perfil (rol + es_inspector_final) — una sola vez al loguearse.
+  try {
+    const { data: profile, error } = await supabaseClient.from('profiles').select('*').eq('id', CURRENT_USER_ID).single();
+    if (error) throw error;
+    CURRENT_PROFILE = profile;
+  } catch (e) {
+    console.error('No se pudo leer el perfil del usuario:', e);
+    CURRENT_PROFILE = { rol: 'visualizador', es_inspector_final: false };
+  }
+  document.getElementById('user-pill').textContent = CURRENT_USER_EMAIL + ' · ' + (CURRENT_PROFILE.rol || 'visualizador');
+
+  // Ítems en vivo desde Supabase (reemplaza el DATA = JSON.parse(__DATA_JSON__) estático)
+  try {
+    const { data: rows, error } = await supabaseClient.from('items').select('*');
+    if (error) throw error;
+    DATA = rows || [];
+  } catch (e) {
+    console.error('No se pudieron cargar los ítems:', e);
+    DATA = [];
+  }
+
+  recomputeEffectiveStages();
+  renderKpis();
+  initSelects();
+  buildModelCards();
+  applySplitVisual();
+  isHojaInspector = !!(CURRENT_PROFILE && CURRENT_PROFILE.es_inspector_final);
+  applyInspectorVisibility();
+  applyFilters();
+  initDb();
+  setupStickyHScrollOnce();
+}
+
+async function reloadItems() {
+  try {
+    const { data: rows, error } = await supabaseClient.from('items').select('*');
+    if (error) throw error;
+    DATA.length = 0;
+    DATA.push(...(rows || []));
+    recomputeEffectiveStages();
+    renderKpis();
+    applyFilters();
+  } catch (e) {
+    console.error('No se pudo recargar items:', e);
+  }
+}
+
+function formatDate(iso) {
+  if (!iso) return '-';
+  const [y,m,d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function kgSum(rows) {
+  return rows.reduce((s, r) => s + (r.estado_general === 'Cancelado' ? 0 : r.kilos), 0);
+}
+
+function todayIso() {
+  const [d, m, y] = TODAY_STR.split('/');
+  return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+}
+const TODAY_ISO = todayIso();
+
+const STAGE_LABELS = ['Pendiente Comercial', 'Pendiente Adm/Finanzas', 'Pendiente Ingeniería', 'No Planificado (Moldeo)', 'Moldeo / Fusión', 'En Terminación'];
+let avanceManualMap = {};
+
+let DATA_REAL = new Map();
+
+function manualRankFor(id) {
+  const r = avanceManualMap[String(id)];
+  return (r && typeof r.rank === 'number') ? r.rank : null;
+}
+
+function realStatusFromFlags(real) {
+  const flags = [real.f_com, real.f_adm, real.f_ip, real.f_pl, real.f_desp];
+  for (let i = 0; i < 5; i++) {
+    if (flags[i] !== 'SI') return { cancelado: flags[i] === 'NO', rank: i };
+  }
+  return { cancelado: false, rank: 5 };
+}
+
+function computeAlerta(estadoGeneral, fechaEntregaIso) {
+  if (estadoGeneral === 'Cancelado') return 'CANCELADO';
+  if (estadoGeneral === 'Fundido / En Terminación') return 'EN TERMINACIÓN';
+  if (!fechaEntregaIso) return 'EN FECHA';
+  const delta = Math.round((new Date(fechaEntregaIso + 'T00:00:00') - new Date(TODAY_ISO + 'T00:00:00')) / 86400000);
+  if (delta < 0) return 'VENCIDA (FÁBRICA)';
+  if (delta <= 7) return 'URGENTE (<=7d)';
+  if (delta <= 15) return 'PRÓXIMA (<=15d)';
+  return 'EN FECHA';
+}
+
+function recomputeEffectiveStages() {
+  DATA_REAL = new Map(DATA.map(r => [r.id, {
+    f_com: r.f_com, f_adm: r.f_adm, f_ip: r.f_ip, f_pl: r.f_pl, f_desp: r.f_desp,
+    area_actual: r.area_actual, estado_general: r.estado_general, alerta_entrega: r.alerta_entrega,
+  }]));
+  DATA.forEach(row => {
+    const real = DATA_REAL.get(row.id);
+    if (!real) return;
+    const { cancelado, rank: realRank } = realStatusFromFlags(real);
+    if (cancelado) {
+      row.estado_general = real.estado_general;
+      row.area_actual = real.area_actual;
+      row.alerta_entrega = real.alerta_entrega;
+      row._realRank = null;
+      row._manualApplied = false;
+      row._manualRank = null;
+      return;
+    }
+    const man = manualRankFor(row.id);
+    const effRank = (man != null) ? Math.max(realRank, man) : realRank;
+    row.estado_general = effRank >= 5 ? 'Fundido / En Terminación' : 'En Fabricación';
+    row.area_actual = STAGE_LABELS[effRank];
+    row.alerta_entrega = computeAlerta(row.estado_general, row.fecha_entrega);
+    row._realRank = realRank;
+    row._manualApplied = man != null && man > realRank;
+    row._manualRank = man;
+  });
+}
+
+async function saveAvanceManual(id, rawValue, selectEl) {
+  if (!dbRef) {
+    alert('No se pudo conectar al almacenamiento compartido. Este cambio no se va a guardar.');
+    return;
+  }
+  const prevRank = manualRankFor(id);
+  if (selectEl) selectEl.disabled = true;
+  try {
+    if (rawValue === '') {
+      await dbRef.collection('avance_manual').doc(String(id)).delete();
+    } else {
+      await dbRef.collection('avance_manual').doc(String(id)).set({ rank: Number(rawValue), ts: new Date().toISOString() });
+    }
+  } catch (e) {
+    console.error('No se pudo guardar el avance manual:', e && e.code, e && e.message);
+    if (selectEl) selectEl.value = prevRank != null ? String(prevRank) : '';
+    if (canWritePrep === false || (e && e.code === 'invalid_argument')) {
+      alert('No se pudo guardar: tu acceso a este tablero es de solo lectura (Visualizador). Pedile a quien administra el link que te dé acceso de Colaborador para poder avanzar pedidos a mano.');
+    } else {
+      alert('No se pudo guardar el avance manual. Probá de nuevo.');
+    }
+  } finally {
+    if (selectEl) selectEl.disabled = false;
+  }
+}
+
+function buildAvanceManualHtml(r) {
+  if (r._realRank === null || r._realRank === undefined || r._realRank >= 5) return '';
+  const realRank = r._realRank;
+  const manRank = r._manualRank;
+  let opts = `<option value="">— Según SGA (${STAGE_LABELS[realRank]})</option>`;
+  for (let i = realRank + 1; i <= 5; i++) {
+    opts += `<option value="${i}" ${manRank === i ? 'selected' : ''}>Avanzar a: ${STAGE_LABELS[i]}</option>`;
+  }
+  const badge = r._manualApplied
+    ? '<div style="margin-top:4px;"><span class="pill" style="background:rgba(56,189,248,0.15); color:#38bdf8; border:1px solid rgba(56,189,248,0.35);">✋ Avance manual</span></div>'
+    : '';
+  return `<div style="margin-top:6px;">
+    <select class="avance-select" style="width:100%; background:#0f172a; border:1px solid var(--card-border); color:#fff; border-radius:6px; padding:4px 6px; font-size:0.72rem;" onchange="saveAvanceManual(${r.id}, this.value, this)">${opts}</select>
+    ${badge}
+  </div>`;
+}
+
+function isVencidaTerminacion(row) {
+  return row.area_actual === 'En Terminación' && !!row.fecha_entrega && row.fecha_entrega < TODAY_ISO;
+}
+
+let currentFilter = 'all';
+let selectedAroCode = 'ALL';
+let isSplitView = false;
+let sortCol = 'fecha_entrega';
+let sortAsc = true;
+let selectedMatRep = 'ALL';
+let selectedHojaIds = new Set();
+let hojaFormState = null;
+let hojaConfirmPending = false;
+let hojaValidationError = null;
+let downloadsRef = null;
+let isHojaInspector = false;
+let armarHojaCliente = '';
+let armarHojaSelIds = new Set();
+
+let preparadosMap = {};
+let dbRef = null;
+let dbReady = false;
+let despachadoMap = {};
+let despachosLog = [];
+let preparadosLogList = [];
+let stockMovimientos = [];
+let CATALOGO = [];
+let catalogoByCodigo = new Map();
+
+function prepCant(id) {
+  const r = preparadosMap[String(id)];
+  return (r && typeof r.cant === 'number') ? r.cant : 0;
+}
+function prepCantClamped(row) {
+  return Math.max(0, prepCant(row.id));
+}
+function isPrepared(row) {
+  return row.area_actual === 'En Terminación' && row.pend > 0 && prepCant(row.id) >= row.pend;
+}
+function hasAnyPrep(row) {
+  return row.area_actual === 'En Terminación' && prepCantClamped(row) > 0;
+}
+function prepKg(row) {
+  if (!row.pend || row.pend <= 0) return 0;
+  return row.kilos * (prepCantClamped(row) / row.pend);
+}
+function remainingKg(row) { return Math.max(0, row.kilos - prepKg(row)); }
+function remainingPend(row) { return Math.max(0, row.pend - prepCantClamped(row)); }
+
+function despCant(id) {
+  const r = despachadoMap[String(id)];
+  return (r && typeof r.cant === 'number') ? r.cant : 0;
+}
+function prepPendienteDespacho(row) {
+  return Math.max(0, prepCantClamped(row) - despCant(row.id));
+}
+function prepPendienteDespachoKg(row) {
+  if (!row.pend || row.pend <= 0) return 0;
+  return row.kilos * (prepPendienteDespacho(row) / row.pend);
+}
+function hasAnyDespacho(row) { return despCant(row.id) > 0; }
+
+function lotesDisponibles(itemId) {
+  const consumidoPorLote = {};
+  despachosLog.forEach(d => {
+    (d.probetas || []).forEach(p => {
+      if (p.loteId) consumidoPorLote[p.loteId] = (consumidoPorLote[p.loteId] || 0) + (p.cantidad || 0);
+    });
+  });
+  return preparadosLogList
+    .filter(l => String(l.itemId) === String(itemId))
+    .map(l => ({ ...l, disponible: Math.max(0, (l.cantidad || 0) - (consumidoPorLote[l.id] || 0)) }))
+    .filter(l => l.disponible > 0.0001)
+    .sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+}
+function prepSinDetalleDisponible(row) {
+  const totalLotes = lotesDisponibles(row.id).reduce((s, l) => s + l.disponible, 0);
+  return Math.max(0, prepPendienteDespacho(row) - totalLotes);
+}
+
+function prepSinHojaDisponible(row) {
+  const totalPesado = preparadosLogList
+    .filter(l => String(l.itemId) === String(row.id))
+    .reduce((s, l) => s + (l.cantidad || 0), 0);
+  return Math.max(0, prepCantClamped(row) - totalPesado);
+}
+function hojaDisponibleRows() {
+  return DATA.filter(r => prepSinHojaDisponible(r) > 0.0001);
+}
+
+function diaLocalStr(d) {
+  d = d || new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+let prioridadMap = {};
+let canSetPriority = false;
+let canWritePrep = null;
+const PRIORIDAD_LABEL = { alta: '🔴 Alta', media: '🟡 Media' };
+
+function getPriority(id) {
+  const r = prioridadMap[String(id)];
+  return (r && r.nivel) ? r.nivel : '';
+}
+
+function renderAccessBanner() {
+  const el = document.getElementById('access-banner');
+  if (!el) return;
+  if (canWritePrep === false) {
+    el.style.display = 'flex';
+    el.innerHTML = '⚠️ <span>Tu acceso a este tablero es de <b>solo lectura</b> (Visualizador). Podés ver todo, pero los cambios que hagas en "Preparado para Despachar" <b>no se van a guardar</b>. Pedile a quien administra el link que te dé acceso de <b>Colaborador</b>.</span>';
+  } else {
+    el.style.display = 'none';
+    el.innerHTML = '';
+  }
+}
+
+// Visibilidad de la pantalla restringida "Armar Hoja de Pesada": ahora se
+// decide directo con profiles.es_inspector_final (ver bootApp), sin ningún
+// hack de self-claim contra un doc compartido — un Editor marca esa
+// columna para la cuenta correcta desde el Table Editor de Supabase.
+function recomputeHojaInspector() {
+  isHojaInspector = !!(CURRENT_PROFILE && CURRENT_PROFILE.es_inspector_final);
+}
+function applyInspectorVisibility() {
+  recomputeHojaInspector();
+  const card = document.getElementById('card-armar_hoja');
+  const chip = document.getElementById('chip-armar_hoja');
+  if (card) card.style.display = isHojaInspector ? '' : 'none';
+  if (chip) chip.style.display = isHojaInspector ? '' : 'none';
+  if (!isHojaInspector && currentFilter === 'armar_hoja') {
+    setFilterFromCard('all');
+  }
+}
+
+async function initDb() {
+  try {
+    if (typeof claude === 'undefined' || !claude.use) { dbReady = true; return; }
+    const db = await claude.use('db');
+    if (!db) { dbReady = true; return; }
+    dbRef = db;
+    db.collection('preparados').onSnapshot(qs => {
+      const map = {};
+      qs.docs.forEach(d => { if (d.exists) map[d.id] = d.data(); });
+      preparadosMap = map;
+      dbReady = true;
+      renderKpis();
+      applyFilters();
+    }, err => {
+      console.error('preparados onSnapshot error:', err && err.code, err && err.message);
+      dbReady = true;
+    });
+    db.collection('prioridades').onSnapshot(qs => {
+      const map = {};
+      qs.docs.forEach(d => { if (d.exists) map[d.id] = d.data(); });
+      prioridadMap = map;
+      renderKpis();
+      applyFilters();
+    }, err => {
+      console.error('prioridades onSnapshot error:', err && err.code, err && err.message);
+    });
+    db.collection('stock_movimientos').onSnapshot(qs => {
+      stockMovimientos = qs.docs.filter(d => d.exists).map(d => d.data());
+      renderKpis();
+      applyFilters();
+    }, err => {
+      console.error('stock_movimientos onSnapshot error:', err && err.code, err && err.message);
+    });
+    db.collection('despachado').onSnapshot(qs => {
+      const map = {};
+      qs.docs.forEach(d => { if (d.exists) map[d.id] = d.data(); });
+      despachadoMap = map;
+      renderKpis();
+      applyFilters();
+    }, err => {
+      console.error('despachado onSnapshot error:', err && err.code, err && err.message);
+    });
+    db.collection('despachos_log').onSnapshot(qs => {
+      despachosLog = qs.docs.filter(d => d.exists).map(d => ({ ...d.data(), id: d.id }));
+      renderKpis();
+      applyFilters();
+    }, err => {
+      console.error('despachos_log onSnapshot error:', err && err.code, err && err.message);
+    });
+    db.collection('preparados_log').onSnapshot(qs => {
+      preparadosLogList = qs.docs.filter(d => d.exists).map(d => ({ ...d.data(), id: d.id }));
+      renderKpis();
+      applyFilters();
+    }, err => {
+      console.error('preparados_log onSnapshot error:', err && err.code, err && err.message);
+    });
+    db.collection('avance_manual').onSnapshot(qs => {
+      const map = {};
+      qs.docs.forEach(d => { if (d.exists) map[d.id] = d.data(); });
+      avanceManualMap = map;
+      recomputeEffectiveStages();
+      renderKpis();
+      applyFilters();
+    }, err => {
+      console.error('avance_manual onSnapshot error:', err && err.code, err && err.message);
+    });
+    // catalogo_articulos: ya es una tabla plana (codigo PK) en Supabase, no
+    // los docs paginados {items:[[cod,desc,mat],...]} de la vieja colección
+    // Firestore — se reconstruye CATALOGO directo desde las filas.
+    db.collection('catalogo_articulos').onSnapshot(qs => {
+      const items = qs.docs.filter(d => d.exists).map(d => {
+        const row = d.data();
+        return [row.codigo, row.descripcion, row.material];
+      });
+      CATALOGO = items;
+      catalogoByCodigo = new Map(items.map(it => [it[0], it]));
+    }, err => {
+      console.error('catalogo_articulos onSnapshot error:', err && err.code, err && err.message);
+    });
+    try {
+      const user = await claude.use('user');
+      canSetPriority = !!(user && typeof user.canEdit === 'function' && await user.canEdit());
+      canWritePrep = (user && typeof user.can === 'function') ? await user.can('data.write') : null;
+    } catch (e) { canSetPriority = false; canWritePrep = null; }
+    renderAccessBanner();
+    applyFilters();
+  } catch (e) {
+    console.error('No se pudo inicializar la base de "preparados"/"prioridades":', e);
+    dbReady = true;
+  }
+}
+
+async function savePriority(id, nivel, selectEl) {
+  if (!dbRef) {
+    alert('No se pudo conectar al almacenamiento compartido. Este cambio no se va a guardar.');
+    return;
+  }
+  const prevValue = selectEl ? selectEl.value : null;
+  if (selectEl) selectEl.disabled = true;
+  try {
+    if (!nivel) {
+      await dbRef.collection('prioridades').doc(String(id)).delete();
+    } else {
+      await dbRef.collection('prioridades').doc(String(id)).set({ nivel, ts: new Date().toISOString() });
+    }
+  } catch (e) {
+    console.error('No se pudo guardar la prioridad:', e && e.code, e && e.message);
+    if (selectEl && prevValue !== null) selectEl.value = prevValue;
+    if (!canSetPriority || (e && e.code === 'invalid_argument')) {
+      alert('No se pudo guardar: tu acceso a este tablero no tiene permiso para fijar prioridades (se necesita rol de Editor). Pedile a quien administra el link que te lo dé.');
+    } else {
+      alert('No se pudo guardar la prioridad. Probá de nuevo.');
+    }
+  } finally {
+    if (selectEl) selectEl.disabled = false;
+  }
+}
+
+async function savePrep(id, pend, cellEl) {
+  const input = cellEl ? cellEl.querySelector('.prep-input') : null;
+  const btn = cellEl ? cellEl.querySelector('.prep-btn') : null;
+  if (!input) return;
+  if (!dbRef) {
+    alert('No se pudo conectar al almacenamiento compartido. Este cambio no se va a guardar (probá recargar la página).');
+    return;
+  }
+  const prevVal = prepCant(id);
+  let val = Number(input.value);
+  if (isNaN(val) || val < 0) val = 0;
+  input.value = val;
+  if (btn) btn.disabled = true;
+  if (input) input.disabled = true;
+  try {
+    await dbRef.collection('preparados').doc(String(id)).set({ cant: val, ts: new Date().toISOString() });
+    showToast('Guardado', 'success');
+  } catch (e) {
+    console.error('No se pudo guardar preparado:', e && e.code, e && e.message);
+    input.value = prevVal;
+    if (canWritePrep === false || (e && e.code === 'invalid_argument')) {
+      alert('No se pudo guardar: tu acceso a este tablero es de solo lectura (Visualizador). Pedile a quien administra el link que te dé acceso de Colaborador para poder preparar pedidos.');
+    } else {
+      alert('No se pudo guardar el cambio. Probá de nuevo.');
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+    if (input) input.disabled = false;
+  }
+}
+
+
+// ---- Stock sin pedido: cálculo y diálogos ----
+const CODIGO_GENERICO = 'R99999999';
+function normTxt(s) { return String(s || '').trim().toLowerCase(); }
+function stockKey(codigo, descripcion) {
+  return (codigo === CODIGO_GENERICO) ? (codigo + '|' + normTxt(descripcion)) : codigo;
+}
+
+function computeStockMap() {
+  const map = {};
+  stockMovimientos.forEach(d => {
+    const cod = d && d.codigo;
+    if (!cod) return;
+    const key = stockKey(cod, d.descripcion);
+    if (!map[key]) map[key] = { codigo: cod, cant: 0, descripcion: '', material: '', kxu: 0, lastTs: '' };
+    map[key].cant += (typeof d.cant === 'number') ? d.cant : 0;
+    if (d.descripcion && (!d.ts || d.ts >= map[key].lastTs)) {
+      map[key].descripcion = d.descripcion;
+      map[key].material = d.material || map[key].material;
+      map[key].kxu = d.kxu || map[key].kxu;
+      map[key].lastTs = d.ts || map[key].lastTs;
+    }
+  });
+  Object.keys(map).forEach(key => { if (map[key].cant <= 0) delete map[key]; });
+  return map;
+}
+
+function renderStockPanel() {
+  const el = document.getElementById('stock-list');
+  if (!el) return;
+  const map = computeStockMap();
+  const entries = Object.entries(map).sort((a, b) => b[1].cant - a[1].cant);
+  if (!entries.length) {
+    el.innerHTML = '<div class="text-dim" style="padding: 20px 4px;">Todavía no hay piezas cargadas en stock. Usá el botón "+ Agregar a Stock" cuando en Terminación trabajen piezas que no son para un pedido puntual.</div>';
+    return;
+  }
+  el.innerHTML = entries.map(([key, d]) => {
+    const kg = d.kxu ? d.kxu * d.cant : 0;
+    const subParts = ['Cód: ' + escHtml(d.codigo)];
+    if (d.material) subParts.push(escHtml(d.material));
+    if (d.kxu) subParts.push(d.kxu + ' kg/u');
+    return `<div class="stock-card">
+      <div class="info">
+        <div class="name">${escHtml(d.descripcion || '(sin descripción)')}</div>
+        <div class="sub">${subParts.join(' · ')}</div>
+      </div>
+      <div class="qty">${d.cant.toLocaleString()} u.${kg ? ' <span class="kg">(' + kg.toLocaleString(undefined,{maximumFractionDigits:0}) + ' Kg)</span>' : ''}</div>
+      <div class="actions">
+        <button onclick="openAssignStockDialog('${escJs(key)}')">Asignar a pedido</button>
+        <button onclick="openAddStockDialog('${escJs(d.codigo)}', '${escJs(d.descripcion || '')}')">+ Ingresar más</button>
+        <button onclick="openRemoveStockDialog('${escJs(key)}')" style="color:#f87171; border-color:#7f1d1d;" title="Quitar este stock (por ej. si se cargó por error)">🗑️ Quitar</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function escJs(s) {
+  return String(s).replace(/[\\']/g, c => '\\' + c);
+}
+
+function showStockDialog(html) {
+  document.getElementById('stock-dialog-content').innerHTML = html;
+  document.getElementById('stock-overlay').classList.add('open');
+}
+function closeStockDialog() {
+  document.getElementById('stock-overlay').classList.remove('open');
+}
+function closeStockDialogOnOverlay(e) {
+  if (e.target.id === 'stock-overlay') closeStockDialog();
+}
+
+function openAddStockDialog(codigoPrefill, descPrefill) {
+  const map = computeStockMap();
+  const codigo = codigoPrefill || '';
+  let desc = descPrefill || '', mat = '', kxu = '';
+  const key = codigo ? stockKey(codigo, desc) : '';
+  if (key && map[key]) {
+    if (!desc) desc = map[key].descripcion;
+    mat = map[key].material; kxu = map[key].kxu || '';
+  } else if (codigo && !desc) {
+    const match = DATA.find(d => d.codigo === codigo);
+    if (match) { desc = match.descripcion; mat = match.material; kxu = match.kxu || ''; }
+    else {
+      const cat = catalogoByCodigo.get(codigo);
+      if (cat) { desc = cat[1]; mat = cat[2]; }
+    }
+  }
+  const descLocked = codigo === CODIGO_GENERICO && !!descPrefill;
+  const codigosConocidos = [...new Set([...DATA.map(d => d.codigo), ...CATALOGO.map(it => it[0])])];
+  const datalistHtml = codigosConocidos.map(c => `<option value="${escHtml(c)}">`).join('');
+  const avisoGenerico = codigo === CODIGO_GENERICO
+    ? '<div class="text-dim" style="margin-bottom:10px;">⚠️ Este código (R99999999) es el genérico de "sin identificar" en SGA — lo comparten piezas distintas. Para no mezclarlas, la descripción hace de identificador: escribila siempre igual para la misma pieza.</div>'
+    : '';
+  const buscarHtml = !codigoPrefill ? `
+    <div class="stock-field" id="stock-search-field">
+      <label>Buscar pieza por nombre (opcional)</label>
+      <input type="text" id="stock-in-buscar" placeholder="Ej: brida, tapa, corona..." oninput="onStockBuscarInput()" autocomplete="off">
+      <div id="stock-buscar-resultados" class="stock-buscar-resultados"></div>
+    </div>` : '';
+  const html = `
+    <h3>➕ Agregar piezas a Stock</h3>
+    ${avisoGenerico}
+    ${buscarHtml}
+    <div class="stock-field">
+      <label>Código de pieza</label>
+      <input type="text" id="stock-in-codigo" list="stock-codigos-list" value="${escHtml(codigo)}" placeholder="Ej: 000003400005" oninput="onStockCodigoInput()" ${codigoPrefill ? 'readonly' : ''}>
+      <datalist id="stock-codigos-list">${datalistHtml}</datalist>
+    </div>
+    <div class="stock-field"><label>Descripción</label><input type="text" id="stock-in-desc" value="${escHtml(desc)}" placeholder="Descripción de la pieza" ${descLocked ? 'readonly' : ''}></div>
+    <div class="stock-field"><label>Material</label><input type="text" id="stock-in-mat" value="${escHtml(mat)}" placeholder="Ej: NODULAR"></div>
+    <div class="stock-field"><label>Cantidad a ingresar</label><input type="number" id="stock-in-cant" min="1" step="1" value="1"></div>
+    <div class="stock-field"><label>Kg por unidad (opcional)</label><input type="number" id="stock-in-kxu" min="0" step="0.01" value="${kxu}"></div>
+    <div class="stock-actions">
+      <button class="stock-btn-cancel" onclick="closeStockDialog()">Cancelar</button>
+      <button class="stock-btn-primary" id="stock-in-save-btn" onclick="confirmAddStock()">Guardar</button>
+    </div>`;
+  showStockDialog(html);
+}
+
+function onStockBuscarInput() {
+  const input = document.getElementById('stock-in-buscar');
+  const box = document.getElementById('stock-buscar-resultados');
+  if (!input || !box) return;
+  const q = normTxt(input.value).trim();
+  if (q.length < 2) { box.classList.remove('open'); box.innerHTML = ''; return; }
+  const seen = new Set();
+  const results = [];
+  for (const [cod, descripcion, material] of CATALOGO) {
+    if (results.length >= 8) break;
+    if (seen.has(cod)) continue;
+    if (normTxt(descripcion).includes(q) || normTxt(cod).includes(q)) {
+      results.push({ codigo: cod, descripcion, material });
+      seen.add(cod);
+    }
+  }
+  if (results.length < 8) {
+    for (const d of DATA) {
+      if (results.length >= 8) break;
+      if (seen.has(d.codigo)) continue;
+      if (normTxt(d.descripcion).includes(q) || normTxt(d.codigo).includes(q)) {
+        results.push({ codigo: d.codigo, descripcion: d.descripcion, material: d.material });
+        seen.add(d.codigo);
+      }
+    }
+  }
+  if (!results.length) {
+    box.innerHTML = '<div class="stock-buscar-item" style="color:var(--text-muted); cursor:default;">Sin resultados</div>';
+    box.classList.add('open');
+    return;
+  }
+  box.innerHTML = results.map(r => `<div class="stock-buscar-item" onclick="pickStockBuscar('${escJs(r.codigo)}','${escJs(r.descripcion)}','${escJs(r.material)}')"><span class="cod">${escHtml(r.codigo)}</span><span class="desc">${escHtml(r.descripcion)}</span></div>`).join('');
+  box.classList.add('open');
+}
+
+function pickStockBuscar(codigo, descripcion, material) {
+  const codigoInput = document.getElementById('stock-in-codigo');
+  const descInput = document.getElementById('stock-in-desc');
+  const matInput = document.getElementById('stock-in-mat');
+  if (codigoInput) codigoInput.value = codigo;
+  if (descInput) descInput.value = descripcion;
+  if (matInput) matInput.value = material;
+  const dataMatch = DATA.find(d => d.codigo === codigo);
+  const kxuInput = document.getElementById('stock-in-kxu');
+  if (kxuInput && dataMatch && dataMatch.kxu) kxuInput.value = dataMatch.kxu;
+  const box = document.getElementById('stock-buscar-resultados');
+  if (box) { box.classList.remove('open'); box.innerHTML = ''; }
+  const buscarInput = document.getElementById('stock-in-buscar');
+  if (buscarInput) buscarInput.value = `${codigo} — ${descripcion}`;
+}
+
+function onStockCodigoInput() {
+  const codigoInput = document.getElementById('stock-in-codigo');
+  if (!codigoInput) return;
+  const codigo = codigoInput.value.trim();
+  if (codigo === CODIGO_GENERICO) return;
+  const match = DATA.find(d => d.codigo === codigo);
+  if (match) {
+    document.getElementById('stock-in-desc').value = match.descripcion;
+    document.getElementById('stock-in-mat').value = match.material;
+    if (match.kxu) document.getElementById('stock-in-kxu').value = match.kxu;
+    return;
+  }
+  const cat = catalogoByCodigo.get(codigo);
+  if (cat) {
+    document.getElementById('stock-in-desc').value = cat[1];
+    document.getElementById('stock-in-mat').value = cat[2];
+  }
+}
+
+async function confirmAddStock() {
+  const codigo = document.getElementById('stock-in-codigo').value.trim();
+  const descripcion = document.getElementById('stock-in-desc').value.trim();
+  const material = document.getElementById('stock-in-mat').value.trim();
+  const cant = Number(document.getElementById('stock-in-cant').value);
+  const kxu = Number(document.getElementById('stock-in-kxu').value) || 0;
+  if (!codigo) { alert('Falta el código de la pieza.'); return; }
+  if (!isFinite(cant) || cant <= 0) { alert('La cantidad tiene que ser mayor a 0.'); return; }
+  if (!dbRef) { alert('No se pudo conectar al almacenamiento compartido. Probá recargar la página.'); return; }
+  const btn = document.getElementById('stock-in-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+  try {
+    await dbRef.collection('stock_movimientos').add({
+      codigo, descripcion, material, cant, kxu, tipo: 'ingreso', ts: new Date().toISOString()
+    });
+    closeStockDialog();
+  } catch (e) {
+    console.error('No se pudo guardar el ingreso a stock:', e && e.code, e && e.message);
+    if (canWritePrep === false || (e && e.code === 'invalid_argument')) {
+      alert('No se pudo guardar: tu acceso a este tablero es de solo lectura. Pedile a quien administra el link que te dé acceso de Colaborador.');
+    } else {
+      alert('No se pudo guardar el ingreso a stock. Probá de nuevo.');
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Guardar'; }
+  }
+}
+
+function openRemoveStockDialog(key) {
+  const map = computeStockMap();
+  const entry = map[key];
+  if (!entry) { alert('Ya no hay stock disponible de esa pieza.'); applyFilters(); return; }
+  const html = `<h3>🗑️ Quitar de Stock</h3>
+    <div class="text-dim" style="margin-bottom:14px; line-height:1.5;">${escHtml(entry.descripcion || entry.codigo)} <span style="color:#fff;">(Cód: ${escHtml(entry.codigo)})</span><br>Se van a quitar las <b style="color:#fff;">${entry.cant.toLocaleString()} u.</b> que hay disponibles en stock de esta pieza (por ejemplo, si se cargaron por error). Esto no borra el historial, queda registrado como una baja.</div>
+    <div class="stock-actions">
+      <button class="stock-btn-cancel" onclick="closeStockDialog()">Cancelar</button>
+      <button class="stock-btn-primary" id="stock-remove-btn" style="background:var(--danger); color:#fff;" onclick="confirmRemoveStock('${escJs(key)}')">Quitar del stock</button>
+    </div>`;
+  showStockDialog(html);
+}
+
+async function confirmRemoveStock(key) {
+  const map = computeStockMap();
+  const entry = map[key];
+  if (!entry) { alert('Ya no hay stock disponible de esa pieza.'); closeStockDialog(); applyFilters(); return; }
+  if (!dbRef) { alert('No se pudo conectar al almacenamiento compartido. Probá recargar la página.'); return; }
+  const btn = document.getElementById('stock-remove-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Quitando...'; }
+  try {
+    await dbRef.collection('stock_movimientos').add({
+      codigo: entry.codigo, descripcion: entry.descripcion, material: entry.material, kxu: entry.kxu,
+      cant: -entry.cant, tipo: 'baja', ts: new Date().toISOString()
+    });
+    closeStockDialog();
+  } catch (e) {
+    console.error('No se pudo quitar el stock:', e && e.code, e && e.message);
+    if (e && e.code === 'invalid_argument') {
+      alert('No se pudo quitar: tu acceso a este tablero es de solo lectura. Pedile a quien administra el link que te dé acceso de Colaborador.');
+    } else {
+      alert('No se pudo quitar el stock. Probá de nuevo.');
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Quitar del stock'; }
+  }
+}
+
+function openAssignStockDialog(key) {
+  const map = computeStockMap();
+  const entry = map[key];
+  if (!entry) { alert('Ya no hay stock disponible de esa pieza.'); applyFilters(); return; }
+  const candidatos = DATA
+    .filter(r => r.estado_general !== 'Cancelado' && remainingPend(r) > 0 && stockKey(r.codigo, r.descripcion) === key)
+    .sort((a, b) => (a.fecha_entrega || '').localeCompare(b.fecha_entrega || ''));
+  let html = `<h3>📦 Asignar a un pedido</h3>
+    <div class="text-dim" style="margin-bottom:10px;">${escHtml(entry.descripcion || entry.codigo)} <span style="color:#fff;">(Cód: ${escHtml(entry.codigo)})</span> — ${entry.cant.toLocaleString()} u. disponibles en stock</div>`;
+  if (!candidatos.length) {
+    html += `<div class="text-dim" style="padding:10px 0;">Todavía no hay ningún pedido pendiente con esta pieza. Queda guardada en stock hasta que aparezca uno (se actualiza solo con la carga diaria de SGA).</div>
+      <div class="stock-actions"><button class="stock-btn-cancel" onclick="closeStockDialog()" style="flex:1;">Cerrar</button></div>`;
+    showStockDialog(html);
+    return;
+  }
+  html += `<div class="stock-field"><label>Pedido</label><select id="stock-assign-pedido">`;
+  candidatos.forEach(r => {
+    html += `<option value="${r.id}">${escHtml(r.cliente)} — ${escHtml(r.comprobante)} (pend: ${remainingPend(r).toLocaleString()}, entrega: ${formatDate(r.fecha_entrega)})</option>`;
+  });
+  html += `</select></div>
+    <div class="stock-field"><label>Cantidad a asignar</label><input type="number" id="stock-assign-cant" min="1" step="1" value="1"></div>
+    <div class="stock-actions">
+      <button class="stock-btn-cancel" onclick="closeStockDialog()">Cancelar</button>
+      <button class="stock-btn-primary" id="stock-assign-btn" onclick="confirmAssignStock('${escJs(key)}')">Asignar</button>
+    </div>`;
+  showStockDialog(html);
+  const sel = document.getElementById('stock-assign-pedido');
+  const cantInput = document.getElementById('stock-assign-cant');
+  function suggestCant() {
+    const row = DATA.find(d => d.id === Number(sel.value));
+    if (!row) return;
+    cantInput.value = Math.max(1, Math.min(entry.cant, remainingPend(row)));
+  }
+  sel.addEventListener('change', suggestCant);
+  suggestCant();
+}
+
+async function confirmAssignStock(key) {
+  const sel = document.getElementById('stock-assign-pedido');
+  const row = DATA.find(d => d.id === Number(sel.value));
+  if (!row) { alert('No se encontró el pedido seleccionado.'); return; }
+  const cant = Number(document.getElementById('stock-assign-cant').value);
+  const map = computeStockMap();
+  const entry = map[key];
+  const disponible = entry ? entry.cant : 0;
+  if (!isFinite(cant) || cant <= 0) { alert('La cantidad tiene que ser mayor a 0.'); return; }
+  if (cant > disponible) { alert(`Solo hay ${disponible} unidades disponibles en stock de esta pieza.`); return; }
+  const restante = remainingPend(row);
+  if (cant > restante) { alert(`Ese pedido solo necesita ${restante} piezas más — no se puede asignar de más.`); return; }
+  if (!dbRef) { alert('No se pudo conectar al almacenamiento compartido. Probá recargar la página.'); return; }
+  const btn = document.getElementById('stock-assign-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Asignando...'; }
+  try {
+    await dbRef.collection('stock_movimientos').add({
+      codigo: entry.codigo, descripcion: entry.descripcion, cant: -cant, tipo: 'asignacion',
+      pedido_id: row.id, comprobante: row.comprobante, cliente: row.cliente, ts: new Date().toISOString()
+    });
+    const nuevoPrep = Math.min(row.pend, prepCant(row.id) + cant);
+    await dbRef.collection('preparados').doc(String(row.id)).set({ cant: nuevoPrep, ts: new Date().toISOString() });
+    closeStockDialog();
+  } catch (e) {
+    console.error('No se pudo asignar stock al pedido:', e && e.code, e && e.message);
+    if (canWritePrep === false || (e && e.code === 'invalid_argument')) {
+      alert('No se pudo guardar: tu acceso a este tablero es de solo lectura. Pedile a quien administra el link que te dé acceso de Colaborador.');
+    } else {
+      alert('No se pudo asignar el stock a ese pedido. Probá de nuevo. Si ya se descontó del stock pero no se marcó como preparado, avisale a quien administra el tablero.');
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Asignar'; }
+  }
+}
+
+function initSelects() {
+  const clientSel = document.getElementById('filter-client');
+  const clients = [...new Set(DATA.map(d => d.cliente))].sort();
+  clients.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c; opt.textContent = c;
+    clientSel.appendChild(opt);
+  });
+  const matSel = document.getElementById('filter-material');
+  const materials = [...new Set(DATA.map(d => d.material))].filter(m => m && m !== '-').sort();
+  materials.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m; opt.textContent = m;
+    matSel.appendChild(opt);
+  });
+}
+
+function buildModelCards() {
+  const rep = DATA.filter(d => d.es_repuesto);
+  const materials = [...new Set(rep.map(d => d.material))];
+  const bar = document.getElementById('mat-subfilter-bar');
+  let barHtml = `<button class="mat-subbtn active" id="btn-mat-all" onclick="filterByMatRep('ALL')">Todos (${rep.length} u)</button>`;
+  materials.forEach(m => {
+    const n = rep.filter(d => d.material === m).length;
+    const safeId = 'btn-mat-' + m.replace(/[^a-zA-Z0-9]/g,'');
+    barHtml += `<button class="mat-subbtn" id="${safeId}" onclick="filterByMatRep('${m.replace(/'/g,"\\'")}')">${m} (${n} u)</button>`;
+  });
+  bar.innerHTML = barHtml;
+
+  const byCod = {};
+  rep.forEach(r => {
+    if (!byCod[r.codigo]) byCod[r.codigo] = {qty:0, pend:0, kg:0, desc:r.descripcion, mat:r.material};
+    byCod[r.codigo].qty += r.cant;
+    byCod[r.codigo].pend += r.pend;
+    byCod[r.codigo].kg += (r.estado_general === 'Cancelado' ? 0 : r.kilos);
+  });
+  const entries = Object.entries(byCod).sort((a,b) => b[1].kg - a[1].kg);
+  const totalQty = rep.reduce((s,r)=>s+r.cant,0);
+  const totalPend = rep.reduce((s,r)=>s+r.pend,0);
+  const totalKg = kgSum(rep);
+
+  let html = `<div class="model-card active" id="model-card-ALL" onclick="filterByAro('ALL')" data-mat="ALL">
+    <div><div class="model-name">Todos los Repuestos</div><div class="model-sub">${entries.length} modelos</div></div>
+    <div class="model-stats"><div class="qty" style="color:#fff;">${totalPend.toLocaleString()} u. pend.</div><div class="kg">${totalQty.toLocaleString()} u. tot. · ${totalKg.toLocaleString(undefined,{maximumFractionDigits:1})} Kg</div></div>
+  </div>`;
+  entries.forEach(([cod, d]) => {
+    const badgeCls = d.mat === 'NODULAR' ? 'badge-nodular' : 'badge-sae';
+    html += `<div class="model-card" id="model-card-${cod}" onclick="filterByAro('${cod}')" data-mat="${d.mat}">
+      <div>
+        <div class="model-name">${d.desc}</div>
+        <div class="model-sub">Cód: ${cod}</div>
+        <span class="badge-mat ${badgeCls}">${d.mat}</span>
+      </div>
+      <div class="model-stats"><div class="qty">${d.pend.toLocaleString()} u. pend.</div><div class="kg">${d.qty.toLocaleString()} u. tot. · ${d.kg.toLocaleString(undefined,{maximumFractionDigits:1})} Kg</div></div>
+    </div>`;
+  });
+  document.getElementById('model-cards').innerHTML = html;
+}
+
+function toggleSplitMode() {
+  isSplitView = !isSplitView;
+  applySplitVisual();
+}
+function applySplitVisual() {
+  const container = document.getElementById('split-container');
+  const leftWindow = document.getElementById('window-left');
+  const btnIcon = document.getElementById('split-icon');
+  const btnText = document.getElementById('split-text');
+  if (isSplitView) {
+    container.classList.add('split-active');
+    leftWindow.style.display = 'block';
+    btnIcon.textContent = '◫'; btnText.textContent = 'Modo: 2 Ventanas';
+  } else {
+    container.classList.remove('split-active');
+    leftWindow.style.display = 'none';
+    btnIcon.textContent = '▢'; btnText.textContent = 'Modo: Tabla Sola';
+  }
+}
+
+function setFilterFromCard(type) {
+  currentFilter = (currentFilter === type && type !== 'all') ? 'all' : type;
+  if (currentFilter === 'repuestos' && !isSplitView) { isSplitView = true; }
+  else if (currentFilter !== 'repuestos') { isSplitView = (currentFilter === 'repuestos'); }
+  selectedAroCode = 'ALL';
+  updateActiveVisuals();
+  applyFilters();
+}
+function setChipFilter(type) { setFilterFromCard_direct(type); }
+function setFilterFromCard_direct(type) {
+  currentFilter = type;
+  selectedAroCode = 'ALL';
+  updateActiveVisuals();
+  applyFilters();
+}
+
+function clearAllFilters() {
+  document.getElementById('filter-search').value = '';
+  document.getElementById('filter-client').value = '';
+  document.getElementById('filter-material').value = '';
+  document.getElementById('filter-area').value = '';
+  document.getElementById('filter-urgency').value = '';
+  document.getElementById('filter-kg').value = '';
+  selectedMatRep = 'ALL';
+  document.querySelectorAll('.mat-subbtn').forEach(b => b.classList.remove('active'));
+  const allMatBtn = document.getElementById('btn-mat-all');
+  if (allMatBtn) allMatBtn.classList.add('active');
+  setFilterFromCard_direct('all');
+}
+
+function filterByMatRep(mat) {
+  selectedMatRep = mat;
+  document.querySelectorAll('.mat-subbtn').forEach(b => b.classList.remove('active'));
+  const safeId = mat === 'ALL' ? 'btn-mat-all' : ('btn-mat-' + mat.replace(/[^a-zA-Z0-9]/g,''));
+  const btn = document.getElementById(safeId);
+  if (btn) btn.classList.add('active');
+  document.querySelectorAll('.model-card').forEach(card => {
+    const cardMat = card.getAttribute('data-mat');
+    card.style.display = (mat === 'ALL' || cardMat === 'ALL' || cardMat === mat) ? 'flex' : 'none';
+  });
+  selectedAroCode = 'ALL';
+  document.querySelectorAll('.model-card').forEach(c => c.classList.remove('active'));
+  const allCard = document.getElementById('model-card-ALL');
+  if (allCard) allCard.classList.add('active');
+  applyFilters();
+}
+
+function filterByAro(code) {
+  selectedAroCode = code;
+  document.querySelectorAll('.model-card').forEach(c => c.classList.remove('active'));
+  const activeCard = document.getElementById('model-card-' + code);
+  if (activeCard) activeCard.classList.add('active');
+  applyFilters();
+  if (window.innerWidth <= 760 && code !== 'ALL') openGroupModal(code);
+}
+
+function updateActiveVisuals() {
+  document.querySelectorAll('.kpi-card').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('.priority-row').forEach(c => c.classList.remove('active'));
+  const activeCard = document.getElementById('card-' + currentFilter);
+  if (activeCard) activeCard.classList.add('active');
+
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active', 'ready-active', 'rep-active', 'alert-active'));
+  const chip = document.getElementById('chip-' + currentFilter);
+  if (chip) {
+    if (currentFilter === 'listas') chip.classList.add('ready-active');
+    else if (currentFilter === 'repuestos') chip.classList.add('rep-active');
+    else if (currentFilter === 'vencidas' || currentFilter === 'vencidas_term') chip.classList.add('alert-active');
+    else chip.classList.add('active');
+  }
+
+  if (currentFilter === 'repuestos') { isSplitView = true; } else { selectedAroCode = 'ALL'; }
+  applySplitVisual();
+
+  document.querySelectorAll('.model-card').forEach(c => c.classList.remove('active'));
+  const modelCard = document.getElementById('model-card-' + selectedAroCode);
+  if (modelCard) modelCard.classList.add('active');
+}
+
+function applyFilters() {
+  if (currentFilter === 'armar_hoja' && !isHojaInspector) { currentFilter = 'all'; }
+  const stockSection = document.getElementById('stock-section');
+  const despachadoSection = document.getElementById('despachado-section');
+  const armarHojaSection = document.getElementById('armar-hoja-section');
+  const splitContainer = document.getElementById('split-container');
+  if (currentFilter === 'stock') {
+    if (stockSection) stockSection.style.display = 'block';
+    if (despachadoSection) despachadoSection.style.display = 'none';
+    if (armarHojaSection) armarHojaSection.style.display = 'none';
+    if (splitContainer) splitContainer.style.display = 'none';
+    renderStockPanel();
+    const map = computeStockMap();
+    const entries = Object.values(map);
+    document.getElementById('count-filtered').textContent = entries.length;
+    document.getElementById('count-total').textContent = DATA.length;
+    document.getElementById('kg-filtered').textContent = entries.reduce((s,d)=>s+(d.kxu?d.kxu*d.cant:0),0).toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1});
+    document.getElementById('cant-filtered').textContent = entries.reduce((s,d)=>s+d.cant,0).toLocaleString();
+    return;
+  } else if (currentFilter === 'despachado') {
+    if (stockSection) stockSection.style.display = 'none';
+    if (despachadoSection) despachadoSection.style.display = 'block';
+    if (armarHojaSection) armarHojaSection.style.display = 'none';
+    if (splitContainer) splitContainer.style.display = 'none';
+    renderDespachadoPanel();
+    document.getElementById('count-filtered').textContent = despachosLog.length;
+    document.getElementById('count-total').textContent = DATA.length;
+    document.getElementById('kg-filtered').textContent = despachosLog.reduce((s,d)=>s+(d.kg||0),0).toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1});
+    document.getElementById('cant-filtered').textContent = despachosLog.reduce((s,d)=>s+(d.cantidad||0),0).toLocaleString();
+    return;
+  } else if (currentFilter === 'armar_hoja') {
+    if (stockSection) stockSection.style.display = 'none';
+    if (despachadoSection) despachadoSection.style.display = 'none';
+    if (splitContainer) splitContainer.style.display = 'none';
+    if (armarHojaSection) armarHojaSection.style.display = 'block';
+    renderArmarHojaPanel();
+    const rowsDisp = hojaDisponibleRows();
+    document.getElementById('count-filtered').textContent = rowsDisp.length;
+    document.getElementById('count-total').textContent = DATA.length;
+    document.getElementById('kg-filtered').textContent = '—';
+    document.getElementById('cant-filtered').textContent = rowsDisp.reduce((s,r)=>s+prepSinHojaDisponible(r),0).toLocaleString();
+    return;
+  } else {
+    if (stockSection) stockSection.style.display = 'none';
+    if (despachadoSection) despachadoSection.style.display = 'none';
+    if (armarHojaSection) armarHojaSection.style.display = 'none';
+    if (splitContainer) splitContainer.style.display = '';
+  }
+
+  const search = document.getElementById('filter-search').value.toLowerCase().trim();
+  const client = document.getElementById('filter-client').value;
+  const material = document.getElementById('filter-material').value;
+  const area = document.getElementById('filter-area').value;
+  const urgency = document.getElementById('filter-urgency').value;
+  const kgRange = document.getElementById('filter-kg').value;
+
+  const filtered = DATA.filter(row => {
+    if (currentFilter === 'listas' && (row.estado_general !== 'Fundido / En Terminación' || isPrepared(row))) return false;
+    if (currentFilter === 'preparado' && !(prepPendienteDespacho(row) > 0)) return false;
+    if (currentFilter === 'moldeo' && row.area_actual !== 'Moldeo / Fusión') return false;
+    if (currentFilter === 'repuestos' && !row.es_repuesto) return false;
+    if (currentFilter === 'vencidas' && !(row.alerta_entrega === 'VENCIDA (FÁBRICA)' || row.alerta_entrega === 'URGENTE (<=7d)')) return false;
+    if (currentFilter === 'vencidas_term' && !isVencidaTerminacion(row)) return false;
+    if (currentFilter === 'proceso' && (row.estado_general !== 'En Fabricación' || row.area_actual === 'Moldeo / Fusión')) return false;
+    if (currentFilter === 'cancelados' && row.estado_general !== 'Cancelado') return false;
+    if (currentFilter === 'prioridad_alta' && getPriority(row.id) !== 'alta') return false;
+    if (currentFilter === 'prioridad_media' && getPriority(row.id) !== 'media') return false;
+
+    if (currentFilter === 'repuestos' && selectedMatRep !== 'ALL') {
+      if (row.material.toUpperCase() !== selectedMatRep.toUpperCase()) return false;
+    }
+    if (selectedAroCode !== 'ALL') {
+      if (row.codigo !== selectedAroCode) return false;
+    }
+
+    if (search) {
+      const match = row.cliente.toLowerCase().includes(search) ||
+                    row.comprobante.toLowerCase().includes(search) ||
+                    row.oc.toLowerCase().includes(search) ||
+                    row.codigo.toLowerCase().includes(search) ||
+                    row.descripcion.toLowerCase().includes(search) ||
+                    (row.notas && row.notas.toLowerCase().includes(search));
+      if (!match) return false;
+    }
+    if (client && row.cliente !== client) return false;
+    if (material && row.material !== material) return false;
+
+    if (area) {
+      if (area === 'Cancelado') { if (row.estado_general !== 'Cancelado') return false; }
+      else if (area === '__PREPARADO__') { if (!(prepPendienteDespacho(row) > 0)) return false; }
+      else if (area === 'En Terminación') { if (row.area_actual !== area || isPrepared(row)) return false; }
+      else { if (row.area_actual !== area) return false; }
+    }
+    if (urgency && row.alerta_entrega !== urgency) return false;
+
+    if (kgRange) {
+      if (kgRange === '0-50' && row.kilos > 50) return false;
+      if (kgRange === '50-200' && (row.kilos <= 50 || row.kilos > 200)) return false;
+      if (kgRange === '200-1000' && (row.kilos <= 200 || row.kilos > 1000)) return false;
+      if (kgRange === '1000+' && row.kilos <= 1000) return false;
+    }
+    return true;
+  });
+  renderTable(filtered);
+}
+
+function sortTable(col) {
+  if (sortCol === col) sortAsc = !sortAsc;
+  else { sortCol = col; sortAsc = true; }
+  applyFilters();
+}
+
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+let toastTimer = null;
+function showToast(message, kind) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  if (toastTimer) clearTimeout(toastTimer);
+  el.textContent = message;
+  el.className = 'toast show' + (kind ? ' ' + kind : '');
+  toastTimer = setTimeout(() => { el.classList.remove('show'); }, 2200);
+}
+
+
+
+    // ---- "Despachado": marcar como efectivamente despachada (salió de
+    // Preparado p/ Despacho) una cantidad de un ítem, con historial
+    // permanente agrupado por día (ver renderDespachadoPanel más abajo).
+    // Si el ítem tiene lotes pesados (Hoja de Pesada) con cantidad todavía
+    // sin despachar, se eligen acá cuáles probetas salen ahora mismo —
+    // igual que al pesar, es quien despacha quien ve físicamente qué
+    // probeta está cargando. Lo que no tiene lote conocido (preparado a
+    // mano desde la tabla, sin pasar por una Hoja de Pesada) se carga
+    // aparte, como "sin detalle", igual que siempre. ----
+    let despachoFormState = null;
+
+    function openDespachoDialog(id) {
+      const row = DATA.find(d => d.id === id);
+      if (!row) return;
+      const disp = prepPendienteDespacho(row);
+      if (disp <= 0) { alert('Ya no queda nada preparado sin despachar de este ítem.'); applyFilters(); return; }
+      const lotes = lotesDisponibles(id);
+      const sinDetalle = prepSinDetalleDisponible(row);
+      despachoFormState = {
+        itemId: id,
+        lotes: lotes.map(l => ({ ...l, cantidadDespachar: l.disponible })),
+        sinDetalleDisponible: sinDetalle,
+        sinDetalleCantidad: sinDetalle,
+      };
+      renderDespachoDialog();
+      document.getElementById('despacho-overlay').classList.add('open');
+    }
+
+    function despachoTotalACargar() {
+      const s = despachoFormState;
+      if (!s) return 0;
+      return s.lotes.reduce((sum, l) => sum + (l.cantidadDespachar || 0), 0) + (s.sinDetalleCantidad || 0);
+    }
+
+    function renderDespachoDialog() {
+      const s = despachoFormState;
+      if (!s) return;
+      const row = DATA.find(d => d.id === s.itemId);
+      if (!row) return;
+      const lotesHtml = s.lotes.map((l, idx) => `
+        <div class="hoja-renglon">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:6px; flex-wrap:wrap;">
+            <span class="font-bold" style="color:#fff; font-size:0.85rem;">Probeta ${escHtml(l.probeta || '-')}</span>
+            <span class="text-dim" style="font-size:0.72rem;">${l.hojaNumero ? 'Hoja Nº ' + escHtml(l.hojaNumero) : 'Sin Nº de hoja'} · disponible: ${l.disponible.toLocaleString()} u.${l.pesoReal ? ' · ' + fmt1(l.pesoReal) + ' Kg pesados' : ''}</span>
+          </div>
+          <div class="hoja-field-mini">
+            <label>Cantidad a despachar de esta probeta</label>
+            <input type="number" min="0" max="${l.disponible}" step="1" value="${l.cantidadDespachar}" oninput="updateDespachoLoteCant(${idx}, this.value)">
+          </div>
+        </div>
+      `).join('');
+      const sinDetalleHtml = s.sinDetalleDisponible > 0 ? `
+        <div class="hoja-renglon">
+          <div style="margin-bottom:6px;"><span class="font-bold" style="color:#fff; font-size:0.85rem;">Sin detalle de probeta</span> <span class="text-dim" style="font-size:0.72rem;">(cargado a mano, sin Hoja de Pesada)</span></div>
+          <div class="hoja-field-mini">
+            <label>Cantidad a despachar sin detalle (disponible: ${s.sinDetalleDisponible.toLocaleString()} u.)</label>
+            <input type="number" min="0" max="${s.sinDetalleDisponible}" step="1" value="${s.sinDetalleCantidad}" oninput="updateDespachoSinDetalleCant(this.value)">
+          </div>
+        </div>
+      ` : '';
+      document.getElementById('despacho-dialog-content').innerHTML = `
+        <h3>🚚 Marcar como Despachado</h3>
+        <div class="text-dim" style="margin-bottom:10px;">${escHtml(row.cliente)} — <span style="color:#fff;">${escHtml(row.descripcion)}</span> (NV ${escHtml(row.comprobante)})</div>
+        ${lotesHtml}${sinDetalleHtml}
+        <div class="hoja-renglon-total" id="desp-total-ref">Total a despachar: <b>${despachoTotalACargar().toLocaleString()}</b> u.</div>
+        <div class="stock-actions">
+          <button class="stock-btn-cancel" onclick="closeDespachoDialog()">Cancelar</button>
+          <button class="stock-btn-primary" id="desp-confirm-btn" onclick="confirmDespacho()">✅ Confirmar Despacho</button>
+        </div>`;
+    }
+
+    function updateDespachoLoteCant(idx, value) {
+      const s = despachoFormState;
+      if (!s || !s.lotes[idx]) return;
+      let v = parseInt(value, 10);
+      if (isNaN(v) || v < 0) v = 0;
+      if (v > s.lotes[idx].disponible) v = s.lotes[idx].disponible;
+      s.lotes[idx].cantidadDespachar = v;
+      const el = document.getElementById('desp-total-ref');
+      if (el) el.innerHTML = `Total a despachar: <b>${despachoTotalACargar().toLocaleString()}</b> u.`;
+    }
+    function updateDespachoSinDetalleCant(value) {
+      const s = despachoFormState;
+      if (!s) return;
+      let v = parseInt(value, 10);
+      if (isNaN(v) || v < 0) v = 0;
+      if (v > s.sinDetalleDisponible) v = s.sinDetalleDisponible;
+      s.sinDetalleCantidad = v;
+      const el = document.getElementById('desp-total-ref');
+      if (el) el.innerHTML = `Total a despachar: <b>${despachoTotalACargar().toLocaleString()}</b> u.`;
+    }
+
+    function closeDespachoDialog() {
+      document.getElementById('despacho-overlay').classList.remove('open');
+    }
+    function closeDespachoDialogOnOverlay(e) {
+      if (e.target.id === 'despacho-overlay') closeDespachoDialog();
+    }
+
+    async function confirmDespacho() {
+      const s = despachoFormState;
+      if (!s) return;
+      const row = DATA.find(d => d.id === s.itemId);
+      if (!row) return;
+      const disp = prepPendienteDespacho(row);
+      if (disp <= 0) { closeDespachoDialog(); applyFilters(); return; }
+      const lineas = [];
+      s.lotes.forEach(l => {
+        const v = Math.min(l.cantidadDespachar || 0, l.disponible);
+        if (v > 0) {
+          const pesoRealLinea = l.cantidad > 0 ? Math.round((l.pesoReal || 0) * (v / l.cantidad) * 10) / 10 : null;
+          lineas.push({ probeta: l.probeta || '-', cantidad: v, pesoReal: pesoRealLinea, hojaNumero: l.hojaNumero || null, loteId: l.id });
+        }
+      });
+      const vSinDetalle = Math.min(s.sinDetalleCantidad || 0, s.sinDetalleDisponible);
+      if (vSinDetalle > 0) {
+        lineas.push({ probeta: '-', cantidad: vSinDetalle, pesoReal: null, hojaNumero: null, loteId: null });
+      }
+      const val = lineas.reduce((sum, l) => sum + l.cantidad, 0);
+      if (val <= 0) { alert('Cargá al menos una cantidad a despachar.'); return; }
+      if (val > disp) { alert(`La cantidad total a despachar (${val}) supera lo disponible (${disp}).`); return; }
+      if (!dbRef) {
+        alert('No se pudo conectar al almacenamiento compartido. Este despacho no se va a guardar.');
+        return;
+      }
+      const btn = document.getElementById('desp-confirm-btn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+      try {
+        const yaDespachado = despCant(row.id);
+        const nuevoCant = Math.min(prepCantClamped(row), yaDespachado + val);
+        await dbRef.collection('despachado').doc(String(row.id)).set({ cant: nuevoCant, ts: new Date().toISOString() });
+        const kg = row.pend > 0 ? row.kilos * (val / row.pend) : 0;
+        await dbRef.collection('despachos_log').add({
+          itemId: row.id, cliente: row.cliente, comprobante: row.comprobante, codigo: row.codigo,
+          descripcion: row.descripcion, material: row.material, oc: row.oc,
+          cantidad: val, kg: Math.round(kg * 10) / 10,
+          dia: diaLocalStr(), ts: new Date().toISOString(),
+          probetas: lineas,
+        });
+        closeDespachoDialog();
+      } catch (e) {
+        console.error('No se pudo registrar el despacho:', e && e.code, e && e.message);
+        if (canWritePrep === false || (e && e.code === 'invalid_argument')) {
+          alert('No se pudo guardar: tu acceso a este tablero es de solo lectura (Visualizador). Pedile a quien administra el link que te dé acceso de Colaborador.');
+        } else {
+          alert('No se pudo guardar el despacho. Probá de nuevo.');
+        }
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '✅ Confirmar Despacho'; }
+      }
+    }
+
+    function renderDespachadoPanel() {
+      const el = document.getElementById('despachado-list');
+      if (!el) return;
+      if (!despachosLog.length) {
+        el.innerHTML = '<div class="text-dim" style="padding: 20px 4px;">Todavía no se marcó nada como despachado desde acá. Usá el botón "🚚 Despachar" en cada ítem dentro de "Preparado para Despacho".</div>';
+        return;
+      }
+      const hoy = diaLocalStr();
+      const ayer = diaLocalStr(new Date(Date.now() - 86400000));
+      const byDay = {};
+      despachosLog.forEach(d => {
+        const dia = d.dia || '(sin fecha)';
+        (byDay[dia] || (byDay[dia] = [])).push(d);
+      });
+      const dias = Object.keys(byDay).sort((a, b) => b.localeCompare(a));
+      el.innerHTML = dias.map(dia => {
+        const entries = byDay[dia].slice().sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+        const cant = entries.reduce((s, d) => s + (d.cantidad || 0), 0);
+        const kg = entries.reduce((s, d) => s + (d.kg || 0), 0);
+        let label = dia === '(sin fecha)' ? 'Sin fecha' : formatDate(dia);
+        if (dia === hoy) label = 'Hoy — ' + label;
+        else if (dia === ayer) label = 'Ayer — ' + label;
+        const cardsHtml = entries.map(d => `
+          <div class="stock-card">
+            <div class="info">
+              <div class="name">${escHtml(d.descripcion || '(sin descripción)')}</div>
+              <div class="sub">${escHtml(d.cliente || '')} · NV ${escHtml(d.comprobante || '')}${d.codigo ? ' · Cód: ' + escHtml(d.codigo) : ''}</div>
+            </div>
+            <div class="qty">${(d.cantidad || 0).toLocaleString()} u.${d.kg ? ' <span class="kg">(' + d.kg.toLocaleString(undefined,{maximumFractionDigits:1}) + ' Kg)</span>' : ''}</div>
+            <div class="actions">
+              <button onclick="openDespachoDetalleModal('${escJs(d.id)}')" title="Ver probetas y pieza asociadas a este despacho">👁️ Ver detalle</button>
+            </div>
+          </div>`).join('');
+        return `
+          <div class="desp-day-header">
+            <span class="desp-day-title">${label}</span>
+            <span class="desp-day-sub">${cant.toLocaleString()} u. · ${kg.toLocaleString(undefined,{maximumFractionDigits:1})} Kg</span>
+          </div>
+          ${cardsHtml}`;
+      }).join('');
+    }
+
+    function openDespachoDetalleModal(id) {
+      const d = despachosLog.find(x => String(x.id) === String(id));
+      if (!d) return;
+      const probetas = d.probetas || [];
+      let html = `
+        <div class="modal-row"><div class="k">Cliente</div><div class="v">${escHtml(d.cliente || '-')}</div></div>
+        <div class="modal-row"><div class="k">Comprobante</div><div class="v">${escHtml(d.comprobante || '-')}${d.oc ? ' <span class="text-dim">(OC: ' + escHtml(d.oc) + ')</span>' : ''}</div></div>
+        <div class="modal-row"><div class="k">Pieza</div><div class="v">${escHtml(d.descripcion || '-')}${d.codigo ? ' <span class="text-dim">(Cód. ' + escHtml(d.codigo) + ')</span>' : ''}</div></div>
+        <div class="modal-row"><div class="k">Material</div><div class="v">${escHtml(d.material || '-')}</div></div>
+        <div class="modal-row"><div class="k">Fecha de despacho</div><div class="v">${d.dia ? formatDate(d.dia) : '-'}</div></div>
+        <div class="modal-row"><div class="k">Cantidad / Kg</div><div class="v">${(d.cantidad || 0).toLocaleString()} u. · ${fmt1(d.kg || 0)} Kg</div></div>`;
+      if (probetas.length) {
+        html += `<div class="modal-section-title">Probetas despachadas</div>`;
+        probetas.forEach(p => {
+          html += `<div class="group-item" style="cursor:default;">
+            <div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+              <span class="font-bold" style="color:#fff; font-size:0.85rem;">Probeta ${escHtml(p.probeta || '-')}</span>
+              <span class="text-dim" style="font-size:0.72rem;">${p.hojaNumero ? 'Hoja Nº ' + escHtml(p.hojaNumero) : 'Sin Hoja de Pesada'}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-top:4px; font-size:0.8rem;">
+              <span>${(p.cantidad || 0).toLocaleString()} u.</span>
+              <span style="color: var(--accent); font-weight:600;">${p.pesoReal != null ? fmt1(p.pesoReal) + ' Kg' : 'Sin peso registrado'}</span>
+            </div>
+          </div>`;
+        });
+      } else {
+        html += `<div class="hoja-note" style="margin-top:14px;">Este despacho no tiene detalle de probetas registrado — se marcó como despachado antes de que el tablero empezara a guardar ese detalle, o la pieza se preparó directo desde la tabla sin pasar por una Hoja de Pesada.</div>`;
+      }
+      showModal('🚚 Detalle del Despacho', html);
+    }
+    function buildPrioridadCellHtml(r) {
+      const nivel = getPriority(r.id);
+      if (canSetPriority) {
+        return `
+          <select class="prioridad-select prioridad-${nivel || 'normal'}" onchange="savePriority(${r.id}, this.value, this)">
+            <option value="" ${nivel===''?'selected':''}>— Normal</option>
+            <option value="media" ${nivel==='media'?'selected':''}>🟡 Media</option>
+            <option value="alta" ${nivel==='alta'?'selected':''}>🔴 Alta</option>
+          </select>`;
+      }
+      return nivel ? `<span class="pill pill-${nivel==='alta'?'danger':'warning'}">${PRIORIDAD_LABEL[nivel]}</span>` : '<span class="text-dim">—</span>';
+    }
+
+    function renderTable(rows) {
+      const PRIORIDAD_RANK = { alta: 0, media: 1, '': 2 };
+      rows = rows.slice().sort((a, b) => {
+        let v1, v2;
+        if (sortCol === 'prioridad') {
+          v1 = PRIORIDAD_RANK[getPriority(a.id)];
+          v2 = PRIORIDAD_RANK[getPriority(b.id)];
+        } else if (sortCol === 'pend') {
+          v1 = remainingPend(a); v2 = remainingPend(b);
+        } else {
+          v1 = a[sortCol]; v2 = b[sortCol];
+        }
+        if (v1 === null || v1 === undefined) v1 = '';
+        if (v2 === null || v2 === undefined) v2 = '';
+        if (typeof v1 === 'string') { v1 = v1.toLowerCase(); v2 = v2.toLowerCase(); }
+        if (v1 < v2) return sortAsc ? -1 : 1;
+        if (v1 > v2) return sortAsc ? 1 : -1;
+        return 0;
+      });
+
+      const tbody = document.getElementById('table-body');
+      tbody.innerHTML = '';
+      let totalKg = 0, totalCant = 0;
+
+      rows.forEach(r => {
+        if (r.estado_general !== 'Cancelado') totalKg += r.kilos;
+        totalCant += remainingPend(r);
+
+        const pipeHtml = buildPipeHtml(r);
+        const alertPill = buildAlertPill(r);
+        const statusPill = buildStatusPill(r);
+        const repBadge = buildRepBadge(r);
+        const prepCellHtml = buildPrepCellHtml(r);
+        const prioridadCellHtml = buildPrioridadCellHtml(r);
+        const nivel = getPriority(r.id);
+
+        const tr = document.createElement('tr');
+        let trClasses = [];
+        if (isPrepared(r)) trClasses.push('row-prepared');
+        if (nivel === 'alta') trClasses.push('row-priority-alta');
+        else if (nivel === 'media') trClasses.push('row-priority-media');
+        tr.className = trClasses.join(' ');
+        tr.innerHTML = `
+          <td class="col-prioridad" data-label="Prioridad">${prioridadCellHtml}</td>
+          <td class="col-cliente" data-label="Cliente"><div class="font-bold">${escHtml(r.cliente)}</div><div class="text-dim">${formatDate(r.fecha_nv)}</div></td>
+          <td class="col-comprobante" data-label="Comprobante"><div class="font-bold">${escHtml(r.comprobante)}</div><div class="text-dim">OC: ${escHtml(r.oc)}</div></td>
+          <td class="col-fecha" data-label="Fecha Entrega"><div class="font-bold">${formatDate(r.fecha_entrega)}</div></td>
+          <td class="col-alerta" data-label="Alerta">${alertPill}</td>
+          <td class="col-descripcion" data-label="Descripción"><div>${repBadge}<span class="font-bold" style="color:#f1f5f9;">${escHtml(r.descripcion)}</span></div><div class="mobile-oc-mat">OC: ${escHtml(r.oc)} · Mat: ${escHtml(r.material)}</div><div class="text-dim">Mat: ${escHtml(r.material)} | ${r.kxu} Kg/u</div>${r.notas ? `<div class="text-dim" style="color:#fbbf24;">💬 ${escHtml(r.notas)}</div>` : ''}</td>
+          <td class="col-pend num" data-label="Pend." style="font-weight:600;" title="Pendiente de SGA (${r.pend.toLocaleString()}) ya descontado lo que esté Preparado para Despacho">${remainingPend(r).toLocaleString()}</td>
+          <td class="col-kilos num" data-label="Kilos" style="font-weight:600; color: var(--accent);">${r.kilos.toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1})} Kg</td>
+          <td class="col-estado" data-label="Estado / Área">${statusPill}${buildAvanceManualHtml(r)}</td>
+          <td class="col-flujo" data-label="Flujo Áreas" style="text-align:center;">${pipeHtml}</td>
+          <td class="col-prep" data-label="Preparado p/ Despacho">${prepCellHtml}</td>
+        `;
+        tr.addEventListener('click', (e) => {
+          if (window.innerWidth > 760) return;
+          if (e.target.closest('input, button, select, a')) return;
+          openDetailModal(r.id);
+        });
+        tbody.appendChild(tr);
+      });
+
+      document.getElementById('count-filtered').textContent = rows.length;
+      document.getElementById('count-total').textContent = DATA.length;
+      document.getElementById('kg-filtered').textContent = totalKg.toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1});
+      document.getElementById('cant-filtered').textContent = totalCant.toLocaleString();
+    }
+
+    // =========================================================================
+    // ---- Hoja de Pesada: se arma desde la pantalla restringida de
+    // Inspección Final (ver renderArmarHojaPanel/startArmarHojaFromSelection
+    // más abajo, sección "armar-hoja-panel"), a partir de ítems que YA están
+    // "Preparado para Despacho". Acá sigue el modal de pesaje/trazabilidad,
+    // la generación del PDF y la apertura de Gmail — ver también pdf_lib.js
+    // (MiniPdf / buildHojaPesadaPdfBlob) para el armado del PDF en sí. ----
+    // =========================================================================
+
+    function clearHojaSelection() {
+      selectedHojaIds.clear();
+    }
+
+    function makeHojaRenglon(kxu, cantidad) {
+      const pesoTeorico = kxu > 0 ? Math.round(kxu * cantidad * 10) / 10 : null;
+      return {
+        cantidad,
+        probeta: '',
+        pesoTeorico,
+        pesoReal: pesoTeorico != null ? String(pesoTeorico) : '',
+        pesoRealTouched: false,
+      };
+    }
+
+    function openHojaModal() {
+      if (selectedHojaIds.size === 0) return;
+      const items = [...selectedHojaIds].map(id => DATA.find(d => d.id === id)).filter(Boolean);
+      if (!items.length) return;
+      const cliente = items[0].cliente;
+      hojaConfirmPending = false;
+      hojaValidationError = null;
+      hojaFormState = {
+        cliente,
+        transporte: '',
+        condPago: '',
+        mail: '',
+        confirmed: false,
+        items: items.map(r => {
+          const disponible = Math.max(0, Math.round(prepSinHojaDisponible(r)));
+          return {
+            id: r.id,
+            comprobante: r.comprobante,
+            codigo: r.codigo,
+            descripcion: r.descripcion,
+            material: r.material,
+            oc: r.oc,
+            pend: disponible,
+            kxu: r.kxu,
+            renglones: [makeHojaRenglon(r.kxu, disponible)],
+          };
+        }),
+      };
+      renderHojaModal();
+      document.getElementById('hoja-overlay').classList.add('open');
+    }
+
+    function hojaRenglonTotal(it) {
+      return it.renglones.reduce((s, rg) => s + (rg.cantidad || 0), 0);
+    }
+
+    function kgRefHtml(rg, kxu) {
+      return rg.pesoTeorico != null
+        ? `Kg/u teórico en SGA: ${kxu.toLocaleString(undefined,{maximumFractionDigits:2})} Kg/u × ${rg.cantidad.toLocaleString()} = <b>${rg.pesoTeorico.toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1})} Kg</b> — se precargó este valor, corregilo si pesó distinto.`
+        : `Kg/u teórico en SGA: <b>sin dato (0,0)</b> — esta pieza no tiene con qué comparar, cargá el peso real pesado.`;
+    }
+
+    function renderItemBlockHtml(idx) {
+      const it = hojaFormState.items[idx];
+      const total = hojaRenglonTotal(it);
+      const overLimit = total > it.pend;
+      const renglonesHtml = it.renglones.map((rg, rIdx) => `
+        <div class="hoja-renglon" id="hoja-renglon-${idx}-${rIdx}">
+          <div class="hoja-renglon-fields">
+            <div class="hoja-field-mini">
+              <label>Cantidad</label>
+              <input type="number" step="1" min="1" value="${rg.cantidad}" oninput="updateHojaRenglonCant(${idx}, ${rIdx}, this.value, this)">
+            </div>
+            <div class="hoja-field-mini">
+              <label>Nº de Probeta</label>
+              <input type="text" placeholder="Ej: AM6050" value="${escHtml(rg.probeta)}" oninput="updateHojaRenglonField(${idx}, ${rIdx}, 'probeta', this.value)">
+            </div>
+            <div class="hoja-field-mini">
+              <label>Peso real (Kg)</label>
+              <input type="number" step="0.1" min="0" id="hoja-pesoreal-${idx}-${rIdx}" value="${escHtml(rg.pesoReal)}" oninput="updateHojaRenglonField(${idx}, ${rIdx}, 'pesoReal', this.value); hojaFormState.items[${idx}].renglones[${rIdx}].pesoRealTouched = true;">
+            </div>
+            ${it.renglones.length > 1 ? `<button type="button" class="hoja-renglon-del" title="Quitar este renglón" onclick="removeHojaRenglon(${idx}, ${rIdx})">✕</button>` : '<span></span>'}
+          </div>
+          <div class="hoja-kg-ref" id="hoja-kgref-${idx}-${rIdx}">${kgRefHtml(rg, it.kxu)}</div>
+        </div>
+      `).join('');
+      return `
+        <div class="hoja-item-block" id="hoja-item-${idx}">
+          <div class="hoja-item-head">
+            <span class="nom">${escHtml(it.descripcion)}</span>
+            <span class="cod">Cód. ${escHtml(it.codigo)} · NV ${escHtml(it.comprobante)}</span>
+          </div>
+          <div class="hoja-field-mini" style="max-width:180px; margin-bottom:10px;">
+            <label>Orden de Compra (OC)</label>
+            <input type="text" placeholder="(opcional)" value="${escHtml(it.oc)}" oninput="updateHojaItemField(${idx}, 'oc', this.value)">
+          </div>
+          ${renglonesHtml}
+          <button type="button" class="hoja-btn-add-renglon" onclick="addHojaRenglon(${idx})">+ Agregar otra probeta (si parte de esta pieza salió con otro Nº)</button>
+          <div class="hoja-renglon-total${overLimit ? ' over' : ''}" id="hoja-total-${idx}">Total a pesar: <b>${total.toLocaleString()}</b> / ${it.pend.toLocaleString()} u. preparadas disponibles${overLimit ? ' — ¡supera lo preparado disponible!' : ''}</div>
+        </div>
+      `;
+    }
+
+    function renderHojaModal() {
+      const s = hojaFormState;
+      if (!s) return;
+      const itemsHtml = s.items.map((it, idx) => renderItemBlockHtml(idx)).join('');
+
+      document.getElementById('hoja-dialog-content').innerHTML = `
+        <div class="hoja-dialog-head" style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+          <h3 style="margin-bottom:4px;">🧾 Armar Hoja de Pesada — ${escHtml(s.cliente)}</h3>
+          <button class="modal-close" onclick="closeHojaModal()" title="Cerrar" style="flex-shrink:0;">✕</button>
+        </div>
+        <div class="hoja-sub">${s.items.length} ítem${s.items.length===1?'':'s'} seleccionado${s.items.length===1?'':'s'}. Revisá/corregí el peso real de cada uno — si una pieza salió con más de un Nº de Probeta, agregá un renglón por cada uno.</div>
+        <div class="hoja-field-row">
+          <div class="hoja-field"><label>Transporte</label><input type="text" placeholder="(opcional)" value="${escHtml(s.transporte)}" oninput="hojaFormState.transporte=this.value"></div>
+          <div class="hoja-field"><label>Cond. / Pago</label><input type="text" placeholder="(opcional)" value="${escHtml(s.condPago)}" oninput="hojaFormState.condPago=this.value"></div>
+          <div class="hoja-field"><label>Mail destinatario</label><input type="email" placeholder="nombre@cliente.com" value="${escHtml(s.mail)}" oninput="hojaFormState.mail=this.value; refreshHojaGmailLink();"></div>
+        </div>
+        ${itemsHtml}
+        ${hojaValidationError ? `<div class="hoja-confirm-check" style="border-color:var(--danger); background:rgba(239,68,68,0.12); color:#fecaca;">⚠️ ${escHtml(hojaValidationError)}</div>` : ''}
+        <div class="hoja-actions">
+          ${s.confirmed ? `
+          <div class="hoja-confirmed-badge">✅ Confirmado — Hoja de Pesada Nº ${escHtml(s.numeroHoja || '')} registrada</div>
+          <button class="hoja-btn hoja-btn-primary" id="hoja-btn-pdf" onclick="generateHojaPdf()">⬇️ Descargar PDF</button>
+          ${hojaGmailLinkHtml()}
+          <button class="hoja-btn hoja-btn-secondary" onclick="closeHojaModal()">Cerrar</button>
+          ` : hojaConfirmPending ? `
+          <div class="hoja-confirm-check">⚠️ ¿Seguro que ya pesaste todo y es definitivo? Esto registra el pesaje y la trazabilidad de probetas de esta hoja — no se puede deshacer.</div>
+          <button class="hoja-btn hoja-btn-secondary" id="hoja-btn-confirm-cancel" onclick="cancelConfirmHojaPesada()">Cancelar</button>
+          <button class="hoja-btn hoja-btn-confirm" id="hoja-btn-confirm" onclick="confirmHojaPesada()">Sí, confirmar</button>
+          ` : `
+          <button class="hoja-btn hoja-btn-confirm" id="hoja-btn-confirm" onclick="promptConfirmHojaPesada()">✅ Confirmar Hoja de Pesada</button>
+          ${hojaGmailLinkHtml()}
+          <button class="hoja-btn hoja-btn-secondary" onclick="closeHojaModal()">Cancelar</button>
+          `}
+        </div>
+        <div class="hoja-note">${s.confirmed
+          ? `Ya quedó registrado el pesaje de esta hoja, con su trazabilidad de probetas. Descargá el PDF las veces que necesites con <b>"Descargar PDF"</b> y usá <b>"Abrir Gmail"</b> para armar el mail con el destinatario y el texto ya listos — el PDF se adjunta a mano (clip de Gmail) antes de enviar, ningún sitio web puede adjuntar un archivo solo, es una restricción de seguridad de todos los navegadores/webmails.`
+          : `<b>"✅ Confirmar"</b> registra el pesaje y la trazabilidad de probetas de esta hoja — hacelo cuando ya pesaste todo y es definitivo; estas piezas ya estaban sumadas a "Preparado para Despacho" desde que se cargaron en la tabla, así que esto no las vuelve a sumar. El botón para descargar el PDF aparece recién después de confirmar. <b>"Abrir Gmail"</b> lo podés usar ya mismo, abre un mensaje nuevo con el destinatario y el texto ya armados.`
+        }</div>
+      `;
+    }
+
+    function promptConfirmHojaPesada() {
+      const err = validateHojaItems(hojaFormState.items);
+      if (err) { hojaValidationError = err; alert(err); renderHojaModal(); return; }
+      hojaValidationError = null;
+      hojaConfirmPending = true;
+      renderHojaModal();
+    }
+    function cancelConfirmHojaPesada() {
+      hojaConfirmPending = false;
+      renderHojaModal();
+    }
+
+    function updateHojaRenglonField(idx, rIdx, field, value) {
+      if (!hojaFormState || !hojaFormState.items[idx] || !hojaFormState.items[idx].renglones[rIdx]) return;
+      hojaFormState.items[idx].renglones[rIdx][field] = value;
+      if (field === 'probeta') refreshHojaGmailLink();
+    }
+
+    function updateHojaItemField(idx, field, value) {
+      if (!hojaFormState || !hojaFormState.items[idx]) return;
+      hojaFormState.items[idx][field] = value;
+    }
+
+    function updateHojaRenglonCant(idx, rIdx, value, inputEl) {
+      if (!hojaFormState || !hojaFormState.items[idx] || !hojaFormState.items[idx].renglones[rIdx]) return;
+      const it = hojaFormState.items[idx];
+      const rg = it.renglones[rIdx];
+      let v = parseInt(value, 10);
+      if (isNaN(v)) return;
+      if (v < 1) v = 1;
+      rg.cantidad = v;
+      if (inputEl && Number(inputEl.value) !== v) inputEl.value = v;
+      rg.pesoTeorico = it.kxu > 0 ? Math.round(it.kxu * v * 10) / 10 : null;
+      if (!rg.pesoRealTouched) {
+        rg.pesoReal = rg.pesoTeorico != null ? String(rg.pesoTeorico) : '';
+        const pesoInput = document.getElementById(`hoja-pesoreal-${idx}-${rIdx}`);
+        if (pesoInput) pesoInput.value = rg.pesoReal;
+      }
+      const kgRefEl = document.getElementById(`hoja-kgref-${idx}-${rIdx}`);
+      if (kgRefEl) kgRefEl.innerHTML = kgRefHtml(rg, it.kxu);
+      updateHojaItemTotalHtml(idx);
+    }
+
+    function updateHojaItemTotalHtml(idx) {
+      const it = hojaFormState.items[idx];
+      const total = hojaRenglonTotal(it);
+      const overLimit = total > it.pend;
+      const el = document.getElementById(`hoja-total-${idx}`);
+      if (!el) return;
+      el.className = 'hoja-renglon-total' + (overLimit ? ' over' : '');
+      el.innerHTML = `Total a pesar: <b>${total.toLocaleString()}</b> / ${it.pend.toLocaleString()} u. preparadas disponibles${overLimit ? ' — ¡supera lo preparado disponible!' : ''}`;
+    }
+
+    function addHojaRenglon(idx) {
+      const it = hojaFormState.items[idx];
+      const usado = hojaRenglonTotal(it);
+      const restante = Math.max(1, it.pend - usado);
+      it.renglones.push(makeHojaRenglon(it.kxu, restante));
+      const blockEl = document.getElementById(`hoja-item-${idx}`);
+      if (blockEl) blockEl.outerHTML = renderItemBlockHtml(idx);
+    }
+    function removeHojaRenglon(idx, rIdx) {
+      const it = hojaFormState.items[idx];
+      if (it.renglones.length <= 1) return;
+      it.renglones.splice(rIdx, 1);
+      const blockEl = document.getElementById(`hoja-item-${idx}`);
+      if (blockEl) blockEl.outerHTML = renderItemBlockHtml(idx);
+    }
+
+    function validateHojaItems(items) {
+      for (const it of items) {
+        const total = hojaRenglonTotal(it);
+        if (total < 1) return `Cargá al menos una cantidad a despachar para "${it.descripcion}".`;
+        if (total > it.pend) return `La cantidad total a pesar de "${it.descripcion}" (${total}) supera lo preparado disponible para esta hoja (${it.pend}).`;
+        for (const rg of it.renglones) {
+          const v = parseFloat(rg.pesoReal);
+          if (rg.pesoReal === '' || isNaN(v) || v < 0) {
+            const probetaTxt = rg.probeta ? ` (Probeta ${rg.probeta})` : '';
+            return `Falta cargar el peso real de "${it.descripcion}"${probetaTxt}.`;
+          }
+        }
+      }
+      return null;
+    }
+
+    async function confirmHojaPesada() {
+      const s = hojaFormState;
+      if (!s) return;
+      const err = validateHojaItems(s.items);
+      if (err) {
+        hojaValidationError = err;
+        hojaConfirmPending = false;
+        alert(err);
+        renderHojaModal();
+        return;
+      }
+      const btn = document.getElementById('hoja-btn-confirm');
+      const original = btn ? btn.textContent : '';
+      if (btn) { btn.disabled = true; btn.textContent = 'Confirmando...'; }
+      try {
+        if (!s.numeroHoja) s.numeroHoja = String(await getNextHojaNumber()).padStart(4, '0');
+        const ok = await markHojaItemsPrepared(s.items, s.numeroHoja);
+        if (ok) {
+          const totalCant = s.items.reduce((sum, it) => sum + hojaRenglonTotal(it), 0);
+          const totalKg = s.items.reduce((sum, it) => sum + it.renglones.reduce((s2, rg) => s2 + (parseFloat(rg.pesoReal) || 0), 0), 0);
+          showToast(`✅ Hoja Nº ${s.numeroHoja} confirmada — ${totalCant.toLocaleString()} u. (${fmt1(totalKg)} Kg)`, 'success');
+          alert(`✅ Confirmado: Hoja de Pesada Nº ${s.numeroHoja} registrada — ${totalCant.toLocaleString()} pieza(s) (${fmt1(totalKg)} Kg) pesadas, con su trazabilidad de probetas guardada.`);
+          s.confirmed = true;
+          hojaConfirmPending = false;
+          hojaValidationError = null;
+          clearHojaSelection();
+          armarHojaSelIds.clear();
+          renderHojaModal();
+        }
+      } catch (e) {
+        console.error('No se pudo confirmar la hoja de pesada:', e);
+        showToast('No se pudo confirmar. Probá de nuevo.', 'error');
+        alert('No se pudo confirmar. Probá de nuevo.');
+        if (btn) { btn.disabled = false; btn.textContent = original || 'Sí, confirmar'; }
+      }
+    }
+
+    function closeHojaModal() {
+      const el = document.getElementById('hoja-overlay');
+      if (el) el.classList.remove('open');
+      hojaConfirmPending = false;
+    }
+    function closeHojaModalOnOverlay(e) {
+      if (e.target.id === 'hoja-overlay') closeHojaModal();
+    }
+
+    function fmt1(n) {
+      return (Math.round((n || 0) * 10) / 10).toLocaleString('es-AR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    }
+    function sanitizeFilenamePart(s) {
+      return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'Cliente';
+    }
+
+    // Número secuencial propio de hoja de pesada (arranca en 1 = "0001").
+    // Antes se guardaba con un patrón de "lease" (contadores/.acquire())
+    // sobre la base del artifact; ahora se reserva de forma atómica con
+    // una función de Postgres (secuencia next_hoja_pesada_numero(), ver
+    // 002_patch_frontend.sql) — una sola llamada RPC, sin lock a mano. Si
+    // la RPC falla (sin conexión, Supabase caído, etc.) cae al mismo
+    // contador local en localStorage que ya existía como respaldo.
+    async function getNextHojaNumber() {
+      try {
+        const { data, error } = await supabaseClient.rpc('next_hoja_pesada_numero');
+        if (error) throw error;
+        if (typeof data === 'number') return data;
+      } catch (e) {
+        console.error('No se pudo reservar un número de hoja vía RPC, se usa un contador local:', e && e.code, e && e.message);
+      }
+      let n = 0;
+      try { n = parseInt(localStorage.getItem('hojaPesadaCounterLocal') || '0', 10) || 0; } catch (e) {}
+      n += 1;
+      try { localStorage.setItem('hojaPesadaCounterLocal', String(n)); } catch (e) {}
+      return n;
+    }
+
+    // Guarda el archivo generado: la capacidad "downloads" ya no existe en
+    // esta versión (downloadsRef queda siempre null, declarado en main.js),
+    // así que esto cae directo a una descarga común del navegador vía Blob
+    // — el botón de PDF sigue funcionando igual que antes.
+    async function saveGeneratedFile(filename, blob) {
+      if (downloadsRef) {
+        try {
+          await downloadsRef.save({ filename, data: blob });
+          return true;
+        } catch (e) {
+          console.error('downloads.save falló, se intenta la descarga directa del navegador:', e && e.code, e && e.message);
+        }
+      }
+      try {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+        return true;
+      } catch (e) {
+        console.error('No se pudo descargar el archivo:', e);
+        alert('No se pudo descargar el PDF. Probá de nuevo.');
+        return false;
+      }
+    }
+
+    async function generateHojaPdf() {
+      const s = hojaFormState;
+      if (!s) return;
+      const err = validateHojaItems(s.items);
+      if (err) { hojaValidationError = err; alert(err); renderHojaModal(); return; }
+      if (hojaValidationError) { hojaValidationError = null; renderHojaModal(); }
+      const btn = document.getElementById('hoja-btn-pdf');
+      const btnLabelOriginal = btn ? btn.textContent : '';
+      if (btn) { btn.disabled = true; btn.textContent = 'Generando...'; }
+      try {
+        if (!s.numeroHoja) s.numeroHoja = String(await getNextHojaNumber()).padStart(4, '0');
+        const numeroStr = s.numeroHoja;
+        const logoPixels = await MiniPdf.loadAmroLogoPixels();
+        const now = new Date();
+        const fechaStr = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
+        const fechaFile = `${String(now.getDate()).padStart(2,'0')}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getFullYear()).slice(-2)}`;
+
+        const items = [];
+        s.items.forEach(it => {
+          it.renglones.forEach(rg => {
+            const pesoRealNum = parseFloat(rg.pesoReal);
+            const probetaTxt = rg.probeta ? ` (Probeta ${rg.probeta})` : '';
+            const nota = rg.pesoTeorico != null
+              ? `Pieza id ${it.id}${probetaTxt} - Kg/u teórico de SGA: ${it.kxu.toLocaleString(undefined,{maximumFractionDigits:2})} Kg/u × ${rg.cantidad.toLocaleString()} = ${fmt1(rg.pesoTeorico)} Kg. Despacho pesó ${fmt1(pesoRealNum)} Kg reales.`
+              : `Pieza id ${it.id}${probetaTxt} - SGA no tiene Kg/u teórico cargado para este código (0,0); el peso real pesado es el único dato.`;
+            items.push({
+              cant: rg.cantidad.toLocaleString(),
+              descripcion: it.descripcion,
+              trazabilidad: '',
+              material: it.material,
+              oc: it.oc,
+              precio: '',
+              peso: fmt1(pesoRealNum),
+              importe: '(a compl.)',
+              lista: 'x Kg. USD',
+              remito: '',
+              probeta: rg.probeta || '-',
+              nota,
+              pesoNum: pesoRealNum,
+            });
+          });
+        });
+        const pesoTotal = fmt1(items.reduce((sum, it) => sum + it.pesoNum, 0));
+        const comprobantes = [...new Set(s.items.map(it => it.comprobante))];
+
+        const blob = MiniPdf.buildHojaPesadaPdfBlob({
+          numero: numeroStr, fechaStr, cliente: s.cliente, transporte: s.transporte, condPago: s.condPago,
+          items, pesoTotal, comprobantes, logoPixels,
+        });
+
+        const filename = `HojaPesada_${sanitizeFilenamePart(s.cliente)}_${fechaFile}_${numeroStr}.pdf`;
+        await saveGeneratedFile(filename, blob);
+      } catch (e) {
+        console.error('No se pudo generar la hoja de pesada:', e);
+        alert('No se pudo generar el PDF. Probá de nuevo.');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = btnLabelOriginal || '⬇️ Descargar PDF'; }
+      }
+    }
+
+    async function markHojaItemsPrepared(items, numeroHoja) {
+      if (!dbRef) {
+        alert('No se pudo registrar el pesaje (no hay conexión a la base compartida). Probá de nuevo más tarde.');
+        return false;
+      }
+      let ok = true;
+      const dia = diaLocalStr();
+      for (const it of items) {
+        try {
+          const row = DATA.find(d => d.id === it.id);
+          for (const rg of it.renglones) {
+            if (!rg.cantidad || rg.cantidad <= 0) continue;
+            await dbRef.collection('preparados_log').add({
+              itemId: it.id,
+              cliente: hojaFormState ? hojaFormState.cliente : (row ? row.cliente : ''),
+              comprobante: it.comprobante, codigo: it.codigo, descripcion: it.descripcion, material: it.material,
+              probeta: rg.probeta || '-', cantidad: rg.cantidad, pesoReal: parseFloat(rg.pesoReal) || 0,
+              hojaNumero: numeroHoja || null, dia, ts: new Date().toISOString(),
+            });
+          }
+        } catch (e) {
+          console.error('No se pudo registrar el pesaje del ítem', it.id, e && e.code, e && e.message);
+          ok = false;
+        }
+      }
+      if (!ok) alert('Algunos ítems no se pudieron registrar. Probá de nuevo con lo que haya quedado pendiente.');
+      return ok;
+    }
+
+    // =========================================================================
+    // ---- Pantalla restringida "Armar Hoja de Pesada" (solo Inspección
+    // Final — ver isHojaInspector, calculado una sola vez después del
+    // login a partir de profiles.es_inspector_final): elige un cliente,
+    // tilda piezas ya "Preparado para Despacho" y sin pesar
+    // (prepSinHojaDisponible), y arranca el modal de pesaje de siempre
+    // (openHojaModal) con esa selección. ----
+    // =========================================================================
+
+    function populateArmarHojaClienteSelect() {
+      const sel = document.getElementById('armar-hoja-cliente-select');
+      if (!sel) return;
+      const clientes = [...new Set(hojaDisponibleRows().map(r => r.cliente))].sort((a, b) => a.localeCompare(b, 'es'));
+      if (armarHojaCliente && !clientes.includes(armarHojaCliente)) armarHojaCliente = '';
+      sel.innerHTML = '<option value="">— Elegí un cliente —</option>' +
+        clientes.map(c => `<option value="${escHtml(c)}" ${c === armarHojaCliente ? 'selected' : ''}>${escHtml(c)}</option>`).join('');
+    }
+
+    function setArmarHojaCliente(cliente) {
+      armarHojaCliente = cliente;
+      armarHojaSelIds.clear();
+      renderArmarHojaPanel();
+    }
+
+    function toggleArmarHojaSel(id, checked) {
+      if (checked) armarHojaSelIds.add(id);
+      else armarHojaSelIds.delete(id);
+      renderArmarHojaPanel();
+    }
+
+    function renderArmarHojaPanel() {
+      populateArmarHojaClienteSelect();
+      const listEl = document.getElementById('armar-hoja-list');
+      if (!listEl) return;
+      if (!armarHojaCliente) {
+        listEl.innerHTML = '<div class="text-dim" style="padding: 20px 4px;">Elegí un cliente para ver sus piezas ya preparadas, listas para pesar.</div>';
+        return;
+      }
+      const rows = hojaDisponibleRows().filter(r => r.cliente === armarHojaCliente);
+      const validIds = new Set(rows.map(r => r.id));
+      [...armarHojaSelIds].forEach(id => { if (!validIds.has(id)) armarHojaSelIds.delete(id); });
+      if (!rows.length) {
+        listEl.innerHTML = '<div class="text-dim" style="padding: 20px 4px;">Este cliente no tiene piezas preparadas pendientes de pesar en este momento.</div>';
+        return;
+      }
+      const cardsHtml = rows.map(r => {
+        const disp = prepSinHojaDisponible(r);
+        const checked = armarHojaSelIds.has(r.id) ? 'checked' : '';
+        return `
+          <div class="stock-card">
+            <input type="checkbox" ${checked} onchange="toggleArmarHojaSel(${r.id}, this.checked)" style="width:18px; height:18px; flex-shrink:0; accent-color: var(--accent); cursor:pointer;">
+            <div class="info" style="flex:1; min-width:220px;">
+              <div class="name">${escHtml(r.descripcion)}</div>
+              <div class="sub">Cód. ${escHtml(r.codigo)} · NV ${escHtml(r.comprobante)} · OC ${escHtml(r.oc)} · Mat: ${escHtml(r.material)}</div>
+            </div>
+            <div class="qty">${disp.toLocaleString()} u. <span class="kg">disponibles p/ pesar</span></div>
+          </div>`;
+      }).join('');
+      const n = armarHojaSelIds.size;
+      listEl.innerHTML = cardsHtml + `
+        <div style="margin-top:14px; display:flex; justify-content:flex-end;">
+          <button class="view-toggle-btn" id="armar-hoja-btn-start" ${n === 0 ? 'disabled' : ''} onclick="startArmarHojaFromSelection()">🧾 Armar Hoja de Pesada con ${n} ítem${n === 1 ? '' : 's'} seleccionado${n === 1 ? '' : 's'}</button>
+        </div>`;
+    }
+
+    function startArmarHojaFromSelection() {
+      if (armarHojaSelIds.size === 0) return;
+      selectedHojaIds = new Set(armarHojaSelIds);
+      openHojaModal();
+    }
+
+    function hojaGmailUrl() {
+      const s = hojaFormState;
+      if (!s) return '#';
+      const to = encodeURIComponent((s.mail || '').trim());
+      const now = new Date();
+      const fechaStr = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
+      const subject = encodeURIComponent(`Hoja de Pesada — ${s.cliente} — ${fechaStr}`);
+      const trazas = [];
+      s.items.forEach(it => it.renglones.forEach(rg => { if (rg.probeta) trazas.push(rg.probeta); }));
+      const bodyLines = [
+        `Estimados,`,
+        '',
+        'Adjuntamos la hoja de pesada correspondiente a su pedido.',
+      ];
+      if (trazas.length) { bodyLines.push('', `Trazabilidad: ${trazas.join(', ')}`); }
+      bodyLines.push('', 'Saludos.');
+      const body = encodeURIComponent(bodyLines.join('\n'));
+      return `https://mail.google.com/mail/?view=cm&fs=1&to=${to}&su=${subject}&body=${body}`;
+    }
+    function hojaGmailLinkHtml() {
+      return `<a class="hoja-btn hoja-btn-secondary" id="hoja-gmail-link" href="${escHtml(hojaGmailUrl())}" target="_blank" rel="noopener noreferrer" style="text-decoration:none; display:inline-flex; align-items:center; justify-content:center;">✉️ Abrir Gmail</a>`;
+    }
+    function refreshHojaGmailLink() {
+      const a = document.getElementById('hoja-gmail-link');
+      if (a) a.href = hojaGmailUrl();
+    }
+
+    // ---- hoja de detalle (solo se usa en celular — ver media query) ----
+    function showModal(title, bodyHtml) {
+      document.getElementById('modal-title').textContent = title;
+      document.getElementById('modal-body').innerHTML = bodyHtml;
+      document.getElementById('detail-modal-overlay').classList.add('open');
+    }
+    function closeDetailModal() {
+      document.getElementById('detail-modal-overlay').classList.remove('open');
+    }
+    function closeModalOnOverlay(e) {
+      if (e.target.id === 'detail-modal-overlay') closeDetailModal();
+    }
+
+    function openDetailModal(id) {
+      const r = DATA.find(d => d.id === id);
+      if (!r) return;
+      const html = `
+        <div class="modal-row"><div class="k">Prioridad</div><div class="v">${buildPrioridadCellHtml(r)}</div></div>
+        <div class="modal-row"><div class="k">Comprobante</div><div class="v">${escHtml(r.comprobante)} <span class="text-dim">(OC: ${escHtml(r.oc)})</span></div></div>
+        <div class="modal-row"><div class="k">Fecha NV</div><div class="v">${formatDate(r.fecha_nv)}</div></div>
+        <div class="modal-row"><div class="k">Fecha Entrega</div><div class="v">${formatDate(r.fecha_entrega)}</div></div>
+        <div class="modal-row"><div class="k">Alerta</div><div class="v">${buildAlertPill(r)}</div></div>
+        <div class="modal-row"><div class="k">Material</div><div class="v">${escHtml(r.material)} · ${r.kxu} Kg/u</div></div>
+        <div class="modal-row"><div class="k">Pendiente</div><div class="v">${remainingPend(r).toLocaleString()} u.</div></div>
+        <div class="modal-row"><div class="k">Kilos</div><div class="v">${r.kilos.toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1})} Kg</div></div>
+        <div class="modal-row"><div class="k">Estado / Área</div><div class="v">${buildStatusPill(r)}${buildAvanceManualHtml(r)}</div></div>
+        <div class="modal-row"><div class="k">Flujo Áreas</div><div class="v">${buildPipeHtml(r)}</div></div>
+        <div class="modal-row"><div class="k">Preparado p/ Desp.</div><div class="v">${buildPrepCellHtml(r)}</div></div>
+        ${r.notas ? `<div class="modal-row"><div class="k">💬 Comentario (SGA)</div><div class="v" style="color:#fbbf24;">${escHtml(r.notas)}</div></div>` : ''}
+      `;
+      showModal(escHtml(r.cliente), `<div style="margin-bottom:10px; font-size:0.85rem; color:#f1f5f9;">${buildRepBadge(r)}${escHtml(r.descripcion)}</div>` + html);
+    }
+
+    function openGroupModal(code) {
+      const rows = DATA.filter(d => d.codigo === code);
+      if (!rows.length) return;
+      const desc = rows[0].descripcion;
+      const totalQty = rows.reduce((s,r)=>s+r.cant,0);
+      const totalPend = rows.reduce((s,r)=>s+r.pend,0);
+      const totalKg = kgSum(rows);
+      let html = `
+        <div class="modal-row"><div class="k">Código</div><div class="v">${escHtml(code)}</div></div>
+        <div class="modal-row"><div class="k">Pendiente</div><div class="v" style="font-weight:700;">${totalPend.toLocaleString()} u.</div></div>
+        <div class="modal-row"><div class="k">Total / Kg</div><div class="v">${totalQty.toLocaleString()} u. tot. · ${totalKg.toLocaleString(undefined,{maximumFractionDigits:1})} Kg</div></div>
+        <div class="modal-section-title">Pedidos (${rows.length}) — tocá uno para ver el detalle</div>`;
+      rows.forEach(r => {
+        html += `<div class="group-item" onclick="openDetailModal(${r.id})">
+          <div class="font-bold" style="color:#fff; font-size:0.85rem;">${escHtml(r.cliente)}</div>
+          <div class="text-dim" style="margin-top:2px;">${escHtml(r.comprobante)} · ${formatDate(r.fecha_entrega)}</div>
+          <div style="display:flex; justify-content:space-between; margin-top:4px; font-size:0.8rem;">
+            <span>${r.pend.toLocaleString()} u. pend.</span>
+            <span style="color: var(--accent); font-weight:600;">${r.kilos.toLocaleString(undefined,{maximumFractionDigits:1})} Kg</span>
+          </div>
+        </div>`;
+      });
+      showModal('Modelo: ' + desc, html);
+    }
+
+    function renderKpis() {
+      const totalItems = DATA.length;
+      const totalKg = kgSum(DATA);
+      const totalPedidos = new Set(DATA.map(r=>r.comprobante)).size;
+      document.getElementById('kpi-total-items').textContent = totalItems;
+      document.getElementById('kpi-total-kg').textContent = `${totalKg.toLocaleString(undefined,{maximumFractionDigits:0})} Kg reales (${totalPedidos} pedidos) — incluye ítems cancelados en la cantidad, no en los Kg (sin tarjeta propia)`;
+
+      const moldeo = DATA.filter(r=>r.area_actual==='Moldeo / Fusión');
+      const kgMoldeo = kgSum(moldeo);
+      document.getElementById('kpi-moldeo').textContent = moldeo.length;
+      document.getElementById('kpi-moldeo-kg').textContent = `${kgMoldeo.toLocaleString(undefined,{maximumFractionDigits:0})} Kg en moldeo/fusión (etapa 2 de 4)`;
+
+      const listas = DATA.filter(r=>r.estado_general==='Fundido / En Terminación');
+      const kgListasTotal = kgSum(listas);
+      const kgPrepAcumulado = listas.reduce((s,r)=>s+prepKg(r),0);
+      const kgRemain = kgListasTotal - kgPrepAcumulado;
+      const itemsCompletos = listas.filter(r=>isPrepared(r));
+      const itemsPendientes = listas.length - itemsCompletos.length;
+
+      document.getElementById('kpi-completed').textContent = itemsPendientes;
+      document.getElementById('kpi-listas-kg').textContent = `${kgRemain.toLocaleString(undefined,{maximumFractionDigits:0})} Kg que faltan preparar (etapa 3 de 4)`;
+
+      const itemsConAvanceDisp = listas.filter(r=>prepPendienteDespacho(r) > 0);
+      const kgPrepDisponible = itemsConAvanceDisp.reduce((s,r)=>s+prepPendienteDespachoKg(r),0);
+      const itemsCompletosDisp = itemsConAvanceDisp.filter(r=>isPrepared(r));
+      const itemsParcialesDisp = itemsConAvanceDisp.length - itemsCompletosDisp.length;
+      document.getElementById('kpi-preparado').textContent = itemsConAvanceDisp.length;
+      document.getElementById('kpi-preparado-kg').textContent = `${kgPrepDisponible.toLocaleString(undefined,{maximumFractionDigits:0})} Kg preparados esperando despacho (${itemsCompletosDisp.length} completos, ${itemsParcialesDisp} parciales) — se restan de "En Terminación" arriba`;
+
+      const kpiHojaEl = document.getElementById('kpi-armar-hoja');
+      if (kpiHojaEl) kpiHojaEl.textContent = hojaDisponibleRows().length;
+
+      const hoyStr = diaLocalStr();
+      const despachosHoy = despachosLog.filter(d => d.dia === hoyStr);
+      const cantDespHoy = despachosHoy.reduce((s,d)=>s+(d.cantidad||0),0);
+      const kgDespHoy = despachosHoy.reduce((s,d)=>s+(d.kg||0),0);
+      const kpiDespEl = document.getElementById('kpi-despachado');
+      if (kpiDespEl) kpiDespEl.textContent = cantDespHoy.toLocaleString();
+      const kpiDespKgEl = document.getElementById('kpi-despachado-kg');
+      if (kpiDespKgEl) {
+        kpiDespKgEl.textContent = cantDespHoy
+          ? `${kgDespHoy.toLocaleString(undefined,{maximumFractionDigits:0})} Kg despachados hoy — historial completo al tocar la tarjeta`
+          : 'Nada despachado hoy todavía — historial completo al tocar la tarjeta';
+      }
+
+      const enfab = DATA.filter(r=>r.estado_general==='En Fabricación' && r.area_actual!=='Moldeo / Fusión');
+      const kgEnfab = kgSum(enfab);
+      document.getElementById('kpi-in-progress').textContent = enfab.length;
+      document.getElementById('kpi-progress-kg').textContent = `${kgEnfab.toLocaleString(undefined,{maximumFractionDigits:0})} Kg antes de moldeo (Comercial/Ing/Adm) (etapa 1 de 4)`;
+
+      const stockMap = computeStockMap();
+      const stockEntries = Object.values(stockMap);
+      const stockTotalU = stockEntries.reduce((s,d)=>s+d.cant,0);
+      const stockTotalKg = stockEntries.reduce((s,d)=>s+(d.kxu?d.kxu*d.cant:0),0);
+      const kpiStockEl = document.getElementById('kpi-stock');
+      if (kpiStockEl) kpiStockEl.textContent = stockTotalU.toLocaleString();
+      const kpiStockKgEl = document.getElementById('kpi-stock-kg');
+      if (kpiStockKgEl) {
+        kpiStockKgEl.textContent = stockTotalU
+          ? `${stockTotalKg.toLocaleString(undefined,{maximumFractionDigits:0})} Kg en ${stockEntries.length} código(s) — no suman al Total de arriba`
+          : 'Piezas fabricadas sin pedido — no suman al Total de arriba';
+      }
+
+      const rep = DATA.filter(r=>r.es_repuesto);
+      const kgRep = kgSum(rep);
+      document.getElementById('kpi-repuestos').textContent = rep.length;
+      document.getElementById('kpi-rep-kg').textContent = `${kgRep.toLocaleString(undefined,{maximumFractionDigits:0})} Kg repuestos (Excluye R99) — ya incluidos arriba`;
+
+      const vencidas = DATA.filter(r=>r.alerta_entrega==='VENCIDA (FÁBRICA)');
+      const kgVencidas = kgSum(vencidas);
+      document.getElementById('kpi-urgent').textContent = vencidas.length;
+      const subVenc = document.querySelector('#card-vencidas .sub');
+      if (subVenc) subVenc.textContent = `${kgVencidas.toLocaleString(undefined,{maximumFractionDigits:0})} Kg vencidos — ya incluidos arriba, no suma aparte`;
+
+      const vencidasTerm = DATA.filter(isVencidaTerminacion);
+      const kgVencidasTerm = kgSum(vencidasTerm);
+      const kpiUrgentTermEl = document.getElementById('kpi-urgent-term');
+      if (kpiUrgentTermEl) kpiUrgentTermEl.textContent = vencidasTerm.length;
+      const subVencTerm = document.querySelector('#card-vencidas_term .sub');
+      if (subVencTerm) {
+        subVencTerm.textContent = vencidasTerm.length
+          ? `${kgVencidasTerm.toLocaleString(undefined,{maximumFractionDigits:0})} Kg — fundidas, esperando en Terminación, ya vencidas — ya contadas arriba, no suma aparte`
+          : 'Fundidas, esperando en Terminación, con fecha ya pasada — ya contadas arriba, no suma aparte';
+      }
+
+      const prioritarios = DATA.filter(r => r.estado_general !== 'Cancelado' && getPriority(r.id) === 'alta');
+      const kgPrio = kgSum(prioritarios);
+      document.getElementById('kpi-prioridad').textContent = prioritarios.length;
+      document.getElementById('kpi-prioridad-kg').textContent = prioritarios.length
+        ? `🔴 ${kgPrio.toLocaleString(undefined,{maximumFractionDigits:0})} Kg en Alta`
+        : '';
+
+      const prioridadMedia = DATA.filter(r => r.estado_general !== 'Cancelado' && getPriority(r.id) === 'media');
+      const kgPrioMedia = kgSum(prioridadMedia);
+      document.getElementById('kpi-prioridad-media').textContent = prioridadMedia.length;
+      document.getElementById('kpi-prioridad-media-kg').textContent = prioridadMedia.length
+        ? `🟡 ${kgPrioMedia.toLocaleString(undefined,{maximumFractionDigits:0})} Kg en Media`
+        : '';
+
+      const kpiPrioEl = document.getElementById('kpi-prioridad-kg');
+      const kpiPrioMediaEl = document.getElementById('kpi-prioridad-media-kg');
+      if (!prioritarios.length && !prioridadMedia.length && kpiPrioEl) {
+        kpiPrioEl.textContent = 'La fija Planeamiento — ya incluido arriba, no suma aparte';
+      }
+      if (kpiPrioEl && kpiPrioMediaEl) {
+        kpiPrioEl.style.display = (prioritarios.length || !prioridadMedia.length) ? '' : 'none';
+      }
+    }
+
+    // ---- barra de scroll horizontal fija ----
+    // Convertida de la IIFE auto-invocada original a una función con
+    // nombre, llamada una sola vez desde bootApp() (ver main.js) después
+    // de que el login terminó y la tabla ya tiene filas reales — antes se
+    // ejecutaba apenas cargaba la página, cuando la tabla todavía no
+    // existía (sin datos de Supabase todavía).
+    let _stickyHScrollSetupDone = false;
+    function setupStickyHScrollOnce() {
+      if (_stickyHScrollSetupDone) return;
+      _stickyHScrollSetupDone = true;
+      const wrap = document.getElementById('table-scroll-wrap');
+      const stickyWrap = document.getElementById('sticky-hscroll-wrap');
+      const sticky = document.getElementById('sticky-hscroll');
+      const stickyInner = document.getElementById('sticky-hscroll-inner');
+      if (!wrap || !stickyWrap || !sticky || !stickyInner) return;
+
+      let syncing = false;
+      function updateGeometry() {
+        const overflows = wrap.scrollWidth > wrap.clientWidth + 1;
+        const rect = wrap.getBoundingClientRect();
+        const onScreen = rect.bottom > 0 && rect.top < window.innerHeight;
+        const visible = window.innerWidth > 760 && overflows && onScreen;
+        stickyWrap.classList.toggle('visible', visible);
+        if (!visible) return;
+        stickyWrap.style.left = Math.max(0, rect.left) + 'px';
+        stickyWrap.style.width = rect.width + 'px';
+        stickyInner.style.width = wrap.scrollWidth + 'px';
+      }
+
+      wrap.addEventListener('scroll', () => {
+        if (syncing) return;
+        syncing = true;
+        sticky.scrollLeft = wrap.scrollLeft;
+        syncing = false;
+      });
+      sticky.addEventListener('scroll', () => {
+        if (syncing) return;
+        syncing = true;
+        wrap.scrollLeft = sticky.scrollLeft;
+        syncing = false;
+      });
+
+      window.addEventListener('scroll', updateGeometry, { passive: true });
+      window.addEventListener('resize', updateGeometry);
+      new MutationObserver(updateGeometry).observe(wrap, { childList: true, subtree: true });
+      new MutationObserver(updateGeometry).observe(document.getElementById('split-container') || document.body, { attributes: true, attributeFilter: ['class'] });
+      document.addEventListener('click', () => setTimeout(updateGeometry, 350));
+      setInterval(updateGeometry, 1000);
+      updateGeometry();
+    }
+</script>
+</body>
+</html>
