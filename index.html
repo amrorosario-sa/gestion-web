@@ -2599,7 +2599,7 @@ function barChartSvg(o) {
   }
   o.labels.forEach((lab, i) => {
     const cx = padL + groupW * i + groupW / 2;
-    const ultimo = i === n - 1;
+    const ultimo = !!o.marcarUltimo && i === n - 1;
     o.series.forEach((sr, jx) => {
       const v = Number(sr.values[i]) || 0;
       const bh = innerH * v / maxV;
@@ -2644,7 +2644,7 @@ function renderIndicadoresPanel() {
   const sem = [];
   for (let o = -7; o <= 0; o++) { const r = semanaRango(o); sem.push({ r, v: sumPeriodo(r) }); }
   const semLabels = sem.map(w => cortoIso(w.r.ini));
-  const semChart = (clave, nombre, color) => barChartSvg({ labels: semLabels, series: [{ name: nombre, color, values: sem.map(w => w.v[clave]) }], fadeOld: true });
+  const semChart = (clave, nombre, color) => barChartSvg({ labels: semLabels, series: [{ name: nombre, color, values: sem.map(w => w.v[clave]) }], fadeOld: true, marcarUltimo: true });
   const tot8 = clave => fmtN(sem.reduce((a, w) => a + w.v[clave], 0));
 
   // 4) Mensual: ingresado vs despachado (últimos 6 meses)
@@ -2659,7 +2659,7 @@ function renderIndicadoresPanel() {
     });
   }
   const hayIngresos = eventosProd.some(e => e.tipo === 'ingreso');
-  const ingDes = barChartSvg({ labels: meses.map(m => m.label), series: [{ name: 'Ingresado (pedidos nuevos)', color: '#38bdf8', values: meses.map(m => m.ing) }, { name: 'Despachado', color: '#c084fc', values: meses.map(m => m.des) }] });
+  const ingDes = barChartSvg({ labels: meses.map(m => m.label), series: [{ name: 'Ingresado (pedidos nuevos)', color: '#38bdf8', values: meses.map(m => m.ing) }, { name: 'Despachado', color: '#c084fc', values: meses.map(m => m.des) }], marcarUltimo: true });
 
   // 5) Pareto de rechazos del período seleccionado
   const med = indState.medida;
