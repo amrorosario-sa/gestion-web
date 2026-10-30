@@ -1589,12 +1589,20 @@ async function bootApp() {
 
   // Ítems en vivo desde Supabase (reemplaza el DATA = JSON.parse(__DATA_JSON__) estático)
   try {
-    const { data: rows, error } = await supabaseClient.from('items').select('*');
-    if (error) throw error;
-    DATA = rows || [];
+    DATA = await loadAllItems();
+    if (DATA.length === 0) {
+      // Sin ítems: puede ser una sesión vencida (la base devuelve vacío sin avisar).
+      // Se renueva la sesión y se reintenta una vez antes de avisar.
+      try { await supabaseClient.auth.refreshSession(); } catch (e) {}
+      DATA = await loadAllItems();
+    }
+    showItemsBanner(DATA.length === 0
+      ? 'La base devolvió 0 ítems para tu usuario. Probá cerrar sesión y volver a entrar; si sigue igual, avisale a quien administra el tablero.'
+      : '');
   } catch (e) {
     console.error('No se pudieron cargar los ítems:', e);
     DATA = [];
+    showItemsBanner('No se pudieron cargar los ítems: ' + ((e && e.message) || e) + '. Recargá la página; si sigue igual, avisale a quien administra el tablero.');
   }
 
   recomputeEffectiveStages();
@@ -1608,12 +1616,36 @@ async function bootApp() {
   setupStickyHScrollOnce();
 }
 
+// Trae TODOS los ítems (la base entrega de a 1000 como máximo por pedido).
+async function loadAllItems() {
+  const out = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabaseClient.from('items').select('*').order('id').range(from, from + PAGE - 1);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < PAGE) break;
+  }
+  return out;
+}
+function showItemsBanner(msg) {
+  let el = document.getElementById('items-banner');
+  if (!msg) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'items-banner';
+    el.style.cssText = 'margin:10px 16px;padding:12px 14px;border:1px solid #ef4444;background:#450a0a;color:#fecaca;border-radius:10px;font-size:0.9rem;';
+    const ref = document.getElementById('access-banner');
+    if (ref && ref.parentNode) ref.parentNode.insertBefore(el, ref); else document.body.prepend(el);
+  }
+  el.textContent = '⚠️ ' + msg;
+}
+
 async function reloadItems() {
   try {
-    const { data: rows, error } = await supabaseClient.from('items').select('*');
-    if (error) throw error;
+    const rows = await loadAllItems();
     DATA.length = 0;
-    DATA.push(...(rows || []));
+    DATA.push(...rows);
     recomputeEffectiveStages();
     renderKpis();
     applyFilters();
