@@ -589,6 +589,9 @@
       <button class="chip" id="chip-preparado" onclick="setChipFilter('preparado')">📦 Preparado p/ Despacho</button>
       <button class="chip" id="chip-armar_hoja" style="display:none;" onclick="setChipFilter('armar_hoja')">🧾 Armar Hoja de Pesada</button>
       <button class="chip" id="chip-despachado" onclick="setChipFilter('despachado')">🚚 Despachado</button>
+      <button class="chip" id="chip-indicadores" style="display:none;" onclick="setChipFilter('indicadores')">📊 Indicadores</button>
+      <button class="chip" id="chip-rechazo" style="display:none;" onclick="setChipFilter('rechazo')">❌ Rechazos</button>
+      <button class="chip" id="chip-replanificar" style="display:none;" onclick="setChipFilter('replanificar')">🔁 Replanificar<span id="replan-badge"></span></button>
       <button class="chip" id="chip-proceso" onclick="setChipFilter('proceso')">⏳ Pendiente Previo a Moldeo</button>
       <button class="chip" id="chip-stock" onclick="setChipFilter('stock')">📦 Stock (sin pedido)</button>
       <button class="chip" id="chip-repuestos" onclick="setChipFilter('repuestos')">⚙️ Solo Repuestos (Código R)</button>
@@ -680,6 +683,41 @@
     </div>
     <div id="despachado-semanas"></div>
     <div id="despachado-list"></div>
+  </div>
+
+  <div class="stock-section" id="indicadores-section" style="display:none;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+      <div>
+        <div style="font-weight:700; color:#fff; font-size:0.95rem;">📊 Indicadores</div>
+        <div class="text-dim" style="margin-top:4px;">Despachado, fundido (piezas que pasan a Terminación), rechazo y cumplimiento de entrega, comparados con el período anterior.</div>
+      </div>
+    </div>
+    <div id="indicadores-body"></div>
+  </div>
+
+  <div class="stock-section" id="rechazo-section" style="display:none;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
+      <div>
+        <div style="font-weight:700; color:#fff; font-size:0.95rem;">❌ Rechazos</div>
+        <div class="text-dim" style="margin-top:4px;">Terminación registra la pieza rechazada (con su Nº de probeta, si tiene). Pasa a Planificación para replanificarla; el registro queda para siempre.</div>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="view-toggle-btn" id="rz-motivos-btn" style="display:none;" onclick="openMotivosDialog()">⚙️ Motivos</button>
+        <button class="view-toggle-btn" id="rz-nuevo-btn" onclick="openRechazoDialog()">+ Registrar rechazo</button>
+      </div>
+    </div>
+    <div id="rechazo-list"></div>
+  </div>
+
+  <div class="stock-section" id="replanificar-section" style="display:none;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
+      <div>
+        <div style="font-weight:700; color:#fff; font-size:0.95rem;">🔁 Rechazos a replanificar</div>
+        <div class="text-dim" style="margin-top:4px;">Piezas rechazadas por Terminación que esperan una nueva fabricación. Al marcarlas como replanificadas salen de esta lista y quedan en el registro de rechazos.</div>
+      </div>
+      <label class="text-dim" style="display:flex; gap:6px; align-items:center; font-size:0.78rem; cursor:pointer;"><input type="checkbox" id="replan-ver-todas" onchange="rechazoVerReplan = this.checked; renderReplanificarPanel()"> Mostrar también las ya replanificadas</label>
+    </div>
+    <div id="replanificar-list"></div>
   </div>
 
   <div class="stock-section" id="armar-hoja-section" style="display:none;">
@@ -1201,7 +1239,12 @@ function makeDbRef() {
         const row = { ...toDbRow(name, obj), created_by: CURRENT_USER_ID };
         delete row.ts; // los *_log usan "ts timestamptz default now()" solo si no se manda; dejamos que el default la ponga si no vino
         if (obj.ts) row.ts = obj.ts;
-        const { data, error } = await supabaseClient.from(name).insert(row).select().single();
+        let res = await supabaseClient.from(name).insert(row).select().single();
+        if (res.error && name === 'despachos_log' && 'fecha_entrega' in row && /fecha_entrega/.test(res.error.message || '')) {
+          const sinFecha = { ...row }; delete sinFecha.fecha_entrega;   // la base todavía no tiene la columna (falta el SQL 006)
+          res = await supabaseClient.from(name).insert(sinFecha).select().single();
+        }
+        const { data, error } = res;
         if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
         return { id: data ? data.id : null };
       },
@@ -2032,6 +2075,9 @@ const SECCIONES_DEF = [
   ['stock', '📦 Stock sin pedido'],
   ['despachado', '🚚 Despachado (historial)'],
   ['armar_hoja', '🧾 Armar Hoja de Pesada'],
+  ['indicadores', '📊 Indicadores'],
+  ['rechazo', '❌ Registrar rechazos (Terminación)'],
+  ['replanificar', '🔁 Replanificar rechazos (Planificación)'],
 ];
 const SECCION_ELEMS = {
   moldeo: ['card-moldeo', 'chip-moldeo'],
@@ -2044,19 +2090,23 @@ const SECCION_ELEMS = {
   stock: ['card-stock', 'chip-stock'],
   despachado: ['card-despachado', 'chip-despachado'],
   armar_hoja: ['card-armar_hoja', 'chip-armar_hoja'],
+  indicadores: ['chip-indicadores'],
+  rechazo: ['chip-rechazo'],
+  replanificar: ['chip-replanificar'],
 };
 const FILTER_SECCION = {
   moldeo: 'moldeo', listas: 'listas', preparado: 'preparado', proceso: 'proceso', repuestos: 'repuestos',
   vencidas: 'vencidas', vencidas_term: 'vencidas', prioridad_alta: 'prioridades', prioridad_media: 'prioridades',
   stock: 'stock', despachado: 'despachado', armar_hoja: 'armar_hoja',
+  indicadores: 'indicadores', rechazo: 'rechazo', replanificar: 'replanificar',
 };
 const SECCIONES_DEFAULT = ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades'];
 const ALL_SECCIONES = SECCIONES_DEF.map(s => s[0]);
 const AREA_PRESETS = {
   'Gerencia': ALL_SECCIONES,
   'Comercial': ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades', 'despachado'],
-  'Planeamiento': ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades', 'stock', 'despachado'],
-  'Terminación': ['moldeo', 'listas', 'preparado', 'stock', 'despachado'],
+  'Planeamiento': ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades', 'stock', 'despachado', 'indicadores', 'replanificar'],
+  'Terminación': ['moldeo', 'listas', 'preparado', 'stock', 'despachado', 'rechazo'],
   'Despacho': ['listas', 'preparado', 'despachado', 'stock'],
   'Inspección Final': ['listas', 'preparado', 'despachado', 'armar_hoja'],
 };
@@ -2102,6 +2152,21 @@ async function initDb() {
       console.error('preparados onSnapshot error:', err && err.code, err && err.message);
       dbReady = true;
     });
+    const recargarSiCorresponde = () => {
+      actualizarBadgeReplan();
+      if (['indicadores', 'rechazo', 'replanificar', 'despachado'].includes(currentFilter)) applyFilters();
+    };
+    db.collection('rechazos').onSnapshot(qs => {
+      rechazosList = qs.docs.filter(d => d.exists).map(d => d.data());
+      recargarSiCorresponde();
+    }, err => console.warn('rechazos onSnapshot:', err && err.code, err && err.message));
+    db.collection('rechazo_motivos').onSnapshot(qs => {
+      motivosList = qs.docs.filter(d => d.exists).map(d => d.data()).sort((a, b) => (a.orden - b.orden) || String(a.nombre).localeCompare(String(b.nombre), 'es'));
+    }, err => console.warn('rechazo_motivos onSnapshot:', err && err.code, err && err.message));
+    db.collection('eventos_produccion').onSnapshot(qs => {
+      eventosProd = qs.docs.filter(d => d.exists).map(d => d.data());
+      recargarSiCorresponde();
+    }, err => console.warn('eventos_produccion onSnapshot:', err && err.code, err && err.message));
     db.collection('entregas_parciales').onSnapshot(qs => {
       setEntregas(qs.docs.filter(d => d.exists).map(d => d.data()));
       rebuildData();
@@ -2413,6 +2478,393 @@ async function splitQuitarDivision() {
     console.error('No se pudo quitar la división:', e);
     alert(splitErrorMsg(e));
   }
+}
+
+
+// =========================================================================
+// ---- Indicadores, Rechazos (Terminación) y Replanificación (Planificación) ----
+// =========================================================================
+let rechazosList = [], motivosList = [], eventosProd = [];
+let rechazoVerReplan = false;
+let indState = { periodo: 'semana', desde: '', hasta: '', medida: 'kg' };
+
+function actualizarBadgeReplan() {
+  const el = document.getElementById('replan-badge');
+  if (!el) return;
+  const n = rechazosList.filter(r => r.estado === 'pendiente').length;
+  el.textContent = n > 0 ? ' (' + n + ')' : '';
+}
+function mesRango(offset) {
+  const [y, m] = TODAY_ISO.split('-').map(Number);
+  return {
+    ini: new Date(Date.UTC(y, m - 1 + offset, 1)).toISOString().slice(0, 10),
+    fin: new Date(Date.UTC(y, m + offset, 0)).toISOString().slice(0, 10),
+  };
+}
+function indRangos() {
+  const p = indState.periodo;
+  if (p === 'semana') return { cur: semanaRango(0), prev: semanaRango(-1) };
+  if (p === 'semana_ant') return { cur: semanaRango(-1), prev: semanaRango(-2) };
+  if (p === 'mes') return { cur: mesRango(0), prev: mesRango(-1) };
+  if (p === 'mes_ant') return { cur: mesRango(-1), prev: mesRango(-2) };
+  const ini = indState.desde || TODAY_ISO, fin = indState.hasta || indState.desde || TODAY_ISO;
+  const dias = Math.max(1, Math.round((new Date(fin) - new Date(ini)) / 86400000) + 1);
+  return { cur: { ini, fin }, prev: { ini: addDaysIso(ini, -dias), fin: addDaysIso(ini, -1) } };
+}
+function enRango(dia, r) { return !!dia && dia >= r.ini && dia <= r.fin; }
+function sumPeriodo(r) {
+  const num = v => Number(v) || 0;
+  const des = despachosLog.filter(d => enRango(d.dia, r));
+  const fun = eventosProd.filter(e => e.tipo === 'fundido' && enRango(e.dia, r));
+  const rec = rechazosList.filter(x => enRango(x.dia, r));
+  const conFecha = des.filter(d => d.fecha_entrega);
+  const kgConFecha = conFecha.reduce((s, d) => s + num(d.kg), 0);
+  const kgATiempo = conFecha.filter(d => d.dia <= d.fecha_entrega).reduce((s, d) => s + num(d.kg), 0);
+  return {
+    desKg: des.reduce((s, d) => s + num(d.kg), 0), desU: des.reduce((s, d) => s + num(d.cantidad), 0), desN: des.length,
+    funKg: fun.reduce((s, e) => s + num(e.kg), 0), funU: fun.reduce((s, e) => s + num(e.cantidad), 0),
+    recKg: rec.reduce((s, x) => s + num(x.kg), 0), recU: rec.reduce((s, x) => s + num(x.cantidad), 0), recN: rec.length,
+    cumpl: kgConFecha > 0 ? kgATiempo / kgConFecha : null, cumplN: conFecha.length, cumplDesN: des.length,
+  };
+}
+function fmtN(n, d) { return (Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: d == null ? 0 : d }); }
+function cortoIso(iso) { return iso.slice(8, 10) + '/' + iso.slice(5, 7); }
+function deltaHtml(cur, prev, invertir) {
+  if (!(prev > 0)) return cur > 0 ? '<span class="text-dim">período anterior sin datos</span>' : '<span class="text-dim">sin datos</span>';
+  const pct = Math.round((cur - prev) / prev * 100);
+  if (pct === 0) return '<span class="text-dim">= igual que el período anterior</span>';
+  const sube = pct > 0, bueno = invertir ? !sube : sube;
+  return `<span style="color:${bueno ? '#22c55e' : '#ef4444'};">${sube ? '▲' : '▼'} ${Math.abs(pct)}%</span> <span class="text-dim">vs período anterior</span>`;
+}
+function setIndPeriodo(p) { indState.periodo = p; renderIndicadoresPanel(); }
+function setIndRango() {
+  indState.desde = document.getElementById('ind-desde').value;
+  indState.hasta = document.getElementById('ind-hasta').value;
+  indState.periodo = 'rango';
+  renderIndicadoresPanel();
+}
+function setIndMedida(m) { indState.medida = m; renderIndicadoresPanel(); }
+
+function renderIndicadoresPanel() {
+  const box = document.getElementById('indicadores-body');
+  if (!box) return;
+  const { cur, prev } = indRangos();
+  const A = sumPeriodo(cur), B = sumPeriodo(prev);
+  const tile = (titulo, grande, sub, color) => `
+    <div style="flex:1 1 200px; min-width:170px; background:#0f172a; border:1px solid var(--card-border); border-radius:12px; padding:12px 14px;">
+      <div class="text-dim" style="font-size:0.72rem; text-transform:uppercase; letter-spacing:.04em;">${titulo}</div>
+      <div style="font-size:1.55rem; font-weight:700; color:${color}; margin:4px 0;">${grande}</div>
+      <div style="font-size:0.75rem; line-height:1.45;">${sub}</div>
+    </div>`;
+  const pBtn = (k, t) => `<button class="chip ${indState.periodo === k ? 'active' : ''}" onclick="setIndPeriodo('${k}')">${t}</button>`;
+  const hayFundidos = eventosProd.length > 0;
+  const primerFund = hayFundidos ? eventosProd.reduce((m, e) => (e.dia < m ? e.dia : m), eventosProd[0].dia) : null;
+  const pctRec = A.funKg > 0 ? (A.recKg / A.funKg * 100) : null;
+  const pctRecPrev = B.funKg > 0 ? (B.recKg / B.funKg * 100) : null;
+
+  // --- Kg por etapa hoy ---
+  const vivos = DATA.filter(r => r.estado_general !== 'Cancelado');
+  const kgMoldeo = vivos.filter(r => r.area_actual === 'Moldeo / Fusión').reduce((s, r) => s + r.kilos, 0);
+  const kgPrevio = vivos.filter(r => r.estado_general === 'En Fabricación' && r.area_actual !== 'Moldeo / Fusión').reduce((s, r) => s + r.kilos, 0);
+  const kgTerm = vivos.filter(r => r.estado_general === 'Fundido / En Terminación').reduce((s, r) => s + remainingKg(r), 0);
+  const kgPrep = vivos.reduce((s, r) => s + prepPendienteDespachoKg(r), 0);
+  const etapas = [['⏳ Pendiente previo a Moldeo', kgPrevio, '#94a3b8'], ['🔥 En Moldeo / Fusión', kgMoldeo, '#38bdf8'], ['🔧 En Terminación (por preparar)', kgTerm, '#34d399'], ['📦 Preparado, esperando despacho', kgPrep, '#2dd4bf']];
+  const maxEt = Math.max(1, ...etapas.map(e => e[1]));
+  const etapasHtml = etapas.map(e => `
+    <div style="display:flex; align-items:center; gap:8px; margin:5px 0; font-size:0.78rem;">
+      <span style="width:210px; flex:0 1 210px; color:#e2e8f0;">${e[0]}</span>
+      <div style="flex:1; min-width:40px; background:#0b1220; border-radius:5px; height:12px; overflow:hidden;"><div style="width:${Math.round(e[1] / maxEt * 100)}%; height:100%; background:${e[2]};"></div></div>
+      <span style="width:90px; flex:0 0 auto; text-align:right; color:#fff;">${fmtN(e[1])} Kg</span>
+    </div>`).join('');
+
+  // --- Serie de 8 semanas ---
+  const sem = [];
+  for (let o = -7; o <= 0; o++) { const r = semanaRango(o); sem.push({ r, v: sumPeriodo(r), act: o === 0 }); }
+  const maxS = Math.max(1, ...sem.map(w => Math.max(w.v.desKg, w.v.funKg, w.v.recKg)));
+  const bar = (v, c) => `<div style="background:#0b1220; border-radius:4px; height:9px; overflow:hidden; margin:2px 0;"><div style="width:${Math.round(v / maxS * 100)}%; height:100%; background:${c};"></div></div>`;
+  const semHtml = sem.map(w => `
+    <div style="display:flex; align-items:center; gap:8px; margin:6px 0; font-size:0.74rem;">
+      <span style="width:100px; flex:0 0 auto; color:${w.act ? '#fff' : '#94a3b8'}; font-weight:${w.act ? 700 : 400};">${w.act ? 'Esta semana' : cortoIso(w.r.ini) + '–' + cortoIso(w.r.fin)}</span>
+      <div style="flex:1; min-width:60px;">${bar(w.v.desKg, '#c084fc')}${bar(w.v.funKg, '#34d399')}${bar(w.v.recKg, '#ef4444')}</div>
+      <span style="width:150px; flex:0 0 auto; text-align:right; color:#cbd5e1; line-height:1.35;">${fmtN(w.v.desKg)} · ${fmtN(w.v.funKg)} · ${fmtN(w.v.recKg)} Kg</span>
+    </div>`).join('');
+
+  // --- Pareto de rechazos del período ---
+  const med = indState.medida;
+  const recPer = rechazosList.filter(x => enRango(x.dia, cur));
+  const grupos = {};
+  recPer.forEach(x => { const k = (x.motivo || '').trim() || '(sin motivo)'; grupos[k] = (grupos[k] || 0) + (med === 'kg' ? (Number(x.kg) || 0) : (Number(x.cantidad) || 0)); });
+  const filas = Object.entries(grupos).sort((a, b) => b[1] - a[1]);
+  const totalP = filas.reduce((s, f) => s + f[1], 0);
+  let acum = 0;
+  const paretoHtml = filas.length ? filas.map(([mot, v]) => {
+    const antes = acum; acum += v;
+    const pctAcum = totalP > 0 ? acum / totalP * 100 : 0;
+    const vital = totalP > 0 && antes / totalP * 100 < 80;
+    return `<div style="display:flex; align-items:center; gap:8px; margin:6px 0; font-size:0.78rem;">
+      <span style="width:170px; flex:0 1 170px; color:${vital ? '#fff' : '#94a3b8'}; overflow:hidden; text-overflow:ellipsis;" title="${escHtml(mot)}">${escHtml(mot)}</span>
+      <div style="flex:1; min-width:40px; background:#0b1220; border-radius:5px; height:14px; overflow:hidden;"><div style="width:${Math.round(v / filas[0][1] * 100)}%; height:100%; background:${vital ? '#ef4444' : '#64748b'};"></div></div>
+      <span style="width:80px; flex:0 0 auto; text-align:right; color:#fff;">${fmtN(v, med === 'kg' ? 1 : 0)} ${med === 'kg' ? 'Kg' : 'u.'}</span>
+      <span style="width:52px; flex:0 0 auto; text-align:right; color:#fbbf24;">${Math.round(pctAcum)}%</span>
+    </div>`;
+  }).join('') : '<div class="text-dim" style="padding:8px 0;">No hay rechazos registrados en este período.</div>';
+
+  box.innerHTML = `
+    <div class="quick-chips" style="margin-bottom:10px;">
+      ${pBtn('semana', 'Esta semana')}${pBtn('semana_ant', 'Semana pasada')}${pBtn('mes', 'Este mes')}${pBtn('mes_ant', 'Mes pasado')}
+      <span class="text-dim" style="font-size:0.75rem; align-self:center; margin-left:6px;">o rango:</span>
+      <input type="date" id="ind-desde" value="${escHtml(indState.desde)}" onchange="setIndRango()" style="background:#0f172a; border:1px solid var(--card-border); color:#fff; border-radius:8px; padding:5px 8px; font-size:0.78rem;">
+      <input type="date" id="ind-hasta" value="${escHtml(indState.hasta)}" onchange="setIndRango()" style="background:#0f172a; border:1px solid var(--card-border); color:#fff; border-radius:8px; padding:5px 8px; font-size:0.78rem;">
+    </div>
+    <div class="text-dim" style="font-size:0.78rem; margin-bottom:12px;">Período: <b style="color:#fff;">${cortoIso(cur.ini)} al ${cortoIso(cur.fin)}</b> · se compara con ${cortoIso(prev.ini)} al ${cortoIso(prev.fin)}</div>
+
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+      ${tile('Despachado', fmtN(A.desKg) + ' Kg', `${fmtN(A.desU)} u. · ${A.desN} despacho${A.desN === 1 ? '' : 's'}<br>${deltaHtml(A.desKg, B.desKg)}`, '#c084fc')}
+      ${tile('Fundido', hayFundidos ? fmtN(A.funKg) + ' Kg' : '—', hayFundidos ? `${fmtN(A.funU)} u. pasaron a Terminación<br>${deltaHtml(A.funKg, B.funKg)}` : 'Se empieza a registrar con la próxima actualización diaria de SGA', '#34d399')}
+      ${tile('Rechazo', fmtN(A.recKg) + ' Kg', `${fmtN(A.recU)} u. · ${A.recN} registro${A.recN === 1 ? '' : 's'}<br>${deltaHtml(A.recKg, B.recKg, true)}`, '#ef4444')}
+      ${tile('% de rechazo sobre lo fundido', pctRec == null ? '—' : fmtN(pctRec, 1) + ' %', pctRec == null ? 'Hace falta fundido registrado en el período' : `Rechazo ÷ fundido del período<br>${pctRecPrev == null ? '<span class="text-dim">período anterior sin datos</span>' : deltaHtml(pctRec, pctRecPrev, true)}`, '#fbbf24')}
+      ${tile('Entregas en fecha', A.cumpl == null ? '—' : fmtN(A.cumpl * 100) + ' %', A.cumpl == null ? 'Se mide con los despachos que guardan su fecha de entrega (desde que se activó esta función)' : `${A.cumplN} de ${A.cumplDesN} despachos con fecha · por Kg<br>${B.cumpl == null ? '<span class="text-dim">período anterior sin datos</span>' : deltaHtml(A.cumpl, B.cumpl)}`, A.cumpl == null ? '#94a3b8' : (A.cumpl >= 0.9 ? '#22c55e' : '#fbbf24'))}
+    </div>
+    ${hayFundidos ? '' : '<div class="text-dim" style="font-size:0.75rem; margin-bottom:12px;">ℹ️ El "Fundido" lo detecta la carga diaria de SGA comparando contra el día anterior, así que su historial empieza el día que se activó.</div>'}
+    ${hayFundidos && primerFund ? `<div class="text-dim" style="font-size:0.72rem; margin-bottom:12px;">ℹ️ Fundido registrado desde el ${formatDate(primerFund)}.</div>` : ''}
+
+    <div style="border:1px solid var(--card-border); border-radius:12px; padding:12px 14px; margin-bottom:12px;">
+      <div class="text-dim" style="font-size:0.72rem; text-transform:uppercase; letter-spacing:.04em; margin-bottom:6px;">Kg en cada etapa, hoy</div>
+      ${etapasHtml}
+    </div>
+
+    <div style="border:1px solid var(--card-border); border-radius:12px; padding:12px 14px; margin-bottom:12px;">
+      <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:6px;">
+        <div class="text-dim" style="font-size:0.72rem; text-transform:uppercase; letter-spacing:.04em;">Pareto de rechazos por motivo</div>
+        <div class="quick-chips" style="margin:0;"><button class="chip ${med === 'kg' ? 'active' : ''}" onclick="setIndMedida('kg')">Kg</button><button class="chip ${med === 'u' ? 'active' : ''}" onclick="setIndMedida('u')">Unidades</button></div>
+      </div>
+      <div class="text-dim" style="font-size:0.72rem; margin-bottom:4px;">Total del período: <b style="color:#fff;">${fmtN(totalP, med === 'kg' ? 1 : 0)} ${med === 'kg' ? 'Kg' : 'u.'}</b> · en rojo los motivos que juntos explican hasta el 80 % (columna amarilla = acumulado).</div>
+      ${paretoHtml}
+    </div>
+
+    <div style="border:1px solid var(--card-border); border-radius:12px; padding:12px 14px;">
+      <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:6px;">
+        <div class="text-dim" style="font-size:0.72rem; text-transform:uppercase; letter-spacing:.04em;">Últimas 8 semanas</div>
+        <div class="text-dim" style="font-size:0.72rem;"><span style="color:#c084fc;">■</span> Despachado &nbsp;<span style="color:#34d399;">■</span> Fundido &nbsp;<span style="color:#ef4444;">■</span> Rechazo</div>
+      </div>
+      ${semHtml}
+    </div>`;
+}
+
+// ---- Rechazos: carga desde Terminación ----
+let rz = null;
+function puedeCargarRechazo() { return puedeVer('rechazo') && puedeDividir(); }
+function renderRechazoPanel() {
+  const nuevo = document.getElementById('rz-nuevo-btn');
+  if (nuevo) nuevo.style.display = puedeCargarRechazo() ? '' : 'none';
+  const mot = document.getElementById('rz-motivos-btn');
+  if (mot) mot.style.display = (CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? '' : 'none';
+  const el = document.getElementById('rechazo-list');
+  if (!el) return;
+  if (!rechazosList.length) {
+    el.innerHTML = '<div class="text-dim" style="padding: 20px 4px;">Todavía no se registró ningún rechazo. Usá "+ Registrar rechazo" para cargar el primero.</div>';
+    return;
+  }
+  const hoy = diaLocalStr();
+  const byDay = {};
+  rechazosList.forEach(r => { (byDay[r.dia] || (byDay[r.dia] = [])).push(r); });
+  const dias = Object.keys(byDay).sort((a, b) => b.localeCompare(a));
+  el.innerHTML = dias.map(dia => {
+    const items = byDay[dia].slice().sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')));
+    const u = items.reduce((s, r) => s + (Number(r.cantidad) || 0), 0), kg = items.reduce((s, r) => s + (Number(r.kg) || 0), 0);
+    return `<div class="desp-day-header"><span class="desp-day-title">${dia === hoy ? 'Hoy — ' : ''}${formatDate(dia)}</span><span class="desp-day-sub">${fmtN(u)} u. · ${fmtN(kg, 1)} Kg</span></div>` + items.map(rechazoCardHtml).join('');
+  }).join('');
+}
+function rechazoCardHtml(r, conBoton) {
+  const pill = r.estado === 'replanificado'
+    ? `<span class="pill pill-ready">✔ Replanificado${r.replanificado_dia ? ' ' + formatDate(r.replanificado_dia) : ''}</span>`
+    : '<span class="pill pill-warning">⏳ A replanificar</span>';
+  return `
+    <div class="stock-card">
+      <div class="info" style="flex:1; min-width:200px;">
+        <div class="name">${escHtml(r.descripcion || '(sin descripción)')}</div>
+        <div class="sub">${escHtml(r.cliente || '')} · NV ${escHtml(r.comprobante || '')}${r.codigo ? ' · Cód: ' + escHtml(r.codigo) : ''}${r.probeta ? ' · Probeta ' + escHtml(r.probeta) : ''}</div>
+        <div class="sub" style="margin-top:4px;">Motivo: <span style="color:#fbbf24;">${escHtml(r.motivo || '—')}</span>${r.detalle ? ' · ' + escHtml(r.detalle) : ''}</div>
+        ${r.replanificado_nota ? `<div class="sub" style="margin-top:2px;">📝 ${escHtml(r.replanificado_nota)}</div>` : ''}
+      </div>
+      <div class="qty">${fmtN(r.cantidad)} u. <span class="kg">(${fmtN(r.kg, 1)} Kg)</span></div>
+      <div style="display:flex; flex-direction:column; gap:6px; align-items:flex-end;">${pill}${conBoton ? `<button class="desp-btn" onclick="openReplanDialog(${r.id})">🔁 Marcar replanificada</button>` : ''}</div>
+    </div>`;
+}
+
+function rzBuscar(q) {
+  rz.q = q;
+  const box = document.getElementById('rz-results');
+  if (!box) return;
+  const t = q.trim().toLowerCase();
+  if (t.length < 2) { box.innerHTML = '<div class="text-dim" style="padding:6px 2px; font-size:0.75rem;">Escribí cliente, NV, código o descripción (mínimo 2 letras).</div>'; return; }
+  const res = BASE.filter(r => r.estado_general !== 'Cancelado' && [r.cliente, r.comprobante, r.codigo, r.descripcion, r.oc].some(x => String(x || '').toLowerCase().includes(t))).slice(0, 25);
+  box.innerHTML = res.length ? res.map(r => `
+    <button type="button" onclick="rzElegir(${r.id})" style="display:block; width:100%; text-align:left; background:${rz.sel === r.id ? '#1e3a5f' : '#0f172a'}; border:1px solid var(--card-border); color:#e2e8f0; border-radius:8px; padding:7px 9px; margin-bottom:5px; font-size:0.78rem; cursor:pointer;">
+      <b>${escHtml(r.descripcion)}</b><br><span class="text-dim">${escHtml(r.cliente)} · NV ${escHtml(r.comprobante)} · Cód ${escHtml(r.codigo)} · pend. ${fmtN(r.pend)}</span>
+    </button>`).join('') : '<div class="text-dim" style="padding:6px 2px; font-size:0.75rem;">Sin resultados.</div>';
+}
+function rzKgAuto() {
+  const b = rz.sel ? baseRow(rz.sel) : null;
+  const c = Number(rz.cant) || 0;
+  if (!b || c <= 0) return 0;
+  return Math.round((b.kxu > 0 ? b.kxu * c : (b.cant > 0 ? b.kilos * c / b.cant : 0)) * 10) / 10;
+}
+function rzElegir(id) {
+  rz.sel = id;
+  rz.probeta = '';
+  const b = baseRow(id);
+  const lbl = document.getElementById('rz-sel');
+  if (lbl) lbl.innerHTML = `✔ <b style="color:#fff;">${escHtml(b.descripcion)}</b> <span class="text-dim">— ${escHtml(b.cliente)} · NV ${escHtml(b.comprobante)}</span>`;
+  const lotes = [...new Set(preparadosLogList.filter(l => String(l.itemId) === String(id)).map(l => l.probeta).filter(p => p && p !== '-'))];
+  const dl = document.getElementById('rz-probetas');
+  if (dl) dl.innerHTML = lotes.map(p => `<option value="${escHtml(p)}">`).join('');
+  const pi = document.getElementById('rz-probeta'); if (pi) pi.value = '';
+  rzBuscar(rz.q || '');
+  rzActualizarKg();
+}
+function rzActualizarKg() {
+  if (!rz.kgTocado) rz.kg = rzKgAuto();
+  const k = document.getElementById('rz-kg'); if (k && !rz.kgTocado) k.value = rz.kg || '';
+}
+function openRechazoDialog() {
+  if (!puedeCargarRechazo()) { alert('Tu usuario no tiene permiso para registrar rechazos.'); return; }
+  rz = { q: '', sel: null, cant: '', probeta: '', motivo: '', otro: '', detalle: '', kg: 0, kgTocado: false };
+  const activos = motivosList.filter(m => m.activo !== false);
+  const motivoHtml = activos.length ? `
+    <div class="stock-field"><label>Motivo</label>
+      <select id="rz-motivo" onchange="rz.motivo = this.value; document.getElementById('rz-otro-wrap').style.display = (this.value === '__otro__') ? '' : 'none'">
+        <option value="">— Elegí el motivo —</option>
+        ${activos.map(m => `<option value="${escHtml(m.nombre)}">${escHtml(m.nombre)}</option>`).join('')}
+        <option value="__otro__">Otro (escribir)…</option>
+      </select></div>
+    <div class="stock-field" id="rz-otro-wrap" style="display:none;"><label>Escribí el motivo</label><input type="text" oninput="rz.otro = this.value"></div>`
+    : `<div class="stock-field"><label>Motivo</label><input type="text" placeholder="Ej.: porosidad, falta de llenado…" oninput="rz.otro = this.value; rz.motivo = '__otro__'"></div>`;
+  showStockDialog(`
+    <h3>❌ Registrar rechazo</h3>
+    <div class="stock-field"><label>Pieza</label><input type="text" id="rz-buscar" placeholder="Buscar por cliente, NV, código o descripción" oninput="rzBuscar(this.value)" autocomplete="off"></div>
+    <div id="rz-results" style="max-height:26vh; overflow:auto; margin-bottom:8px;"></div>
+    <div id="rz-sel" class="text-dim" style="margin-bottom:10px; font-size:0.8rem;">Todavía no elegiste ninguna pieza.</div>
+    <div style="display:flex; gap:8px;">
+      <div class="stock-field" style="flex:1;"><label>Cantidad rechazada (u.)</label><input type="number" min="1" step="1" oninput="rz.cant = this.value; rzActualizarKg()"></div>
+      <div class="stock-field" style="flex:1;"><label>Kg (se calcula solo)</label><input type="number" id="rz-kg" min="0" step="0.1" oninput="rz.kg = Number(this.value); rz.kgTocado = true"></div>
+    </div>
+    <div class="stock-field"><label>Nº de probeta (si tiene)</label><input type="text" id="rz-probeta" list="rz-probetas" placeholder="Dejalo vacío si no tiene" oninput="rz.probeta = this.value"><datalist id="rz-probetas"></datalist></div>
+    ${motivoHtml}
+    <div class="stock-field"><label>Detalle (opcional)</label><input type="text" oninput="rz.detalle = this.value"></div>
+    <div class="stock-actions">
+      <button class="stock-btn-cancel" onclick="closeStockDialog()">Cancelar</button>
+      <button class="stock-btn-primary" id="rz-save-btn" onclick="saveRechazo()">Registrar rechazo</button>
+    </div>`);
+  rzBuscar('');
+  setTimeout(() => { const i = document.getElementById('rz-buscar'); if (i) i.focus(); }, 50);
+}
+async function saveRechazo() {
+  const b = rz.sel ? baseRow(rz.sel) : null;
+  if (!b) { alert('Elegí la pieza rechazada.'); return; }
+  const cant = Number(rz.cant);
+  if (!(cant > 0)) { alert('Poné la cantidad rechazada.'); return; }
+  const motivo = (rz.motivo === '__otro__' || (!rz.motivo && rz.otro)) ? (rz.otro || '').trim() : (rz.motivo || '').trim();
+  if (!motivo) { alert('Elegí o escribí el motivo del rechazo.'); return; }
+  if (!dbRef) { alert('No se pudo conectar al almacenamiento compartido. Probá recargar la página.'); return; }
+  const btn = document.getElementById('rz-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+  try {
+    await dbRef.collection('rechazos').add({
+      item_id: b.id, cliente: b.cliente, comprobante: b.comprobante, oc: b.oc, codigo: b.codigo,
+      descripcion: b.descripcion, material: b.material, cantidad: cant, kg: Number(rz.kg) || rzKgAuto(),
+      probeta: (rz.probeta || '').trim() || null, motivo, detalle: (rz.detalle || '').trim() || null,
+      area_detecta: 'Terminación', dia: diaLocalStr(), estado: 'pendiente',
+    });
+    closeStockDialog();
+    showToast('Rechazo registrado — pasa a Planificación', 'success');
+  } catch (e) {
+    console.error('No se pudo registrar el rechazo:', e);
+    let msg = 'No se pudo registrar el rechazo.';
+    if (e && (e.code === 'PGRST205' || e.code === '42P01')) msg = 'La base todavía no tiene la tabla de rechazos. Avisale a quien administra el tablero (falta correr el SQL 006).';
+    else if (e && e.code === '42501') msg = 'Tu usuario no tiene permiso para registrar rechazos (hace falta Colaborador o Editor y la sección Rechazos).';
+    else if (e && e.message) msg += ' ' + e.message;
+    alert(msg);
+    if (btn) { btn.disabled = false; btn.textContent = 'Registrar rechazo'; }
+  }
+}
+
+// ---- Planificación: replanificar ----
+function renderReplanificarPanel() {
+  const el = document.getElementById('replanificar-list');
+  if (!el) return;
+  const puede = puedeVer('replanificar') && puedeDividir();
+  const lista = rechazosList.filter(r => rechazoVerReplan || r.estado === 'pendiente')
+    .sort((a, b) => (a.estado === b.estado ? String(a.dia).localeCompare(String(b.dia)) : (a.estado === 'pendiente' ? -1 : 1)));
+  if (!lista.length) {
+    el.innerHTML = '<div class="text-dim" style="padding: 20px 4px;">No hay rechazos pendientes de replanificar. 🎉</div>';
+    return;
+  }
+  el.innerHTML = lista.map(r => rechazoCardHtml(r, puede && r.estado === 'pendiente')).join('');
+}
+function openReplanDialog(id) {
+  const r = rechazosList.find(x => String(x.id) === String(id));
+  if (!r) return;
+  showStockDialog(`
+    <h3>🔁 Marcar como replanificada</h3>
+    <div class="text-dim" style="margin-bottom:12px; line-height:1.5;"><span style="color:#fff;">${escHtml(r.descripcion || '')}</span><br>${escHtml(r.cliente || '')} · NV ${escHtml(r.comprobante || '')} · ${fmtN(r.cantidad)} u.${r.probeta ? ' · Probeta ' + escHtml(r.probeta) : ''}<br>Motivo: ${escHtml(r.motivo || '—')}</div>
+    <div class="stock-field"><label>Nota (opcional): nueva fecha, orden de fabricación, etc.</label><input type="text" id="replan-nota" autocomplete="off"></div>
+    <div class="text-dim" style="font-size:0.75rem; margin-bottom:10px;">Sale de esta lista y queda en el registro de rechazos.</div>
+    <div class="stock-actions">
+      <button class="stock-btn-cancel" onclick="closeStockDialog()">Cancelar</button>
+      <button class="stock-btn-primary" id="replan-save-btn" onclick="saveReplan(${r.id})">✅ Replanificada</button>
+    </div>`);
+}
+async function saveReplan(id) {
+  const nota = (document.getElementById('replan-nota').value || '').trim() || null;
+  const btn = document.getElementById('replan-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+  try {
+    const { error } = await supabaseClient.from('rechazos').update({
+      estado: 'replanificado', replanificado_dia: diaLocalStr(), replanificado_ts: new Date().toISOString(),
+      replanificado_por: CURRENT_USER_ID, replanificado_nota: nota,
+    }).eq('id', id);
+    if (error) throw error;
+    const r = rechazosList.find(x => String(x.id) === String(id));
+    if (r) { r.estado = 'replanificado'; r.replanificado_dia = diaLocalStr(); r.replanificado_nota = nota; }
+    closeStockDialog();
+    actualizarBadgeReplan();
+    applyFilters();
+    showToast('Marcada como replanificada', 'success');
+  } catch (e) {
+    console.error('No se pudo marcar como replanificada:', e);
+    alert('No se pudo guardar. ' + ((e && e.code === '42501') ? 'Tu usuario no tiene permiso para replanificar (hace falta Colaborador o Editor y la sección Replanificar).' : ((e && e.message) || '')));
+    if (btn) { btn.disabled = false; btn.textContent = '✅ Replanificada'; }
+  }
+}
+
+// ---- Motivos de rechazo (solo administrador) ----
+function openMotivosDialog() {
+  const filas = motivosList.map(m => `
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--card-border); font-size:0.82rem;">
+      <span style="color:${m.activo === false ? '#64748b' : '#fff'}; ${m.activo === false ? 'text-decoration:line-through;' : ''}">${escHtml(m.nombre)}</span>
+      <button class="stock-btn-cancel" style="flex:0 0 auto; padding:3px 9px; font-size:0.72rem;" onclick="toggleMotivo(${m.id}, ${m.activo === false})">${m.activo === false ? 'Reactivar' : 'Quitar'}</button>
+    </div>`).join('') || '<div class="text-dim" style="padding:8px 0;">Todavía no hay motivos cargados.</div>';
+  showStockDialog(`
+    <h3>⚙️ Motivos de rechazo</h3>
+    <div style="max-height:34vh; overflow:auto; margin-bottom:12px;">${filas}</div>
+    <div class="stock-field"><label>Agregar motivo</label><input type="text" id="motivo-nuevo" placeholder="Ej.: Porosidad" autocomplete="off"></div>
+    <div class="stock-actions">
+      <button class="stock-btn-cancel" onclick="closeStockDialog()">Cerrar</button>
+      <button class="stock-btn-primary" onclick="addMotivo()">Agregar</button>
+    </div>`);
+}
+async function addMotivo() {
+  const nombre = (document.getElementById('motivo-nuevo').value || '').trim();
+  if (!nombre) return;
+  const { error } = await supabaseClient.from('rechazo_motivos').insert({ nombre, orden: motivosList.length + 1 });
+  if (error) { alert(/duplicate|unique/i.test(error.message || '') ? 'Ese motivo ya existe.' : 'No se pudo agregar: ' + error.message); return; }
+  setTimeout(openMotivosDialog, 400);
+}
+async function toggleMotivo(id, activar) {
+  const { error } = await supabaseClient.from('rechazo_motivos').update({ activo: !!activar }).eq('id', id);
+  if (error) { alert('No se pudo cambiar: ' + error.message); return; }
+  setTimeout(openMotivosDialog, 400);
 }
 
 // ---- Stock sin pedido: cálculo y diálogos ----
@@ -2932,6 +3384,23 @@ function applyFilters() {
   const despachadoSection = document.getElementById('despachado-section');
   const armarHojaSection = document.getElementById('armar-hoja-section');
   const splitContainer = document.getElementById('split-container');
+  ['indicadores-section', 'rechazo-section', 'replanificar-section'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = 'none'; });
+  if (currentFilter === 'indicadores' || currentFilter === 'rechazo' || currentFilter === 'replanificar') {
+    if (stockSection) stockSection.style.display = 'none';
+    if (despachadoSection) despachadoSection.style.display = 'none';
+    if (armarHojaSection) armarHojaSection.style.display = 'none';
+    if (splitContainer) splitContainer.style.display = 'none';
+    document.getElementById(currentFilter + '-section').style.display = 'block';
+    let n = '—';
+    if (currentFilter === 'indicadores') renderIndicadoresPanel();
+    else if (currentFilter === 'rechazo') { renderRechazoPanel(); n = rechazosList.length; }
+    else { renderReplanificarPanel(); n = rechazosList.filter(r => r.estado === 'pendiente').length; }
+    document.getElementById('count-filtered').textContent = n;
+    document.getElementById('count-total').textContent = DATA.length;
+    document.getElementById('kg-filtered').textContent = '—';
+    document.getElementById('cant-filtered').textContent = '—';
+    return;
+  }
   if (currentFilter === 'stock') {
     if (stockSection) stockSection.style.display = 'block';
     if (despachadoSection) despachadoSection.style.display = 'none';
@@ -3283,6 +3752,7 @@ function showToast(message, kind) {
           descripcion: row.descripcion, material: row.material, oc: row.oc,
           cantidad: val, kg: Math.round(kg * 10) / 10,
           dia: diaLocalStr(), ts: new Date().toISOString(),
+          fecha_entrega: row.fecha_entrega || null,
           probetas: lineas,
         });
         closeDespachoDialog();
