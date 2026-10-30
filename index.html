@@ -2301,6 +2301,73 @@ function sortTable(col) {
   applyFilters();
 }
 
+// ---- constructores reutilizables (tabla Y modal de detalle usan los mismos) ----
+function buildPipeHtml(r) {
+  const steps = [
+    { name: 'Com', val: r.f_com }, { name: 'Adm', val: r.f_adm }, { name: 'IP', val: r.f_ip },
+    { name: 'PL', val: r.f_pl }, { name: 'Desp', val: r.f_desp }
+  ];
+  const realRank = (r._realRank === null || r._realRank === undefined) ? null : r._realRank;
+  const manRank = r._manualRank;
+  const effRank = (realRank != null) ? ((manRank != null) ? Math.max(realRank, manRank) : realRank) : null;
+  let html = '<div class="pipeline">';
+  steps.forEach((s, i) => {
+    let cls = 'pipe-wait', txt = s.name.charAt(0), title = `${s.name}: ${s.val}`;
+    if (s.val === 'SI') { cls = 'pipe-si'; txt = '✓'; }
+    else if (s.val === 'NO') { cls = 'pipe-no'; txt = '✗'; }
+    else if (effRank != null && i < effRank) {
+      cls = 'pipe-manual'; txt = '✓';
+      title = `${s.name}: avance manual (SGA todavía no lo firmó)`;
+    } else if (effRank != null && i === effRank && effRank < 5 && r.estado_general === 'En Fabricación') {
+      cls = 'pipe-cur';
+    }
+    html += `<div class="pipe-step ${cls}" title="${title}">${txt}</div>`;
+  });
+  return html + '</div>';
+}
+function buildAlertPill(r) {
+  if (isVencidaTerminacion(r)) return '<span class="pill pill-danger">⚠️ VENCIDA — EN TERMINACIÓN</span>';
+  if (r.alerta_entrega === 'VENCIDA (FÁBRICA)') return '<span class="pill pill-danger">⚠️ VENCIDA EN FÁBRICA</span>';
+  if (r.alerta_entrega === 'URGENTE (<=7d)') return '<span class="pill pill-warning">🟡 &lt; 7 DÍAS</span>';
+  if (r.alerta_entrega === 'PRÓXIMA (<=15d)') return '<span class="pill pill-info">🔵 &lt; 15 DÍAS</span>';
+  if (r.alerta_entrega === 'EN TERMINACIÓN') return '<span class="pill pill-ready">🔧 EN TERMINACIÓN</span>';
+  if (r.alerta_entrega === 'CANCELADO') return '<span class="pill pill-danger">🛑 CANCELADO</span>';
+  return '<span class="text-dim">🟢 En Fecha</span>';
+}
+function buildStatusPill(r) {
+  if (r.estado_general === 'Fundido / En Terminación') return '<span class="pill pill-ready">📦 Fundido / Terminación</span>';
+  if (r.estado_general === 'Cancelado') return `<span class="pill pill-danger">${r.area_actual}</span>`;
+  return `<span class="pill pill-warning">⏳ En: ${r.area_actual}</span>`;
+}
+function buildRepBadge(r) {
+  if (r.es_repuesto) return '<span class="tag-rep">REPUESTO</span> ';
+  if (r.es_r99) return '<span class="tag-unid">NO IDENTIF.</span> ';
+  return '';
+}
+function buildPrepCellHtml(r) {
+  if (r.area_actual !== 'En Terminación') return '<span class="prep-na">—</span>';
+  const ya = prepCant(r.id);
+  const doneBadge = isPrepared(r) ? '<div style="margin-bottom:4px;"><span class="pill pill-ready">✅ Preparado</span></div>' : '';
+  const despBadge = hasAnyDespacho(r)
+    ? `<div style="margin-bottom:4px;"><span class="pill pill-despachado">🚚 Despachado: ${despCant(r.id).toLocaleString()}</span></div>`
+    : '';
+  const disponibleDespacho = prepPendienteDespacho(r);
+  const despBtnHtml = disponibleDespacho > 0
+    ? `<div style="margin-top:6px;"><button class="desp-btn" onclick="openDespachoDialog(${r.id})">🚚 Despachar (${disponibleDespacho.toLocaleString()})</button></div>`
+    : '';
+  return `
+    <div>
+      ${doneBadge}
+      ${despBadge}
+      <div class="prep-cell">
+        <input type="number" class="prep-input" min="0" step="1" value="${ya}">
+        <span class="prep-of">/ ${r.pend.toLocaleString()}</span>
+        <button class="prep-btn" onclick="savePrep(${r.id}, ${r.pend}, this.parentElement)">Guardar</button>
+      </div>
+      ${despBtnHtml}
+    </div>`;
+}
+
 function escHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
