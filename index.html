@@ -3,6 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0f172a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="AMRO Tablero">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
 <title>Tablero Comercial & Logística - SGA</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
@@ -46,6 +54,18 @@
   .app-root.hidden { display: none; }
   .logout-link { background: transparent; border: 1px solid #475569; color: #94a3b8; font-size: 0.72rem; padding: 5px 10px; border-radius: 6px; cursor: pointer; margin-left: 10px; }
   .logout-link:hover { color: #fff; border-color: var(--accent); }
+  .hdr-btn { background: #1e293b; border: 1px solid #475569; color: #e2e8f0; font-size: 0.76rem; font-weight: 600; padding: 6px 12px; border-radius: 8px; cursor: pointer; margin-right: 8px; white-space: nowrap; }
+  .hdr-btn:hover { border-color: var(--accent); color: #fff; }
+  .hdr-btn.install { background: var(--accent); color: #0f172a; border-color: var(--accent); }
+  .hdr-btn.install:hover { background: #60c7fb; }
+  .admin-dialog { max-width: 920px !important; }
+  .adm-user { background: #0f172a; border: 1px solid var(--card-border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+  .adm-user-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 8px; }
+  .adm-user-head .em { font-weight: 700; color: #fff; font-size: 0.85rem; }
+  .adm-user select, .adm-user input[type=text] { background: #0f172a; border: 1px solid var(--card-border); color: #fff; border-radius: 6px; padding: 5px 8px; font-size: 0.78rem; }
+  .adm-secs { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 4px 12px; margin: 8px 0; }
+  .adm-secs label { font-size: 0.76rem; color: #cbd5e1; display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  .adm-msg { font-size: 0.74rem; margin-left: 8px; }
   .user-pill { font-size: 0.72rem; color: var(--text-muted); }
 
   .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 20px; }
@@ -376,7 +396,9 @@
       <h1>📋 Tablero Comercial & Control de Despachos</h1>
       <div class="subtitle">Monitoreo por áreas de fabricación, cálculo de Kg y anticipación comercial — datos de SGA (Perfil Planeamiento, desde 01/02/2026)</div>
     </div>
-    <div style="display:flex; align-items:center;">
+    <div style="display:flex; align-items:center; flex-wrap:wrap; gap:6px 0;">
+      <button class="hdr-btn install" id="install-btn" onclick="onInstallClick()" title="Instalar el tablero como app en tu pantalla de inicio">⬇️ Instalar app</button>
+      <button class="hdr-btn" id="admin-btn" style="display:none;" onclick="openAdminDialog()">👥 Usuarios y permisos</button>
       <span class="badge-live" id="asof-badge">ACTUALIZADO</span>
       <span class="user-pill" id="user-pill" style="margin-left:10px;"></span>
       <button class="logout-link" onclick="doLogout()">Cerrar sesión</button>
@@ -441,7 +463,7 @@
       <div class="value" id="kpi-urgent-term" style="color: #f87171;">0</div>
       <div class="sub">Fundidas, esperando en Terminación, con fecha ya pasada — ya contadas arriba, no suma aparte</div>
     </div>
-    <div class="kpi-card priority-combo" title="La fija Planeamiento — tocá Alta o Media para filtrar cada una por separado">
+    <div class="kpi-card priority-combo" id="card-prioridades" title="La fija Planeamiento — tocá Alta o Media para filtrar cada una por separado">
       <div class="label">🚩 Prioridades</div>
       <div class="priority-row" id="card-prioridad_alta" onclick="setFilterFromCard('prioridad_alta')">
         <span class="priority-label">🔴 Alta</span>
@@ -575,6 +597,13 @@
 
   <div class="sticky-hscroll-wrap" id="sticky-hscroll-wrap">
     <div class="sticky-hscroll" id="sticky-hscroll"><div class="sticky-hscroll-inner" id="sticky-hscroll-inner"></div></div>
+  </div>
+
+  <div class="stock-overlay" id="install-help-overlay" onclick="if(event.target.id==='install-help-overlay')closeInstallHelp()">
+    <div class="stock-dialog" id="install-help-content"></div>
+  </div>
+  <div class="stock-overlay" id="admin-overlay" onclick="if(event.target.id==='admin-overlay')closeAdminDialog()">
+    <div class="stock-dialog admin-dialog" id="admin-dialog-content"></div>
   </div>
 
   <div class="stock-section" id="stock-section" style="display:none;">
@@ -1059,6 +1088,36 @@ function prioridadFromDb(nivel) {
   return nivel;
 }
 
+// Los *_log y stock_movimientos usan en la base nombres de columna en
+// snake_case (item_id, peso_real, hoja_numero, cantidad), pero toda la
+// lógica portada del tablero usa camelCase (itemId, pesoReal, hojaNumero, cant).
+// Se traduce acá, en el borde, igual que prioridades.nivel.
+function toDbRow(name, obj) {
+  const r = { ...obj };
+  if (name === 'preparados_log' || name === 'despachos_log') {
+    if ('itemId' in r) { r.item_id = r.itemId; delete r.itemId; }
+  }
+  if (name === 'preparados_log') {
+    if ('pesoReal' in r) { r.peso_real = r.pesoReal; delete r.pesoReal; }
+    if ('hojaNumero' in r) { r.hoja_numero = (r.hojaNumero == null || r.hojaNumero === '') ? null : Number(r.hojaNumero); delete r.hojaNumero; }
+  }
+  if (name === 'stock_movimientos') {
+    if ('cant' in r) { r.cantidad = r.cant; delete r.cant; }
+  }
+  return r;
+}
+function fromDbRow(name, row) {
+  const r = { ...row };
+  if (name === 'preparados_log' || name === 'despachos_log') r.itemId = r.item_id;
+  if (name === 'preparados_log') {
+    r.pesoReal = r.peso_real;
+    r.hojaNumero = (r.hoja_numero == null) ? null : String(r.hoja_numero).padStart(4, '0');
+  }
+  if (name === 'stock_movimientos') r.cant = Number(r.cantidad);
+  if (name === 'prioridades' && r.nivel) r.nivel = prioridadFromDb(r.nivel);
+  return r;
+}
+
 function makeDbRef() {
   function collection(name) {
     return {
@@ -1078,8 +1137,7 @@ function makeDbRef() {
           async get() {
             const { data, error } = await supabaseClient.from(name).select('*').eq(pk, id).maybeSingle();
             if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
-            let row = data;
-            if (row && name === 'prioridades' && row.nivel) row = { ...row, nivel: prioridadFromDb(row.nivel) };
+            let row = data ? fromDbRow(name, data) : data;
             return { exists: !!row, data: () => row };
           },
           async delete() {
@@ -1089,7 +1147,7 @@ function makeDbRef() {
         };
       },
       async add(obj) {
-        const row = { ...obj, created_by: CURRENT_USER_ID };
+        const row = { ...toDbRow(name, obj), created_by: CURRENT_USER_ID };
         delete row.ts; // los *_log usan "ts timestamptz default now()" solo si no se manda; dejamos que el default la ponga si no vino
         if (obj.ts) row.ts = obj.ts;
         const { data, error } = await supabaseClient.from(name).insert(row).select().single();
@@ -1112,8 +1170,7 @@ function makeDbRef() {
             // llama ya sabe (ver initDb) que para catalogo_articulos hay
             // que leer d.data() directo, no d.data().items.
             const docs = (data || []).map(row => {
-              let r = row;
-              if (name === 'prioridades' && r.nivel) r = { ...r, nivel: prioridadFromDb(r.nivel) };
+              const r = fromDbRow(name, row);
               return { id: String(r[pk]), exists: true, data: () => r };
             });
             cb({ docs });
@@ -1230,6 +1287,128 @@ supabaseClient.auth.onAuthStateChange((event, session) => {
   }
 })();
 
+// ---- Instalar como app (PWA) ----
+let deferredInstallPrompt = null;
+function isStandalone() {
+  return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+}
+function updateInstallBtn() {
+  const b = document.getElementById('install-btn');
+  if (b) b.style.display = isStandalone() ? 'none' : '';
+}
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstallPrompt = e; updateInstallBtn(); });
+window.addEventListener('appinstalled', () => { deferredInstallPrompt = null; updateInstallBtn(); try { showToast('App instalada', 'success'); } catch (e) {} });
+document.addEventListener('DOMContentLoaded', updateInstallBtn);
+
+async function onInstallClick() {
+  if (deferredInstallPrompt) {
+    try {
+      deferredInstallPrompt.prompt();
+      await deferredInstallPrompt.userChoice;
+    } catch (e) { console.error(e); }
+    deferredInstallPrompt = null;
+    updateInstallBtn();
+    return;
+  }
+  showInstallHelp();
+}
+function showInstallHelp() {
+  const ua = navigator.userAgent || '';
+  const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/i.test(ua);
+  let steps;
+  if (isIOS) {
+    steps = '<ol><li>Abrí esta página en <b>Safari</b> (en otro navegador no aparece la opción).</li><li>Tocá el botón <b>Compartir</b> (el cuadrado con la flecha hacia arriba).</li><li>Elegí <b>Agregar a pantalla de inicio</b> y confirmá con <b>Agregar</b>.</li></ol>';
+  } else if (isAndroid) {
+    steps = '<ol><li>Tocá el menú <b>⋮</b> de Chrome (arriba a la derecha).</li><li>Elegí <b>Instalar app</b> (o <b>Agregar a la pantalla principal</b>).</li><li>Confirmá con <b>Instalar</b>.</li></ol>';
+  } else {
+    steps = '<ol><li>En <b>Chrome</b> o <b>Edge</b>, buscá el ícono de instalar (una pantalla con una flecha) a la derecha de la barra de direcciones, o abrí el menú <b>⋮</b> → <b>Instalar…</b> / <b>Aplicaciones → Instalar este sitio como aplicación</b>.</li><li>Confirmá con <b>Instalar</b>: queda un acceso directo en tu escritorio / menú Inicio.</li></ol><div class="text-dim">Firefox y Safari de escritorio no permiten instalar sitios como app; usá Chrome o Edge.</div>';
+  }
+  document.getElementById('install-help-content').innerHTML = '<h3>⬇️ Instalar el tablero como app</h3><div class="text-dim" style="margin-bottom:10px;">Tu navegador no mostró el cartel automático de instalación. Se hace a mano así:</div><div style="font-size:0.85rem; line-height:1.6; color:#e2e8f0;">' + steps + '</div><div class="stock-actions"><button class="stock-btn-primary" onclick="closeInstallHelp()">Entendido</button></div>';
+  document.getElementById('install-help-overlay').classList.add('open');
+}
+function closeInstallHelp() { document.getElementById('install-help-overlay').classList.remove('open'); }
+
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(e => console.warn('SW no registrado:', e)); });
+}
+
+// ---- Pantalla de administración de usuarios (solo es_admin) ----
+let ADMIN_USERS = [];
+function openAdminDialog() {
+  if (!CURRENT_PROFILE || !CURRENT_PROFILE.es_admin) return;
+  document.getElementById('admin-overlay').classList.add('open');
+  loadAdminUsers();
+}
+function closeAdminDialog() { document.getElementById('admin-overlay').classList.remove('open'); }
+
+async function loadAdminUsers() {
+  const box = document.getElementById('admin-dialog-content');
+  box.innerHTML = '<h3>👥 Usuarios y permisos</h3><div class="text-dim">Cargando…</div>';
+  const { data, error } = await supabaseClient.from('profiles').select('*').order('email');
+  if (error) { box.innerHTML = '<h3>👥 Usuarios y permisos</h3><div class="text-dim">No se pudo cargar: ' + escHtml(error.message) + '</div>'; return; }
+  ADMIN_USERS = data || [];
+  renderAdminUsers();
+}
+
+function renderAdminUsers() {
+  const box = document.getElementById('admin-dialog-content');
+  const areaOpts = (cur) => '<option value="">— Sin área —</option>' + Object.keys(AREA_PRESETS).map(a => '<option value="' + escHtml(a) + '"' + (cur === a ? ' selected' : '') + '>' + escHtml(a) + '</option>').join('');
+  const cards = ADMIN_USERS.map(u => {
+    const secs = Array.isArray(u.secciones) ? u.secciones : SECCIONES_DEFAULT;
+    const isMe = u.id === CURRENT_USER_ID;
+    const checks = SECCIONES_DEF.map(s => '<label><input type="checkbox" data-sec="' + s[0] + '"' + (secs.includes(s[0]) ? ' checked' : '') + '> ' + s[1] + '</label>').join('');
+    return '<div class="adm-user" data-uid="' + u.id + '">' +
+      '<div class="adm-user-head">' +
+        '<span class="em">' + escHtml(u.email) + (isMe ? ' <span class="text-dim">(vos)</span>' : '') + '</span>' +
+        '<input type="text" data-f="nombre" placeholder="Nombre" value="' + escHtml(u.nombre || '') + '" style="width:150px;">' +
+        '<select data-f="rol" title="Qué puede modificar">' +
+          ['visualizador', 'colaborador', 'editor'].map(r => '<option value="' + r + '"' + (u.rol === r ? ' selected' : '') + '>' + r + '</option>').join('') +
+        '</select>' +
+        '<select data-f="area" onchange="applyAreaPreset(this)" title="Al elegir un área se tildan sus secciones típicas">' + areaOpts(u.area || '') + '</select>' +
+        '<label style="font-size:0.76rem; color:#fbbf24; display:flex; gap:5px; align-items:center;"><input type="checkbox" data-f="es_admin"' + (u.es_admin ? ' checked' : '') + (isMe ? ' disabled' : '') + '> Administrador</label>' +
+      '</div>' +
+      '<div class="adm-secs">' + checks + '</div>' +
+      '<button class="stock-btn-primary" style="padding:6px 14px; border-radius:6px; border:none; font-weight:700; cursor:pointer;" onclick="saveAdminUser(\'' + u.id + '\', this)">Guardar</button>' +
+      '<span class="adm-msg"></span>' +
+    '</div>';
+  }).join('');
+  box.innerHTML = '<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;"><h3>👥 Usuarios y permisos</h3><button style="background:#334155; border:none; color:#fff; width:28px; height:28px; border-radius:50%; cursor:pointer;" onclick="closeAdminDialog()">✕</button></div>' +
+    '<div class="text-dim" style="margin-bottom:12px; line-height:1.5;">' +
+    '<b>Rol</b>: visualizador solo mira; colaborador además carga Preparado/Despachos/Stock; editor además fija prioridades y catálogo. ' +
+    '<b>Secciones</b>: lo que cada persona ve en el tablero (Stock, Despachado y Hoja de Pesada además quedan bloqueados en la base de datos). ' +
+    'Para sumar a alguien nuevo: Supabase → Authentication → Users → Add user (tildar Auto Confirm); aparece acá solo.</div>' +
+    (cards || '<div class="text-dim">No hay usuarios.</div>');
+}
+
+function applyAreaPreset(selectEl) {
+  const card = selectEl.closest('.adm-user');
+  const preset = AREA_PRESETS[selectEl.value];
+  if (!preset || !card) return;
+  card.querySelectorAll('input[data-sec]').forEach(cb => { cb.checked = preset.includes(cb.getAttribute('data-sec')); });
+}
+
+async function saveAdminUser(uid, btn) {
+  const card = btn.closest('.adm-user');
+  const msg = card.querySelector('.adm-msg');
+  const secciones = [...card.querySelectorAll('input[data-sec]')].filter(cb => cb.checked).map(cb => cb.getAttribute('data-sec'));
+  const payload = {
+    nombre: card.querySelector('[data-f="nombre"]').value.trim() || null,
+    rol: card.querySelector('[data-f="rol"]').value,
+    area: card.querySelector('[data-f="area"]').value || null,
+    secciones,
+  };
+  if (uid !== CURRENT_USER_ID) payload.es_admin = card.querySelector('[data-f="es_admin"]').checked;
+  btn.disabled = true; msg.style.color = '#94a3b8'; msg.textContent = 'Guardando…';
+  const { error } = await supabaseClient.from('profiles').update(payload).eq('id', uid);
+  btn.disabled = false;
+  if (error) { msg.style.color = '#f87171'; msg.textContent = 'No se pudo guardar: ' + error.message; return; }
+  msg.style.color = '#34d399'; msg.textContent = 'Guardado ✓';
+  const i = ADMIN_USERS.findIndex(u => u.id === uid);
+  if (i >= 0) ADMIN_USERS[i] = { ...ADMIN_USERS[i], ...payload };
+  if (uid === CURRENT_USER_ID) { CURRENT_PROFILE = { ...CURRENT_PROFILE, ...payload }; applyInspectorVisibility(); applyFilters(); }
+}
+
 // ---- Fecha de hoy (Argentina) para el badge "ACTUALIZADO AL" y TODAY_ISO ----
 function computeTodayStr() {
   try {
@@ -1260,9 +1439,9 @@ async function bootApp() {
     CURRENT_PROFILE = profile;
   } catch (e) {
     console.error('No se pudo leer el perfil del usuario:', e);
-    CURRENT_PROFILE = { rol: 'visualizador', es_inspector_final: false };
+    CURRENT_PROFILE = { rol: 'visualizador', secciones: SECCIONES_DEFAULT, es_admin: false };
   }
-  document.getElementById('user-pill').textContent = CURRENT_USER_EMAIL + ' · ' + (CURRENT_PROFILE.rol || 'visualizador');
+  document.getElementById('user-pill').textContent = (CURRENT_PROFILE.nombre || CURRENT_USER_EMAIL) + ' · ' + (CURRENT_PROFILE.rol || 'visualizador') + (CURRENT_PROFILE.area ? ' · ' + CURRENT_PROFILE.area : '');
 
   // Ítems en vivo desde Supabase (reemplaza el DATA = JSON.parse(__DATA_JSON__) estático)
   try {
@@ -1279,7 +1458,6 @@ async function bootApp() {
   initSelects();
   buildModelCards();
   applySplitVisual();
-  isHojaInspector = !!(CURRENT_PROFILE && CURRENT_PROFILE.es_inspector_final);
   applyInspectorVisibility();
   applyFilters();
   initDb();
@@ -1541,18 +1719,73 @@ function renderAccessBanner() {
 // decide directo con profiles.es_inspector_final (ver bootApp), sin ningún
 // hack de self-claim contra un doc compartido — un Editor marca esa
 // columna para la cuenta correcta desde el Table Editor de Supabase.
+// ---- Permisos por sección ----
+// profiles.secciones (text[]) dice qué secciones del tablero ve cada persona;
+// profiles.es_admin ve todas. Esto oculta tarjetas/chips/paneles en la
+// pantalla; además la base (RLS) NO entrega Stock, Despachado ni Hoja de
+// Pesada a quien no tenga esas secciones (ver 003_permisos_y_columnas.sql).
+const SECCIONES_DEF = [
+  ['moldeo', '🔥 En Moldeo / Fusión'],
+  ['listas', '🔧 En Terminación'],
+  ['preparado', '📦 Preparado p/ Despacho'],
+  ['proceso', '⏳ Pendiente previo a Moldeo'],
+  ['repuestos', '⚙️ Repuestos'],
+  ['vencidas', '⚠️ Vencidas / Urgentes'],
+  ['prioridades', '🚩 Prioridades'],
+  ['stock', '📦 Stock sin pedido'],
+  ['despachado', '🚚 Despachado (historial)'],
+  ['armar_hoja', '🧾 Armar Hoja de Pesada'],
+];
+const SECCION_ELEMS = {
+  moldeo: ['card-moldeo', 'chip-moldeo'],
+  listas: ['card-listas', 'chip-listas'],
+  preparado: ['card-preparado', 'chip-preparado'],
+  proceso: ['card-proceso', 'chip-proceso'],
+  repuestos: ['card-repuestos', 'chip-repuestos'],
+  vencidas: ['card-vencidas', 'card-vencidas_term', 'chip-vencidas', 'chip-vencidas_term'],
+  prioridades: ['card-prioridades', 'chip-prioridad_alta', 'chip-prioridad_media'],
+  stock: ['card-stock', 'chip-stock'],
+  despachado: ['card-despachado', 'chip-despachado'],
+  armar_hoja: ['card-armar_hoja', 'chip-armar_hoja'],
+};
+const FILTER_SECCION = {
+  moldeo: 'moldeo', listas: 'listas', preparado: 'preparado', proceso: 'proceso', repuestos: 'repuestos',
+  vencidas: 'vencidas', vencidas_term: 'vencidas', prioridad_alta: 'prioridades', prioridad_media: 'prioridades',
+  stock: 'stock', despachado: 'despachado', armar_hoja: 'armar_hoja',
+};
+const SECCIONES_DEFAULT = ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades'];
+const ALL_SECCIONES = SECCIONES_DEF.map(s => s[0]);
+const AREA_PRESETS = {
+  'Gerencia': ALL_SECCIONES,
+  'Comercial': ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades', 'despachado'],
+  'Planeamiento': ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades', 'stock', 'despachado'],
+  'Terminación': ['moldeo', 'listas', 'preparado', 'stock', 'despachado'],
+  'Despacho': ['listas', 'preparado', 'despachado', 'stock'],
+  'Inspección Final': ['listas', 'preparado', 'despachado', 'armar_hoja'],
+};
+
+function puedeVer(sec) {
+  if (!CURRENT_PROFILE) return false;
+  if (CURRENT_PROFILE.es_admin) return true;
+  const list = Array.isArray(CURRENT_PROFILE.secciones) ? CURRENT_PROFILE.secciones : SECCIONES_DEFAULT;
+  return list.includes(sec);
+}
 function recomputeHojaInspector() {
-  isHojaInspector = !!(CURRENT_PROFILE && CURRENT_PROFILE.es_inspector_final);
+  isHojaInspector = puedeVer('armar_hoja');
 }
 function applyInspectorVisibility() {
   recomputeHojaInspector();
-  const card = document.getElementById('card-armar_hoja');
-  const chip = document.getElementById('chip-armar_hoja');
-  if (card) card.style.display = isHojaInspector ? '' : 'none';
-  if (chip) chip.style.display = isHojaInspector ? '' : 'none';
-  if (!isHojaInspector && currentFilter === 'armar_hoja') {
-    setFilterFromCard('all');
-  }
+  Object.keys(SECCION_ELEMS).forEach(sec => {
+    const show = puedeVer(sec);
+    SECCION_ELEMS[sec].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = show ? '' : 'none';
+    });
+  });
+  const f = FILTER_SECCION[currentFilter];
+  if (f && !puedeVer(f)) setFilterFromCard('all');
+  const adminBtn = document.getElementById('admin-btn');
+  if (adminBtn) adminBtn.style.display = (CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? '' : 'none';
 }
 
 async function initDb() {
@@ -2190,7 +2423,7 @@ function updateActiveVisuals() {
 }
 
 function applyFilters() {
-  if (currentFilter === 'armar_hoja' && !isHojaInspector) { currentFilter = 'all'; }
+  if (FILTER_SECCION[currentFilter] && !puedeVer(FILTER_SECCION[currentFilter])) { currentFilter = 'all'; }
   const stockSection = document.getElementById('stock-section');
   const despachadoSection = document.getElementById('despachado-section');
   const armarHojaSection = document.getElementById('armar-hoja-section');
