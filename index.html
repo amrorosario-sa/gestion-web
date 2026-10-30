@@ -2187,7 +2187,7 @@ async function initDb() {
     });
     const recargarSiCorresponde = () => {
       actualizarBadgeReplan();
-      if (['indicadores', 'rechazo', 'replanificar', 'despachado'].includes(currentFilter)) applyFilters();
+      applyFilters();
     };
     db.collection('rechazos').onSnapshot(qs => {
       rechazosList = qs.docs.filter(d => d.exists).map(d => d.data());
@@ -2523,6 +2523,18 @@ let rechazosList = [], motivosList = [], eventosProd = [];
 let rechazoVerReplan = false;
 let indState = { periodo: 'semana', desde: '', hasta: '', medida: 'kg' };
 
+// Comentario automático en el pedido: lo que se rechazó, que hay que rehacerlo y, cuando
+// Planificación lo replanifica, queda anotado en el mismo pedido (vinculado por item_id).
+function buildRechazoNotasHtml(r) {
+  const lista = rechazosList.filter(x => String(x.item_id) === String(r.id));
+  if (!lista.length) return '';
+  const pend = lista.filter(x => x.estado === 'pendiente').sort((a, b) => String(a.dia).localeCompare(String(b.dia)));
+  const rep = lista.filter(x => x.estado === 'replanificado')
+    .sort((a, b) => String(b.replanificado_dia || '').localeCompare(String(a.replanificado_dia || ''))).slice(0, 2);
+  const l1 = pend.map(x => `<div style="color:#f87171;">❌ Se rechazaron ${fmtN(x.cantidad)} u.${x.probeta ? ' (probeta ' + escHtml(x.probeta) + ')' : ''} el ${x.dia ? cortoIso(x.dia) : ''}${x.motivo ? ' por ' + escHtml(x.motivo) : ''} — se tienen que volver a hacer</div>`);
+  const l2 = rep.map(x => `<div style="color:#34d399;">🔁 Se replanificaron ${fmtN(x.cantidad)} u. rechazadas${x.replanificado_dia ? ' el ' + cortoIso(x.replanificado_dia) : ''}${x.replanificado_nota ? ' — ' + escHtml(x.replanificado_nota) : ''}</div>`);
+  return `<div class="text-dim" style="font-size:0.72rem; margin-top:3px;">${l1.join('')}${l2.join('')}</div>`;
+}
 function actualizarBadgeReplan() {
   const el = document.getElementById('replan-badge');
   if (!el) return;
@@ -2754,7 +2766,7 @@ function rechazoCardHtml(r, conBoton) {
     <div class="stock-card">
       <div class="info" style="flex:1; min-width:200px;">
         <div class="name">${escHtml(r.descripcion || '(sin descripción)')}</div>
-        <div class="sub">${escHtml(r.cliente || '')} · NV ${escHtml(r.comprobante || '')}${r.codigo ? ' · Cód: ' + escHtml(r.codigo) : ''}${r.probeta ? ' · Probeta ' + escHtml(r.probeta) : ''}</div>
+        <div class="sub">${escHtml(r.cliente || '')} · NV ${escHtml(r.comprobante || '')}${r.oc && r.oc !== '-' ? ' · OC ' + escHtml(r.oc) : ''}${r.codigo ? ' · Cód: ' + escHtml(r.codigo) : ''}${r.probeta ? ' · Probeta ' + escHtml(r.probeta) : ''}</div>
         <div class="sub" style="margin-top:4px;">Motivo: <span style="color:#fbbf24;">${escHtml(r.motivo || '—')}</span>${r.detalle ? ' · ' + escHtml(r.detalle) : ''}</div>
         ${r.replanificado_nota ? `<div class="sub" style="margin-top:2px;">📝 ${escHtml(r.replanificado_nota)}</div>` : ''}
       </div>
@@ -4025,7 +4037,7 @@ function showToast(message, kind) {
           <td class="col-comprobante" data-label="Comprobante"><div class="font-bold">${escHtml(r.comprobante)}</div><div class="text-dim">OC: ${escHtml(r.oc)}</div></td>
           <td class="col-fecha" data-label="Fecha Entrega"><div class="font-bold">${formatDate(r.fecha_entrega)}</div></td>
           <td class="col-alerta" data-label="Alerta">${alertPill}</td>
-          <td class="col-descripcion" data-label="Descripción"><div>${repBadge}<span class="font-bold" style="color:#f1f5f9;">${escHtml(r.descripcion)}</span></div>${parteBadge}<div class="mobile-oc-mat">OC: ${escHtml(r.oc)} · Mat: ${escHtml(r.material)}</div><div class="text-dim">Mat: ${escHtml(r.material)} | ${r.kxu} Kg/u</div>${r.notas ? `<div class="text-dim" style="color:#fbbf24;">💬 ${escHtml(r.notas)}</div>` : ''}${dividirBtn}</td>
+          <td class="col-descripcion" data-label="Descripción"><div>${repBadge}<span class="font-bold" style="color:#f1f5f9;">${escHtml(r.descripcion)}</span></div>${parteBadge}<div class="mobile-oc-mat">OC: ${escHtml(r.oc)} · Mat: ${escHtml(r.material)}</div><div class="text-dim">Mat: ${escHtml(r.material)} | ${r.kxu} Kg/u</div>${r.notas ? `<div class="text-dim" style="color:#fbbf24;">💬 ${escHtml(r.notas)}</div>` : ''}${buildRechazoNotasHtml(r)}${dividirBtn}</td>
           <td class="col-pend num" data-label="Pend." style="font-weight:600;" title="Pendiente de SGA (${r.pend.toLocaleString()}) ya descontado lo que esté Preparado para Despacho">${remainingPend(r).toLocaleString()}</td>
           <td class="col-kilos num" data-label="Kilos" style="font-weight:600; color: var(--accent);">${r.kilos.toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1})} Kg</td>
           <td class="col-estado" data-label="Estado / Área">${statusPill}${buildAvanceManualHtml(r)}</td>
@@ -4598,6 +4610,7 @@ function showToast(message, kind) {
         <div class="modal-row"><div class="k">Flujo Áreas</div><div class="v">${buildPipeHtml(r)}</div></div>
         <div class="modal-row"><div class="k">Preparado p/ Desp.</div><div class="v">${buildPrepCellHtml(r)}</div></div>
         ${r.notas ? `<div class="modal-row"><div class="k">💬 Comentario (SGA)</div><div class="v" style="color:#fbbf24;">${escHtml(r.notas)}</div></div>` : ''}
+        ${buildRechazoNotasHtml(r) ? `<div class="modal-row"><div class="k">Rechazos</div><div class="v">${buildRechazoNotasHtml(r)}</div></div>` : ''}
       `;
       showModal(escHtml(r.cliente), `<div style="margin-bottom:10px; font-size:0.85rem; color:#f1f5f9;">${buildRepBadge(r)}${escHtml(r.descripcion)}</div>` + html);
     }
