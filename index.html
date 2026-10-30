@@ -429,6 +429,7 @@
       <button class="hdr-btn" id="admin-btn" style="display:none;" onclick="openAdminDialog()">👥 Usuarios y permisos</button>
       <span class="badge-live" id="asof-badge">ACTUALIZADO</span>
       <span class="user-pill" id="user-pill" style="margin-left:10px;"></span>
+      <button class="logout-link" onclick="changeOwnPassword()">Cambiar contraseña</button>
       <button class="logout-link" onclick="doLogout()">Cerrar sesión</button>
     </div>
   </div>
@@ -1388,7 +1389,7 @@ function renderAdminUsers() {
     const checks = SECCIONES_DEF.map(s => '<label><input type="checkbox" data-sec="' + s[0] + '"' + (secs.includes(s[0]) ? ' checked' : '') + '> ' + s[1] + '</label>').join('');
     return '<div class="adm-user" data-uid="' + u.id + '">' +
       '<div class="adm-user-head">' +
-        '<span class="em">' + escHtml(u.email) + (isMe ? ' <span class="text-dim">(vos)</span>' : '') + '</span>' +
+        '<span class="em">' + escHtml(u.email) + (isMe ? ' <span class="text-dim">(vos)</span>' : '') + (u.activo === false ? ' <span style="color:#f87171; font-size:0.72rem;">⛔ acceso desactivado</span>' : '') + '</span>' +
         '<input type="text" data-f="nombre" placeholder="Nombre" value="' + escHtml(u.nombre || '') + '" style="width:150px;">' +
         '<select data-f="rol" title="Qué puede modificar">' +
           ['visualizador', 'colaborador', 'editor'].map(r => '<option value="' + r + '"' + (u.rol === r ? ' selected' : '') + '>' + r + '</option>').join('') +
@@ -1398,15 +1399,107 @@ function renderAdminUsers() {
       '</div>' +
       '<div class="adm-secs">' + checks + '</div>' +
       '<button class="stock-btn-primary" style="padding:6px 14px; border-radius:6px; border:none; font-weight:700; cursor:pointer;" onclick="saveAdminUser(\'' + u.id + '\', this)">Guardar</button>' +
+      (isMe ? '' : ' <button class="hdr-btn" style="margin:0 0 0 6px;" onclick="resetAdminPassword(\'' + u.id + '\', this)">🔑 Cambiar contraseña</button>' +
+        ' <button class="hdr-btn" style="margin:0 0 0 6px;' + (u.activo === false ? ' color:#34d399;' : ' color:#f87171;') + '" onclick="toggleAdminActivo(\'' + u.id + '\', ' + (u.activo === false ? 'true' : 'false') + ', this)">' + (u.activo === false ? '✅ Reactivar acceso' : '⛔ Desactivar acceso') + '</button>') +
       '<span class="adm-msg"></span>' +
     '</div>';
   }).join('');
   box.innerHTML = '<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;"><h3>👥 Usuarios y permisos</h3><button style="background:#334155; border:none; color:#fff; width:28px; height:28px; border-radius:50%; cursor:pointer;" onclick="closeAdminDialog()">✕</button></div>' +
     '<div class="text-dim" style="margin-bottom:12px; line-height:1.5;">' +
     '<b>Rol</b>: visualizador solo mira; colaborador además carga Preparado/Despachos/Stock; editor además fija prioridades y catálogo. ' +
-    '<b>Secciones</b>: lo que cada persona ve en el tablero (Stock, Despachado y Hoja de Pesada además quedan bloqueados en la base de datos). ' +
-    'Para sumar a alguien nuevo: Supabase → Authentication → Users → Add user (tildar Auto Confirm); aparece acá solo.</div>' +
+    '<b>Secciones</b>: lo que cada persona ve en el tablero (Stock, Despachado y Hoja de Pesada además quedan bloqueados en la base de datos).</div>' +
+    addUserFormHtml() +
     (cards || '<div class="text-dim">No hay usuarios.</div>');
+}
+
+
+function genPassword() {
+  const abc = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const arr = new Uint32Array(12); crypto.getRandomValues(arr);
+  return Array.from(arr).map(n => abc[n % abc.length]).join('');
+}
+function addUserFormHtml() {
+  const areaOpts = '<option value="">— Sin área —</option>' + Object.keys(AREA_PRESETS).map(a => '<option value="' + escHtml(a) + '">' + escHtml(a) + '</option>').join('');
+  const checks = SECCIONES_DEF.map(s => '<label><input type="checkbox" data-sec="' + s[0] + '"' + (SECCIONES_DEFAULT.includes(s[0]) ? ' checked' : '') + '> ' + s[1] + '</label>').join('');
+  return '<details id="adm-new" class="adm-user" style="border-color:var(--accent);"><summary style="cursor:pointer; font-weight:700; color:#fff;">➕ Agregar una persona nueva</summary>' +
+    '<div style="margin-top:10px;">' +
+      '<div class="adm-user-head">' +
+        '<input type="text" data-f="email" placeholder="Email (con el que va a entrar)" style="width:230px;">' +
+        '<input type="text" data-f="nombre" placeholder="Nombre" style="width:150px;">' +
+        '<input type="text" data-f="password" placeholder="Contraseña inicial (mín. 8)" style="width:190px;" value="' + genPassword() + '">' +
+        '<button class="hdr-btn" style="margin:0;" onclick="this.parentElement.querySelector(\'[data-f=password]\').value = genPassword()">🎲 Generar otra</button>' +
+      '</div>' +
+      '<div class="adm-user-head">' +
+        '<select data-f="rol"><option value="visualizador">visualizador</option><option value="colaborador">colaborador</option><option value="editor">editor</option></select>' +
+        '<select data-f="area" onchange="applyAreaPreset(this)">' + areaOpts + '</select>' +
+        '<label style="font-size:0.76rem; color:#fbbf24; display:flex; gap:5px; align-items:center;"><input type="checkbox" data-f="es_admin"> Administrador</label>' +
+      '</div>' +
+      '<div class="adm-secs">' + checks + '</div>' +
+      '<button class="stock-btn-primary" style="padding:7px 16px; border-radius:6px; border:none; font-weight:700; cursor:pointer;" onclick="createAdminUser(this)">Crear persona</button>' +
+      '<span class="adm-msg"></span>' +
+      '<div id="adm-new-result"></div>' +
+    '</div></details>';
+}
+
+async function createAdminUser(btn) {
+  const box = document.getElementById('adm-new');
+  const msg = box.querySelector('.adm-msg');
+  const g = f => box.querySelector('[data-f="' + f + '"]');
+  const email = g('email').value.trim().toLowerCase();
+  const password = g('password').value;
+  const secciones = [...box.querySelectorAll('input[data-sec]')].filter(cb => cb.checked).map(cb => cb.getAttribute('data-sec'));
+  if (!email) { msg.style.color = '#f87171'; msg.textContent = 'Falta el email.'; return; }
+  if (password.length < 8) { msg.style.color = '#f87171'; msg.textContent = 'La contraseña necesita al menos 8 caracteres.'; return; }
+  btn.disabled = true; msg.style.color = '#94a3b8'; msg.textContent = 'Creando…';
+  const { error } = await supabaseClient.rpc('admin_crear_usuario', {
+    p_email: email, p_password: password, p_nombre: g('nombre').value.trim(),
+    p_rol: g('rol').value, p_area: g('area').value, p_secciones: secciones, p_es_admin: g('es_admin').checked,
+  });
+  btn.disabled = false;
+  if (error) {
+    msg.style.color = '#f87171';
+    msg.textContent = /function .* does not exist|schema cache/i.test(error.message) ? 'Falta correr el parche 004 en Supabase (ver instrucciones).' : 'No se pudo crear: ' + error.message;
+    return;
+  }
+  msg.textContent = '';
+  await loadAdminUsers();
+  const res = document.getElementById('adm-new-result');
+  const holder = document.getElementById('adm-new');
+  if (holder) holder.open = true;
+  const target = document.getElementById('adm-new-result');
+  if (target) {
+    const txt = 'Tablero AMRO Gestión\nLink: ' + location.origin + location.pathname + '\nUsuario: ' + email + '\nContraseña: ' + password;
+    target.innerHTML = '<div style="margin-top:10px; padding:10px; border:1px solid #22c55e; border-radius:8px; background:rgba(34,197,94,0.1); font-size:0.8rem; color:#d1fae5; white-space:pre-wrap;">✅ Persona creada. Pasale estos datos (la contraseña no se vuelve a mostrar):\n\n' + escHtml(txt) + '</div><button class="hdr-btn" style="margin:8px 0 0;" id="adm-copy-btn">📋 Copiar datos</button>';
+    document.getElementById('adm-copy-btn').onclick = async () => { try { await navigator.clipboard.writeText(txt); document.getElementById('adm-copy-btn').textContent = '✅ Copiado'; } catch (e) { document.getElementById('adm-copy-btn').textContent = 'No se pudo copiar: seleccioná el texto'; } };
+  }
+}
+
+async function resetAdminPassword(uid, btn) {
+  const u = ADMIN_USERS.find(x => x.id === uid);
+  const nueva = window.prompt('Nueva contraseña para ' + (u ? u.email : '') + ' (mínimo 8 caracteres):', genPassword());
+  if (nueva === null) return;
+  const msg = btn.parentElement.querySelector('.adm-msg');
+  if (nueva.length < 8) { msg.style.color = '#f87171'; msg.textContent = 'Mínimo 8 caracteres.'; return; }
+  const { error } = await supabaseClient.rpc('admin_resetear_password', { p_user: uid, p_password: nueva });
+  if (error) { msg.style.color = '#f87171'; msg.textContent = 'No se pudo cambiar: ' + error.message; return; }
+  msg.style.color = '#34d399'; msg.textContent = 'Contraseña cambiada. Nueva: ' + nueva;
+}
+
+async function toggleAdminActivo(uid, activo, btn) {
+  const u = ADMIN_USERS.find(x => x.id === uid);
+  if (!activo && !window.confirm('¿Desactivar el acceso de ' + (u ? u.email : '') + '? No podrá volver a entrar (su historial queda).')) return;
+  const { error } = await supabaseClient.rpc('admin_activar_usuario', { p_user: uid, p_activo: activo });
+  if (error) { const msg = btn.parentElement.querySelector('.adm-msg'); msg.style.color = '#f87171'; msg.textContent = 'No se pudo: ' + error.message; return; }
+  loadAdminUsers();
+}
+
+async function changeOwnPassword() {
+  const nueva = window.prompt('Nueva contraseña (mínimo 8 caracteres):');
+  if (nueva === null) return;
+  if (nueva.length < 8) { alert('Tiene que tener al menos 8 caracteres.'); return; }
+  const { error } = await supabaseClient.auth.updateUser({ password: nueva });
+  if (error) { alert('No se pudo cambiar la contraseña: ' + error.message); return; }
+  showToast('Contraseña cambiada', 'success');
 }
 
 function applyAreaPreset(selectEl) {
@@ -1465,6 +1558,12 @@ async function bootApp() {
     const { data: profile, error } = await supabaseClient.from('profiles').select('*').eq('id', CURRENT_USER_ID).single();
     if (error) throw error;
     CURRENT_PROFILE = profile;
+    if (profile && profile.activo === false) {
+      await supabaseClient.auth.signOut();
+      alert('Tu acceso a este tablero está desactivado. Consultá con quien lo administra.');
+      window.location.reload();
+      return;
+    }
   } catch (e) {
     console.error('No se pudo leer el perfil del usuario:', e);
     CURRENT_PROFILE = { rol: 'visualizador', secciones: SECCIONES_DEFAULT, es_admin: false };
