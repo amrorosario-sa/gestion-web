@@ -29,6 +29,10 @@
   }
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
   body { background: var(--bg); color: var(--text-main); padding: 16px; min-height: 100vh; }
+  .main-nav { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--card-border); overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .nav-tab { background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--text-muted); padding: 10px 16px; font-size: 0.88rem; font-weight: 600; cursor: pointer; white-space: nowrap; margin-bottom: -1px; }
+  .nav-tab:hover { color: #fff; }
+  .nav-tab.active { color: #fff; border-bottom-color: var(--accent); }
   .header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 12px; }
   .header h1 { font-size: 1.4rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px; }
   .header .subtitle { font-size: 0.85rem; color: var(--text-muted); }
@@ -439,6 +443,13 @@
 
   <div class="access-banner" id="access-banner" style="display:none;"></div>
 
+  <nav class="main-nav" id="main-nav">
+    <button class="nav-tab active" id="nav-pedidos" onclick="irAPantalla('all')">📋 Pedidos</button>
+    <button class="nav-tab" id="nav-indicadores" style="display:none;" onclick="irAPantalla('indicadores')">📊 Indicadores</button>
+    <button class="nav-tab" id="nav-rechazo" style="display:none;" onclick="irAPantalla('rechazo')">❌ Rechazos</button>
+    <button class="nav-tab" id="nav-replanificar" style="display:none;" onclick="irAPantalla('replanificar')">🔁 Replanificar<span id="replan-badge"></span></button>
+  </nav>
+
   <div class="kpi-grid">
     <div class="kpi-card active" id="card-all" onclick="setFilterFromCard('all')" title="Click para ver todas las órdenes">
       <div class="label">Total Órdenes / Ítems</div>
@@ -589,9 +600,7 @@
       <button class="chip" id="chip-preparado" onclick="setChipFilter('preparado')">📦 Preparado p/ Despacho</button>
       <button class="chip" id="chip-armar_hoja" style="display:none;" onclick="setChipFilter('armar_hoja')">🧾 Armar Hoja de Pesada</button>
       <button class="chip" id="chip-despachado" onclick="setChipFilter('despachado')">🚚 Despachado</button>
-      <button class="chip" id="chip-indicadores" style="display:none;" onclick="setChipFilter('indicadores')">📊 Indicadores</button>
-      <button class="chip" id="chip-rechazo" style="display:none;" onclick="setChipFilter('rechazo')">❌ Rechazos</button>
-      <button class="chip" id="chip-replanificar" style="display:none;" onclick="setChipFilter('replanificar')">🔁 Replanificar<span id="replan-badge"></span></button>
+
       <button class="chip" id="chip-proceso" onclick="setChipFilter('proceso')">⏳ Pendiente Previo a Moldeo</button>
       <button class="chip" id="chip-stock" onclick="setChipFilter('stock')">📦 Stock (sin pedido)</button>
       <button class="chip" id="chip-repuestos" onclick="setChipFilter('repuestos')">⚙️ Solo Repuestos (Código R)</button>
@@ -2090,9 +2099,9 @@ const SECCION_ELEMS = {
   stock: ['card-stock', 'chip-stock'],
   despachado: ['card-despachado', 'chip-despachado'],
   armar_hoja: ['card-armar_hoja', 'chip-armar_hoja'],
-  indicadores: ['chip-indicadores'],
-  rechazo: ['chip-rechazo'],
-  replanificar: ['chip-replanificar'],
+  indicadores: ['nav-indicadores'],
+  rechazo: ['nav-rechazo'],
+  replanificar: ['nav-replanificar'],
 };
 const FILTER_SECCION = {
   moldeo: 'moldeo', listas: 'listas', preparado: 'preparado', proceso: 'proceso', repuestos: 'repuestos',
@@ -2133,6 +2142,25 @@ function applyInspectorVisibility() {
   if (f && !puedeVer(f)) setFilterFromCard('all');
   const adminBtn = document.getElementById('admin-btn');
   if (adminBtn) adminBtn.style.display = (CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? '' : 'none';
+  const nav = document.getElementById('main-nav');
+  if (nav) nav.style.display = ['indicadores', 'rechazo', 'replanificar'].some(k => puedeVer(k)) ? '' : 'none';
+}
+const PANTALLAS_APARTE = ['indicadores', 'rechazo', 'replanificar'];
+function irAPantalla(tipo) {
+  setFilterFromCard_direct(tipo);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+function aplicarModoPantalla() {
+  const aparte = PANTALLAS_APARTE.includes(currentFilter);
+  ['.kpi-grid', '.filters-section', '.result-info'].forEach(sel => {
+    const e = document.querySelector(sel);
+    if (e) e.style.display = aparte ? 'none' : '';
+  });
+  const act = aparte ? currentFilter : 'pedidos';
+  ['pedidos', 'indicadores', 'rechazo', 'replanificar'].forEach(k => {
+    const b = document.getElementById('nav-' + k);
+    if (b) b.classList.toggle('active', k === act);
+  });
 }
 
 async function initDb() {
@@ -3385,6 +3413,7 @@ function applyFilters() {
   const armarHojaSection = document.getElementById('armar-hoja-section');
   const splitContainer = document.getElementById('split-container');
   ['indicadores-section', 'rechazo-section', 'replanificar-section'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = 'none'; });
+  aplicarModoPantalla();
   if (currentFilter === 'indicadores' || currentFilter === 'rechazo' || currentFilter === 'replanificar') {
     if (stockSection) stockSection.style.display = 'none';
     if (despachadoSection) despachadoSection.style.display = 'none';
