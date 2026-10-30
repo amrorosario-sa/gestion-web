@@ -1,6 +1,6 @@
 // Service worker mínimo: hace instalable la app y guarda el cascarón para
 // abrir más rápido. Los datos (Supabase) NUNCA se cachean: siempre en vivo.
-const CACHE = 'amro-tablero-v1';
+const CACHE = 'amro-tablero-v2';
 const SHELL = ['./', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {

@@ -1,11 +1,11 @@
 {
   "name": "Tablero Comercial & Control de Despachos — AMRO",
-  "short_name": "AMRO Tablero",
+  "short_name": "AMRO Gestión",
   "description": "Pedidos, fabricación y despachos de AMRO",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#0f172a",
+  "background_color": "#ffffff",
   "theme_color": "#0f172a",
   "lang": "es-AR",
   "icons": [
