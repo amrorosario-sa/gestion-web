@@ -410,7 +410,10 @@
       </div>
       <div class="login-field">
         <label>Contraseña</label>
-        <input type="password" id="login-password" autocomplete="current-password">
+        <div style="position:relative;">
+          <input type="password" id="login-password" autocomplete="current-password" style="padding-right:78px;">
+          <button type="button" id="login-eye" onclick="toggleLoginPassword()" style="position:absolute; right:6px; top:50%; transform:translateY(-50%); background:#334155; border:none; color:#e2e8f0; font-size:0.72rem; font-weight:600; padding:5px 9px; border-radius:6px; cursor:pointer;">👁 Ver</button>
+        </div>
       </div>
       <button class="login-btn" id="login-btn" onclick="doLogin()">Ingresar</button>
       <div class="login-error" id="login-error"></div>
@@ -1269,6 +1272,14 @@ async function doLogin() {
   } finally {
     btn.disabled = false; btn.textContent = 'Ingresar';
   }
+}
+
+function toggleLoginPassword() {
+  const i = document.getElementById('login-password');
+  const b = document.getElementById('login-eye');
+  const show = i.type === 'password';
+  i.type = show ? 'text' : 'password';
+  b.textContent = show ? '🙈 Ocultar' : '👁 Ver';
 }
 
 async function doLogout() {
