@@ -2059,25 +2059,34 @@ async function savePrep(id, pend, cellEl) {
     return;
   }
   const prevVal = prepCant(id);
-  let val = Number(input.value);
+  const raw = String(input.value).trim();
+  if (raw === '' && prevVal === 0) {
+    showToast('Ingresá la cantidad a guardar', 'error');
+    input.focus();
+    return;
+  }
+  let val = raw === '' ? 0 : Number(raw);
   if (isNaN(val) || val < 0) val = 0;
-  input.value = val;
   if (btn) btn.disabled = true;
-  if (input) input.disabled = true;
+  input.disabled = true;
   try {
     await dbRef.collection('preparados').doc(String(id)).set({ cant: val, ts: new Date().toISOString() });
+    delete prepDrafts[id];
+    preparadosMap[String(id)] = { ...(preparadosMap[String(id)] || {}), cant: val };
     showToast('Guardado', 'success');
+    renderKpis();
+    applyFilters();
   } catch (e) {
     console.error('No se pudo guardar preparado:', e && e.code, e && e.message);
-    input.value = prevVal;
-    if (canWritePrep === false || (e && e.code === 'invalid_argument')) {
-      alert('No se pudo guardar: tu acceso a este tablero es de solo lectura (Visualizador). Pedile a quien administra el link que te dé acceso de Colaborador para poder preparar pedidos.');
+    const detalle = (e && e.message) ? '\n\nDetalle: ' + e.message : '';
+    if (canWritePrep === false || (e && (e.code === 'invalid_argument' || e.code === '42501'))) {
+      alert('No se pudo guardar: tu usuario no tiene permiso para preparar pedidos (es Visualizador). Pedile a quien administra el tablero que te dé acceso de Colaborador.' + detalle);
     } else {
-      alert('No se pudo guardar el cambio. Probá de nuevo.');
+      alert('No se pudo guardar el cambio. Probá de nuevo.' + detalle);
     }
   } finally {
     if (btn) btn.disabled = false;
-    if (input) input.disabled = false;
+    input.disabled = false;
   }
 }
 
@@ -2721,6 +2730,14 @@ function buildRepBadge(r) {
   if (r.es_r99) return '<span class="tag-unid">NO IDENTIF.</span> ';
   return '';
 }
+// Lo que la persona está tipeando en una celda "Preparado" y todavía no guardó.
+// Se conserva si la tabla se vuelve a dibujar (por un cambio de otra persona o
+// por la actualización automática) para que no se borre el número a medias.
+const prepDrafts = {};
+function prepDraftValue(id, ya) {
+  if (Object.prototype.hasOwnProperty.call(prepDrafts, id)) return escHtml(prepDrafts[id]);
+  return ya > 0 ? String(ya) : '';
+}
 function buildPrepCellHtml(r) {
   if (r.area_actual !== 'En Terminación') return '<span class="prep-na">—</span>';
   const ya = prepCant(r.id);
@@ -2737,7 +2754,7 @@ function buildPrepCellHtml(r) {
       ${doneBadge}
       ${despBadge}
       <div class="prep-cell">
-        <input type="number" class="prep-input" min="0" step="1" value="${ya}">
+        <input type="number" class="prep-input" min="0" step="1" inputmode="numeric" placeholder="0" data-id="${r.id}" value="${prepDraftValue(r.id, ya)}" oninput="prepDrafts[${r.id}] = this.value" onfocus="this.select()" onkeydown="if(event.key==='Enter'){this.parentElement.querySelector('.prep-btn').click();}">
         <span class="prep-of">/ ${r.pend.toLocaleString()}</span>
         <button class="prep-btn" onclick="savePrep(${r.id}, ${r.pend}, this.parentElement)">Guardar</button>
       </div>
