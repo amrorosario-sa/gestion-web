@@ -1432,13 +1432,13 @@ function genPassword() {
 function addUserFormHtml() {
   const areaOpts = '<option value="">— Sin área —</option>' + Object.keys(AREA_PRESETS).map(a => '<option value="' + escHtml(a) + '">' + escHtml(a) + '</option>').join('');
   const checks = SECCIONES_DEF.map(s => '<label><input type="checkbox" data-sec="' + s[0] + '"' + (SECCIONES_DEFAULT.includes(s[0]) ? ' checked' : '') + '> ' + s[1] + '</label>').join('');
-  return '<details id="adm-new" class="adm-user" style="border-color:var(--accent);"><summary style="cursor:pointer; font-weight:700; color:#fff;">➕ Agregar una persona nueva</summary>' +
+  return '<details id="adm-new" class="adm-user" style="border-color:var(--accent);" oninput="clearNewUserResult()" onchange="clearNewUserResult()"><summary style="cursor:pointer; font-weight:700; color:#fff;">➕ Agregar una persona nueva</summary>' +
     '<div style="margin-top:10px;">' +
       '<div class="adm-user-head">' +
         '<input type="text" data-f="email" placeholder="Email (con el que va a entrar)" style="width:230px;">' +
         '<input type="text" data-f="nombre" placeholder="Nombre" style="width:150px;">' +
         '<input type="text" data-f="password" placeholder="Contraseña inicial (mín. 8)" style="width:190px;" value="' + genPassword() + '">' +
-        '<button class="hdr-btn" style="margin:0;" onclick="this.parentElement.querySelector(\'[data-f=password]\').value = genPassword()">🎲 Generar otra</button>' +
+        '<button class="hdr-btn" style="margin:0;" onclick="clearNewUserResult(); this.parentElement.querySelector(\'[data-f=password]\').value = genPassword()">🎲 Generar otra</button>' +
       '</div>' +
       '<div class="adm-user-head">' +
         '<select data-f="rol"><option value="visualizador">visualizador</option><option value="colaborador">colaborador</option><option value="editor">editor</option></select>' +
@@ -1452,7 +1452,13 @@ function addUserFormHtml() {
     '</div></details>';
 }
 
+function clearNewUserResult() {
+  const r = document.getElementById('adm-new-result');
+  if (r) r.innerHTML = '';
+}
+
 async function createAdminUser(btn) {
+  clearNewUserResult();
   const box = document.getElementById('adm-new');
   const msg = box.querySelector('.adm-msg');
   const g = f => box.querySelector('[data-f="' + f + '"]');
