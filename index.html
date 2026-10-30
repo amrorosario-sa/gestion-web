@@ -553,6 +553,24 @@
         </select>
       </div>
       <div class="filter-group">
+        <label>Fecha de entrega (semana)</label>
+        <select id="filter-semana" onchange="applyFilters()">
+          <option value="">Cualquier fecha</option>
+          <option value="semana_atr">📅 Lo que sale esta semana + atrasado</option>
+          <option value="semana">📅 Solo esta semana (lun–dom)</option>
+          <option value="atrasadas">⚠️ Atrasadas (antes del lunes)</option>
+          <option value="prox">➡️ Semana próxima</option>
+          <option value="mes">🗓️ Este mes</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Entrega desde / hasta</label>
+        <div style="display:flex; gap:6px;">
+          <input type="date" id="filter-desde" onchange="applyFilters()" style="min-width:0; flex:1;">
+          <input type="date" id="filter-hasta" onchange="applyFilters()" style="min-width:0; flex:1;">
+        </div>
+      </div>
+      <div class="filter-group">
         <label>Rango de Kg</label>
         <select id="filter-kg" onchange="applyFilters()">
           <option value="">Todos los pesos</option>
@@ -660,6 +678,7 @@
         <div class="text-dim" style="margin-top:4px;">Piezas marcadas como despachadas desde "Preparado para Despacho", agrupadas por día. Queda guardado para siempre, aunque SGA ya no traiga esa pieza al día siguiente (por estar facturada).</div>
       </div>
     </div>
+    <div id="despachado-semanas"></div>
     <div id="despachado-list"></div>
   </div>
 
@@ -2825,6 +2844,7 @@ function clearAllFilters() {
   document.getElementById('filter-area').value = '';
   document.getElementById('filter-urgency').value = '';
   document.getElementById('filter-kg').value = '';
+  ['filter-semana', 'filter-desde', 'filter-hasta'].forEach(i => { const e = document.getElementById(i); if (e) e.value = ''; });
   selectedMatRep = 'ALL';
   document.querySelectorAll('.mat-subbtn').forEach(b => b.classList.remove('active'));
   const allMatBtn = document.getElementById('btn-mat-all');
@@ -2879,6 +2899,31 @@ function updateActiveVisuals() {
   document.querySelectorAll('.model-card').forEach(c => c.classList.remove('active'));
   const modelCard = document.getElementById('model-card-' + selectedAroCode);
   if (modelCard) modelCard.classList.add('active');
+}
+
+// ---- Semanas (lunes a domingo, con la fecha de hoy de Argentina) ----
+function semanaRango(offset) {
+  const dow = (new Date(TODAY_ISO + 'T00:00:00Z').getUTCDay() + 6) % 7;   // 0 = lunes
+  const ini = addDaysIso(TODAY_ISO, -dow + 7 * (offset || 0));
+  return { ini, fin: addDaysIso(ini, 6) };
+}
+function rangoEntregaFiltro(sel, desde, hasta) {
+  if (desde || hasta) return { min: desde || null, max: hasta || null };
+  if (!sel) return null;
+  const esta = semanaRango(0);
+  if (sel === 'semana') return { min: esta.ini, max: esta.fin };
+  if (sel === 'semana_atr') return { min: null, max: esta.fin };
+  if (sel === 'atrasadas') return { min: null, max: addDaysIso(esta.ini, -1) };
+  if (sel === 'prox') { const pr = semanaRango(1); return { min: pr.ini, max: pr.fin }; }
+  if (sel === 'mes') return { min: TODAY_ISO.slice(0, 8) + '01', max: TODAY_ISO.slice(0, 8) + '31' };
+  return null;
+}
+function verSemanaEnTabla(sel) {
+  const e = document.getElementById('filter-semana');
+  ['filter-desde', 'filter-hasta'].forEach(i => { const x = document.getElementById(i); if (x) x.value = ''; });
+  if (e) e.value = sel;
+  setFilterFromCard_direct('all');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function applyFilters() {
@@ -2936,8 +2981,17 @@ function applyFilters() {
   const area = document.getElementById('filter-area').value;
   const urgency = document.getElementById('filter-urgency').value;
   const kgRange = document.getElementById('filter-kg').value;
+  const semanaSel = (document.getElementById('filter-semana') || {}).value || '';
+  const desde = (document.getElementById('filter-desde') || {}).value || '';
+  const hasta = (document.getElementById('filter-hasta') || {}).value || '';
+  const rangoEntrega = rangoEntregaFiltro(semanaSel, desde, hasta);
 
   const filtered = DATA.filter(row => {
+    if (rangoEntrega) {
+      if (row.estado_general === 'Cancelado' || !row.fecha_entrega) return false;
+      if (rangoEntrega.min && row.fecha_entrega < rangoEntrega.min) return false;
+      if (rangoEntrega.max && row.fecha_entrega > rangoEntrega.max) return false;
+    }
     if (currentFilter === 'listas' && (row.estado_general !== 'Fundido / En Terminación' || isPrepared(row))) return false;
     if (currentFilter === 'preparado' && !(prepPendienteDespacho(row) > 0)) return false;
     if (currentFilter === 'moldeo' && row.area_actual !== 'Moldeo / Fusión') return false;
@@ -3244,7 +3298,56 @@ function showToast(message, kind) {
       }
     }
 
+    function renderDespachadoSemanas() {
+      const box = document.getElementById('despachado-semanas');
+      if (!box) return;
+      const corto = iso => iso.slice(8, 10) + '/' + iso.slice(5, 7);
+      const semanas = [];
+      for (let o = 0; o >= -7; o--) {
+        const r = semanaRango(o);
+        const del = despachosLog.filter(d => d.dia && d.dia >= r.ini && d.dia <= r.fin);
+        semanas.push({ ...r, n: del.length, cant: del.reduce((s, d) => s + (d.cantidad || 0), 0), kg: del.reduce((s, d) => s + (d.kg || 0), 0), actual: o === 0 });
+      }
+      const [esta, pasada] = semanas;
+      // Lo que todavía falta despachar según fecha de entrega (pendiente de SGA menos lo ya despachado desde acá)
+      const falta = (filtro) => DATA.filter(r => r.estado_general !== 'Cancelado' && r.fecha_entrega && filtro(r.fecha_entrega)).reduce((a, r) => {
+        const u = Math.max(0, r.pend - despRowCant(r));
+        a.u += u; a.kg += r.pend > 0 ? r.kilos * (u / r.pend) : 0; a.n += u > 0 ? 1 : 0; return a;
+      }, { u: 0, kg: 0, n: 0 });
+      const ini = semanaRango(0).ini, fin = semanaRango(0).fin;
+      const atras = falta(f => f < ini), estaSem = falta(f => f >= ini && f <= fin), prox = (() => { const pr = semanaRango(1); return falta(f => f >= pr.ini && f <= pr.fin); })();
+      const fmtKg = n => n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+      const delta = esta.kg - pasada.kg;
+      const deltaTxt = pasada.kg > 0 ? `${delta >= 0 ? '▲' : '▼'} ${Math.abs(Math.round(delta / pasada.kg * 100))}% vs semana pasada` : 'sin despachos la semana pasada';
+      const tile = (titulo, grande, sub, color, btn) => `
+        <div style="flex:1 1 190px; min-width:170px; background:var(--card-bg, #1e293b); border:1px solid var(--card-border); border-radius:12px; padding:12px 14px;">
+          <div class="text-dim" style="font-size:0.72rem; text-transform:uppercase; letter-spacing:.04em;">${titulo}</div>
+          <div style="font-size:1.5rem; font-weight:700; color:${color}; margin:4px 0;">${grande}</div>
+          <div class="text-dim" style="font-size:0.75rem; line-height:1.4;">${sub}</div>${btn || ''}
+        </div>`;
+      const verBtn = (sel) => `<button type="button" onclick="verSemanaEnTabla('${sel}')" style="margin-top:8px; background:transparent; border:1px solid var(--card-border); color:#94a3b8; border-radius:6px; padding:3px 9px; font-size:0.72rem; cursor:pointer;">Ver en la tabla</button>`;
+      const maxKg = Math.max(1, ...semanas.map(w => w.kg));
+      const filasSem = semanas.map(w => `
+        <div style="display:flex; align-items:center; gap:8px; margin:4px 0; font-size:0.78rem;">
+          <span style="width:112px; flex:0 0 auto; color:${w.actual ? '#fff' : '#94a3b8'}; font-weight:${w.actual ? 700 : 400};">${w.actual ? 'Esta semana' : corto(w.ini) + ' – ' + corto(w.fin)}</span>
+          <div style="flex:1; min-width:40px; background:#0f172a; border-radius:5px; height:12px; overflow:hidden;"><div style="width:${Math.round(w.kg / maxKg * 100)}%; height:100%; background:${w.actual ? 'var(--accent)' : '#475569'};"></div></div>
+          <span style="width:150px; flex:0 0 auto; text-align:right; color:#e2e8f0;">${w.cant.toLocaleString()} u. · ${fmtKg(w.kg)} Kg</span>
+        </div>`).join('');
+      box.innerHTML = `
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+          ${tile('Despachado esta semana', fmtKg(esta.kg) + ' Kg', `${esta.cant.toLocaleString()} u. · ${esta.n} despacho${esta.n === 1 ? '' : 's'}<br>${deltaTxt}`, 'var(--accent)')}
+          ${tile('Falta despachar esta semana', fmtKg(estaSem.kg) + ' Kg', `${estaSem.u.toLocaleString()} u. con entrega del ${corto(ini)} al ${corto(fin)}`, '#fbbf24', verBtn('semana'))}
+          ${tile('Atrasado', fmtKg(atras.kg) + ' Kg', `${atras.u.toLocaleString()} u. con entrega anterior al ${corto(ini)}`, atras.u > 0 ? '#ef4444' : '#22c55e', verBtn('atrasadas'))}
+          ${tile('Semana próxima', fmtKg(prox.kg) + ' Kg', `${prox.u.toLocaleString()} u. a entregar`, '#60a5fa', verBtn('prox'))}
+        </div>
+        <div style="border:1px solid var(--card-border); border-radius:12px; padding:10px 14px; margin-bottom:16px;">
+          <div class="text-dim" style="font-size:0.72rem; text-transform:uppercase; letter-spacing:.04em; margin-bottom:6px;">Despachado por semana (lunes a domingo)</div>
+          ${filasSem}
+        </div>`;
+    }
+
     function renderDespachadoPanel() {
+      renderDespachadoSemanas();
       const el = document.getElementById('despachado-list');
       if (!el) return;
       if (!despachosLog.length) {
