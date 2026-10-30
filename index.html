@@ -2091,6 +2091,7 @@ const SECCIONES_DEF = [
   ['indicadores', '📊 Indicadores'],
   ['rechazo', '❌ Registrar rechazos (Terminación)'],
   ['replanificar', '🔁 Replanificar rechazos (Planificación)'],
+  ['dividir', '✂️ Dividir pedidos en entregas'],
 ];
 const SECCION_ELEMS = {
   moldeo: ['card-moldeo', 'chip-moldeo'],
@@ -2117,8 +2118,8 @@ const SECCIONES_DEFAULT = ['moldeo', 'listas', 'preparado', 'proceso', 'repuesto
 const ALL_SECCIONES = SECCIONES_DEF.map(s => s[0]);
 const AREA_PRESETS = {
   'Gerencia': ALL_SECCIONES,
-  'Comercial': ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades', 'despachado'],
-  'Planeamiento': ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades', 'stock', 'despachado', 'indicadores', 'replanificar'],
+  'Comercial': ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades', 'despachado', 'dividir'],
+  'Planeamiento': ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades', 'stock', 'despachado', 'indicadores', 'replanificar', 'dividir'],
   'Terminación': ['moldeo', 'listas', 'preparado', 'stock', 'despachado', 'rechazo'],
   'Despacho': ['listas', 'preparado', 'despachado', 'stock'],
   'Inspección Final': ['listas', 'preparado', 'despachado', 'armar_hoja'],
@@ -2356,9 +2357,11 @@ async function savePrep(key, pend, cellEl) {
 
 // ---- Dividir un pedido en entregas parciales ----
 let splitState = null;
-function puedeDividir() {
+function puedeEscribir() {
   return !!(CURRENT_PROFILE && (CURRENT_PROFILE.rol === 'editor' || CURRENT_PROFILE.rol === 'colaborador'));
 }
+// Dividir pedidos en entregas: solo quien tenga la sección "dividir" (Comercial y Planeamiento) y pueda escribir.
+function puedeDividir() { return puedeVer('dividir') && puedeEscribir(); }
 function buildDividirBtnHtml(r, enModal) {
   if (!puedeDividir() || r.estado_general === 'Cancelado') return '';
   const label = r._pk ? '✂️ Editar entregas' : '✂️ Dividir en entregas';
@@ -2721,7 +2724,7 @@ function renderIndicadoresPanel() {
 
 // ---- Rechazos: carga desde Terminación ----
 let rz = null;
-function puedeCargarRechazo() { return puedeVer('rechazo') && puedeDividir(); }
+function puedeCargarRechazo() { return puedeVer('rechazo') && puedeEscribir(); }
 function renderRechazoPanel() {
   const nuevo = document.getElementById('rz-nuevo-btn');
   if (nuevo) nuevo.style.display = puedeCargarRechazo() ? '' : 'none';
@@ -2861,7 +2864,7 @@ async function saveRechazo() {
 function renderReplanificarPanel() {
   const el = document.getElementById('replanificar-list');
   if (!el) return;
-  const puede = puedeVer('replanificar') && puedeDividir();
+  const puede = puedeVer('replanificar') && puedeEscribir();
   const lista = rechazosList.filter(r => rechazoVerReplan || r.estado === 'pendiente')
     .sort((a, b) => (a.estado === b.estado ? String(a.dia).localeCompare(String(b.dia)) : (a.estado === 'pendiente' ? -1 : 1)));
   if (!lista.length) {
