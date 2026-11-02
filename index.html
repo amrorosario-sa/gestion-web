@@ -439,7 +439,7 @@
       <button class="hdr-btn install" id="install-btn" onclick="onInstallClick()" title="Instalar el tablero como app en tu pantalla de inicio">⬇️ Instalar app</button>
       <button class="hdr-btn" id="admin-btn" style="display:none;" onclick="openAdminDialog()">👥 Usuarios y permisos</button>
       <button class="hdr-btn" id="area-btn" style="display:none;" onclick="openAreaDialog()">🗂️ Áreas</button>
-      <button class="hdr-btn" id="cir-btn" style="display:none;" onclick="window.cirOpen && window.cirOpen()">🔩 Circuito</button>
+      <button class="hdr-btn" id="cir-btn" style="display:none;" onclick="window.cirOpen && window.cirOpen()">🔩 Programación mecanizado</button>
       <button class="hdr-btn" id="mec-btn" style="display:none;" onclick="openMecDialog()">🔩 Mecanizado</button>
       <span class="badge-live" id="asof-badge">ACTUALIZADO</span>
       <span class="user-pill" id="user-pill" style="margin-left:10px;"></span>
@@ -2305,7 +2305,7 @@ const SECCIONES_DEF = [
   ['indicadores', '📊 Indicadores'],
   ['rechazo', '❌ Registrar rechazos (Terminación)'],
   ['replanificar', '🔁 Replanificar rechazos (Planificación)'],
-  ['circuito', '🔩 Circuito Mecanizado / Kanban'],
+  ['circuito', '🔩 Programación mecanizado'],
 ];
 const SECCION_ELEMS = {
   moldeo: ['card-moldeo', 'chip-moldeo'],
@@ -5474,7 +5474,7 @@ function showToast(message, kind) {
     if (document.getElementById('cir-root')) return;
     const st = document.createElement('style'); st.textContent = CSS; document.head.appendChild(st);
     const root = document.createElement('div'); root.id = 'cir-root';
-    root.innerHTML = '<div class="wrap"><div class="top"><h1>🔩 Circuito: Terminación → Sector Z → Mecanizado → Kanban</h1><button onclick="cirClose()">✕ Cerrar</button></div><div class="flow" id="cir-flow"></div><div class="tabs" id="cir-tabs"></div><div id="cir-screen"></div></div>';
+    root.innerHTML = '<div class="wrap"><div class="top"><h1>🔩 Programación mecanizado: Terminación → Sector Z → Mecanizado → Kanban</h1><button onclick="cirClose()">✕ Cerrar</button></div><div class="flow" id="cir-flow"></div><div class="tabs" id="cir-tabs"></div><div id="cir-screen"></div></div>';
     document.body.appendChild(root);
     const ov = document.createElement('div'); ov.id = 'cir-ov'; ov.innerHTML = '<div id="cir-modal"></div>'; ov.addEventListener('click', e => { if (e.target.id === 'cir-ov') cirCloseAsk(); }); document.body.appendChild(ov);
   }
@@ -5493,7 +5493,7 @@ function showToast(message, kind) {
     const tabs = [['plan', '📅 Planificación'], ['term', '🔧 Terminación'], ['z', '🗄️ Sector Z' + tag(nz)], ['mec', '⚙️ Mecanizado'], ['k', '🏬 Kanban' + tag(nk)]];
     document.getElementById('cir-tabs').innerHTML = tabs.map(t => `<button class="tab ${C.tab === t[0] ? 'on' : ''}" onclick="cirTab('${t[0]}')">${t[1]}</button>`).join('');
     try { screen.innerHTML = { term: vTerm, z: vZ, k: vK, plan: vPlan, mec: vMec }[C.tab](); }
-    catch (e) { console.error('Circuito:', e); screen.innerHTML = '<div class="err">Error al mostrar esta pantalla: ' + esc(e.message) + '</div>'; }
+    catch (e) { console.error('Programación mecanizado:', e); screen.innerHTML = '<div class="err">Error al mostrar esta pantalla: ' + esc(e.message) + '</div>'; }
   }
   async function reload() { await load(); render(); }
   window.cirTab = t => { C.tab = t; render(); };
