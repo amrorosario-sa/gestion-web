@@ -439,6 +439,7 @@
       <button class="hdr-btn install" id="install-btn" onclick="onInstallClick()" title="Instalar el tablero como app en tu pantalla de inicio">⬇️ Instalar app</button>
       <button class="hdr-btn" id="admin-btn" style="display:none;" onclick="openAdminDialog()">👥 Usuarios y permisos</button>
       <button class="hdr-btn" id="area-btn" style="display:none;" onclick="openAreaDialog()">🗂️ Áreas</button>
+      <button class="hdr-btn" id="cir-btn" style="display:none;" onclick="window.cirOpen && window.cirOpen()">🔩 Circuito</button>
       <button class="hdr-btn" id="mec-btn" style="display:none;" onclick="openMecDialog()">🔩 Mecanizado</button>
       <span class="badge-live" id="asof-badge">ACTUALIZADO</span>
       <span class="user-pill" id="user-pill" style="margin-left:10px;"></span>
@@ -2304,6 +2305,7 @@ const SECCIONES_DEF = [
   ['indicadores', '📊 Indicadores'],
   ['rechazo', '❌ Registrar rechazos (Terminación)'],
   ['replanificar', '🔁 Replanificar rechazos (Planificación)'],
+  ['circuito', '🔩 Circuito Mecanizado / Kanban'],
 ];
 const SECCION_ELEMS = {
   moldeo: ['card-moldeo', 'chip-moldeo'],
@@ -2319,6 +2321,7 @@ const SECCION_ELEMS = {
   indicadores: ['nav-indicadores'],
   rechazo: ['nav-rechazo'],
   replanificar: ['nav-replanificar'],
+  circuito: ['cir-btn'],
 };
 const FILTER_SECCION = {
   moldeo: 'moldeo', listas: 'listas', preparado: 'preparado', proceso: 'proceso', repuestos: 'repuestos',
@@ -5016,6 +5019,432 @@ function showToast(message, kind) {
       setInterval(updateGeometry, 1000);
       updateGeometry();
     }
+</script>
+<script>
+// =====================================================================
+// Circuito Terminación → Sector Z (kanban) → Mecanizado → Estantería kanban
+// Módulo independiente (Version 47): usa solo las tablas/funciones mec_* del
+// parche 011 y lee del tablero (DATA, catálogo) sin modificarlo. Si algo falla
+// acá, el resto del tablero no se entera (script aparte).
+// =====================================================================
+(function () {
+  'use strict';
+  const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z', mecanizado: 'Mecanizado', kanban: 'Estantería kanban' };
+  const FERIADOS = {
+    '2026-01-01': 'Año Nuevo', '2026-02-16': 'Carnaval', '2026-02-17': 'Carnaval', '2026-03-24': 'Día de la Memoria', '2026-04-02': 'Día del Veterano de Malvinas', '2026-04-03': 'Viernes Santo',
+    '2026-05-01': 'Día del Trabajador', '2026-05-25': 'Revolución de Mayo', '2026-06-15': 'Paso a la Inmortalidad de Güemes', '2026-06-20': 'Paso a la Inmortalidad de Belgrano', '2026-07-09': 'Día de la Independencia',
+    '2026-08-17': 'Paso a la Inmortalidad de San Martín', '2026-10-12': 'Día de la Diversidad Cultural', '2026-11-23': 'Día de la Soberanía Nacional', '2026-12-08': 'Inmaculada Concepción', '2026-12-25': 'Navidad',
+    '2027-01-01': 'Año Nuevo',
+    '2026-03-23': 'Puente turístico (no laborable)', '2026-07-10': 'Puente turístico (no laborable)', '2026-12-07': 'Puente turístico (no laborable)',
+  };
+  const C = { tab: 'plan', loaded: false, error: null, stock: {}, planes: [], moldeos: [], k: [], exc: [], recetas: [], cfg: {}, movs: [] };
+
+  // ---------- utilidades ----------
+  const esc = s => (typeof escHtml === 'function' ? escHtml(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
+  const pad = n => String(n).padStart(2, '0');
+  const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const parse = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+  const addD = (s, n) => { const d = parse(s); d.setDate(d.getDate() + n); return iso(d); };
+  const TODAY = () => iso(new Date());
+  const excOf = s => C.exc.find(e => e.fecha === s);
+  function whyOff(s) {
+    const e = excOf(s);
+    if (e) return e.tipo === 'no' ? 'Excepción: ' + (e.nota || 'no se trabaja') : '';
+    const w = parse(s).getDay();
+    if (FERIADOS[s]) return FERIADOS[s];
+    if (w === 0 || w === 6) return w === 0 ? 'Domingo' : 'Sábado';
+    return '';
+  }
+  function isBiz(s) {
+    const e = excOf(s);
+    if (e) return e.tipo === 'si';
+    const w = parse(s).getDay();
+    return w !== 0 && w !== 6 && !FERIADOS[s];
+  }
+  const nextBiz = s => { let x = addD(s, 1); while (!isBiz(x)) x = addD(x, 1); return x; };
+  const prevBiz = s => { let x = addD(s, -1); while (!isBiz(x)) x = addD(x, -1); return x; };
+  const fmt = s => parse(s).toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+  const startDay = () => isBiz(TODAY()) ? TODAY() : nextBiz(TODAY());
+  const bizN = n => { let x = startDay(); for (let i = 0; i < n; i++) x = nextBiz(x); return x; };
+  const mondayOf = s => { const d = parse(s); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return iso(d); };
+  const dueOf = p => prevBiz(p.fecha);
+  const dueTxt = d => d < TODAY() ? `<span class="late">${fmt(d)} · vencida</span>` : d === TODAY() ? `<span class="soon">${fmt(d)} · HOY</span>` : fmt(d);
+
+  const rol = () => (CURRENT_PROFILE && CURRENT_PROFILE.rol) || 'visualizador';
+  const admin = () => !!(CURRENT_PROFILE && CURRENT_PROFILE.es_admin);
+  const puedeOperar = () => admin() || rol() === 'colaborador' || rol() === 'editor';
+  const puedePlanificar = () => admin() || rol() === 'editor';
+
+  const nombre = c => { const it = (typeof catalogoByCodigo !== 'undefined' && catalogoByCodigo && catalogoByCodigo.get(c)); if (it) return it[1]; const d = (typeof DATA !== 'undefined') && DATA.find(r => r.codigo === c); return d ? d.descripcion : c; };
+  const stock = (c, u) => (C.stock[u] && C.stock[u][c]) || 0;
+  const rec = id => C.recetas.find(r => r.id === id);
+  const planesOrd = () => C.planes.slice().sort((a, b) => a.fecha.localeCompare(b.fecha) || a.id - b.id);
+  const pendPlan = p => p.cantidad - p.armados;
+  const holdOf = (p, c) => c === rec(p.receta).macho ? p.hold_macho : p.hold_hembra;
+  const kRow = (u, c) => C.k.find(x => x.ubicacion === u && x.codigo === c);
+  const kOf = (u, c) => { const r = kRow(u, c); return r ? r.k : null; };
+  function nivel(u, c) { const k = kOf(u, c); if (k == null) return null; const st = stock(c, u); return st >= 2 * k ? 'verde' : st >= k ? 'amarillo' : 'rojo'; }
+  const NIV = { verde: '🟢 Verde', amarillo: '🟡 Amarillo', rojo: '🔴 Rojo' };
+  const alertas = u => C.k.filter(r => r.ubicacion === u && ['amarillo', 'rojo'].includes(nivel(u, r.codigo))).map(r => r.codigo);
+  const enMoldeo = c => C.moldeos.filter(o => o.codigo === c).reduce((a, o) => a + o.cantidad, 0);
+  const planSinEntregar = c => C.planes.reduce((a, p) => { const r = rec(p.receta); return (r && (c === r.macho || c === r.hembra)) ? a + Math.max(0, pendPlan(p) - holdOf(p, c)) : a; }, 0);
+  const planPend = c => C.planes.reduce((a, p) => { const r = rec(p.receta); return (r && r.salida === c) ? a + pendPlan(p) : a; }, 0);
+  // piezas en Mecanizado que no están reservadas por ningún plan (entregas sueltas, sobrantes de planes cerrados)
+  const libre = c => Math.max(0, stock(c, 'mecanizado') - C.planes.reduce((a, p) => { const r = rec(p.receta); return r ? a + (c === r.macho ? p.hold_macho : 0) + (c === r.hembra ? p.hold_hembra : 0) : a; }, 0));
+  const pedidosAbiertos = c => (typeof DATA === 'undefined' ? [] : DATA.filter(r => r.codigo === c && r.estado_general !== 'Cancelado' && remainingPend(r) > 0)).sort((a, b) => (a.fecha_entrega || '').localeCompare(b.fecha_entrega || ''));
+  const pedidosPend = c => pedidosAbiertos(c).reduce((a, r) => a + remainingPend(r), 0);
+  // stock virtual: Z = estantería + Terminación + moldeo/fusión − planificado sin entregar; K = estantería + planificado − pedidos
+  function sv(u, c) { return u === 'sector_z' ? stock(c, 'sector_z') + stock(c, 'terminacion') + enMoldeo(c) - planSinEntregar(c) : stock(c, 'kanban') + planPend(c) - pedidosPend(c); }
+  function svTxt(u, c) { return u === 'sector_z' ? `${stock(c, 'sector_z')} estantería + ${stock(c, 'terminacion')} terminación + ${enMoldeo(c)} moldeo/fusión − ${planSinEntregar(c)} planificado` : `${stock(c, 'kanban')} estantería + ${planPend(c)} planificado − ${pedidosPend(c)} en pedidos`; }
+  // lote sugerido = 2k − stock virtual + 2.5k (fórmula tal cual la definió el cliente; ver nota en el parche)
+  function lote(u, c) { const k = kOf(u, c); return Math.max(0, Math.ceil(2 * k - sv(u, c) + 2.5 * k)); }
+
+  // ---------- datos ----------
+  async function fetchAll(name, order) {
+    const out = [];
+    for (let from = 0; ; from += 1000) {
+      let q = supabaseClient.from(name).select('*');
+      if (order) q = q.order(order.col, { ascending: order.asc !== false });
+      const { data, error } = await q.range(from, from + 999);
+      if (error) throw error;
+      out.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    return out;
+  }
+  async function load() {
+    try {
+      const [st, planes, moldeos, k, exc, recetas, cfg, movs] = await Promise.all([
+        fetchAll('mec_stock'), fetchAll('mec_planes', { col: 'id' }), fetchAll('mec_moldeos', { col: 'id' }), fetchAll('mec_k'), fetchAll('mec_excepciones'),
+        fetchAll('mec_recetas'), fetchAll('mec_config'),
+        supabaseClient.from('mec_movimientos').select('*').order('id', { ascending: false }).limit(40).then(r => { if (r.error) throw r.error; return r.data || []; }),
+      ]);
+      C.stock = {}; st.forEach(r => { (C.stock[r.ubicacion] = C.stock[r.ubicacion] || {})[r.codigo] = Number(r.cantidad); });
+      C.planes = planes; C.moldeos = moldeos; C.k = k; C.exc = exc; C.recetas = recetas; C.movs = movs;
+      C.cfg = {}; cfg.forEach(r => { C.cfg[r.clave] = r.valor; });
+      C.error = null; C.loaded = true;
+    } catch (e) {
+      C.error = /relation .*mec_|schema cache|does not exist|Could not find/i.test(e.message || '') ? 'Falta correr el parche 011 en Supabase (ver instrucciones).' : 'No se pudo cargar: ' + (e.message || e);
+    }
+  }
+  const rpc = async (fn, args) => { const { data, error } = await supabaseClient.rpc(fn, args); if (error) throw new Error(error.message); return data; };
+  const tbl = async (op) => { const { error } = await op; if (error) throw new Error(error.message); };
+
+  // ---------- modal ----------
+  function ask(title, desc, fields, okText, onOk) {
+    const m = document.getElementById('cir-modal');
+    m.innerHTML = `<h3>${title}</h3><div class="d">${desc || ''}</div>` + fields.map(f => {
+      if (f.type === 'select') return `<label>${f.label}</label><select id="cf_${f.id}">${f.options.map(o => `<option value="${esc(o[0])}"${o[0] === f.value ? ' selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`;
+      if (f.type === 'date') return `<label>${f.label}</label><input id="cf_${f.id}" type="date" value="${f.value}" oninput="cirDateHint()"><div class="d" id="cir-datehint" style="margin:4px 0 0;"></div>`;
+      if (f.type === 'text') return `<label>${f.label}</label><input id="cf_${f.id}" type="text" value="${esc(f.value || '')}" placeholder="${esc(f.ph || '')}">`;
+      if (f.type === 'pieza') return `<label>${f.label}</label><input id="cf_${f.id}" type="text" data-cod="${esc(f.value || '')}" value="${esc(f.value ? f.value + ' — ' + nombre(f.value) : '')}" placeholder="Escribí nombre o código y elegí" autocomplete="off" oninput="cirPiezaSearch('${f.id}')"><div class="cir-res" id="cr_${f.id}"></div>`;
+      return `<label>${f.label}</label><input id="cf_${f.id}" type="number" min="${f.min == null ? 1 : f.min}" max="${f.max}" value="${f.value}">`;
+    }).join('') + `<div class="cir-err" id="cir-err"></div><div class="btns"><button onclick="cirCloseAsk()">Cancelar</button><button class="pri" id="cir-ok">${okText}</button></div>`;
+    document.getElementById('cir-ov').classList.add('on');
+    cirDateHint();
+    document.getElementById('cir-ok').onclick = async () => {
+      const v = {}; const err = document.getElementById('cir-err'); err.textContent = '';
+      for (const f of fields) {
+        const e = document.getElementById('cf_' + f.id);
+        if (f.type === 'select' || f.type === 'text') v[f.id] = e.value;
+        else if (f.type === 'date') { if (!e.value) { err.textContent = 'Elegí una fecha.'; return; } v[f.id] = e.value; }
+        else if (f.type === 'pieza') { if (!e.dataset.cod) { err.textContent = 'Elegí una pieza de la lista.'; return; } v[f.id] = e.dataset.cod; }
+        else { const mn = f.min == null ? 1 : f.min; v[f.id] = Math.floor(Number(e.value)); if (!(v[f.id] >= mn) || v[f.id] > f.max) { err.textContent = 'La cantidad tiene que estar entre ' + mn + ' y ' + f.max + '.'; return; } }
+      }
+      const btn = document.getElementById('cir-ok'); btn.disabled = true;
+      try { await onOk(v); cirCloseAsk(); await reload(); }
+      catch (e) { err.textContent = e.message || String(e); btn.disabled = false; }
+    };
+  }
+  window.cirCloseAsk = () => document.getElementById('cir-ov').classList.remove('on');
+  window.cirDateHint = () => {
+    const e = document.querySelector('#cir-modal input[type=date]'), h = document.getElementById('cir-datehint');
+    if (!e || !h) return;
+    if (!e.value) { h.textContent = ''; return; }
+    h.innerHTML = (isBiz(e.value) ? '' : `<span class="late">Ese día no es hábil (${esc(whyOff(e.value))}). </span>`) + 'Terminación entrega el <b>' + fmt(prevBiz(e.value)) + '</b> (día hábil anterior).';
+  };
+  window.cirPiezaSearch = id => {
+    const inp = document.getElementById('cf_' + id), box = document.getElementById('cr_' + id);
+    inp.dataset.cod = '';
+    const t = String(inp.value || '').trim().toLowerCase();
+    if (t.length < 2) { box.innerHTML = ''; return; }
+    const words = t.split(/\s+/); const res = [];
+    for (const it of (typeof CATALOGO !== 'undefined' ? CATALOGO : [])) { if (res.length >= 8) break; const hay = (it[1] + ' ' + it[0]).toLowerCase(); if (words.every(w => hay.includes(w))) res.push(it); }
+    box.innerHTML = res.length ? res.map(it => `<div class="it" data-c="${esc(it[0])}" onclick="cirPiezaPick('${id}', this.dataset.c)"><b>${esc(it[1])}</b><span class="code"> ${esc(it[0])}</span></div>`).join('') : '<div class="code" style="padding:4px 0;">Sin resultados en el catálogo.</div>';
+  };
+  window.cirPiezaPick = (id, cod) => {
+    const inp = document.getElementById('cf_' + id); inp.dataset.cod = cod; inp.value = cod + ' — ' + nombre(cod);
+    document.getElementById('cr_' + id).innerHTML = '';
+  };
+
+  // ---------- acciones ----------
+  const A = {};
+  A.terminar = c => {
+    const disp = stock(c, 'terminacion');
+    ask('Terminé piezas', esc(nombre(c)), [
+      { id: 'n', label: 'Cantidad terminada (máx. ' + disp + ')', value: disp, max: disp },
+      { type: 'select', id: 'd', label: '¿A dónde va?', options: [['sector_z', '🗄️ Sector Z (kanban de piezas que llevan mecanizado)'], ['mecanizado', '⚙️ Mecanizado (directo)']], value: 'sector_z' }], 'Mover',
+      v => rpc('mec_mover', { p_codigo: c, p_desde: 'terminacion', p_hasta: v.d, p_cant: v.n }));
+  };
+  A.entregar = async (pid, c) => { try { await rpc('mec_entregar', { p_plan: pid, p_codigo: c, p_cant: null }); await reload(); } catch (e) { alert(e.message); } };
+  A.zaM = c => ask('Entregar a Mecanizado', esc(nombre(c)) + '<br>Entrega suelta, sin plan.', [{ id: 'n', label: 'Cantidad (máx. ' + stock(c, 'sector_z') + ')', value: Math.min(stock(c, 'sector_z'), 5), max: stock(c, 'sector_z') }], 'Entregar',
+    v => rpc('mec_mover', { p_codigo: c, p_desde: 'sector_z', p_hasta: 'mecanizado', p_cant: v.n, p_motivo: 'entrega suelta a Mecanizado' }));
+  A.moldeo = def => ask('Cargar moldeo / fusión para kanban', 'Piezas que se mandan a moldear y fundir para reponer kanban (pedidos internos que no vienen de SGA).', [
+    { type: 'pieza', id: 'c', label: 'Pieza', value: '' }, { id: 'n', label: 'Cantidad', value: def || 10, max: 99999 }, { type: 'text', id: 'x', label: 'Nota (opcional)', ph: 'Ej: colada del viernes' }], 'Cargar',
+    v => tbl(supabaseClient.from('mec_moldeos').insert({ codigo: v.c, cantidad: v.n, nota: v.x || null })));
+  A.pasoTerm = id => { const o = C.moldeos.find(x => x.id === id);
+    ask('Pasó a Terminación', esc(nombre(o.codigo)) + ' — en moldeo/fusión: ' + o.cantidad, [{ id: 'n', label: 'Cantidad que pasó (máx. ' + o.cantidad + ')', value: o.cantidad, max: o.cantidad }], 'Pasar a Terminación',
+      v => rpc('mec_moldeo_a_terminacion', { p_id: id, p_cant: v.n })); };
+  A.delMoldeo = async id => { if (!confirm('¿Borrar este moldeo cargado?')) return; try { await tbl(supabaseClient.from('mec_moldeos').delete().eq('id', id)); await reload(); } catch (e) { alert(e.message); } };
+  A.k = (u, c) => { const cur = kOf(u, c); const plazo = C.cfg[u === 'sector_z' ? 'plazo_sector_z' : 'plazo_kanban'];
+    ask('Cantidad k — ' + UBIC[u], esc(nombre(c)) + `<br>k es lo que se consume durante el plazo de reposición (${plazo} días). Verde: 2k o más · amarillo: entre 1k y 2k (avisa reponer) · rojo: menos de 1k. Poné 0 para quitarlo.`,
+      [{ id: 'n', label: 'k (unidades)', value: cur == null ? 0 : cur, max: 99999, min: 0 }], 'Guardar',
+      v => v.n === 0 ? tbl(supabaseClient.from('mec_k').delete().eq('ubicacion', u).eq('codigo', c)) : tbl(supabaseClient.from('mec_k').upsert({ ubicacion: u, codigo: c, k: v.n }, { onConflict: 'ubicacion,codigo' }))); };
+  A.kNuevo = u => ask('Definir k — ' + UBIC[u], 'Elegí la pieza y su k (consumo durante el plazo de reposición).', [{ type: 'pieza', id: 'c', label: 'Pieza', value: '' }, { id: 'n', label: 'k (unidades)', value: 10, max: 99999 }], 'Guardar',
+    v => tbl(supabaseClient.from('mec_k').upsert({ ubicacion: u, codigo: v.c, k: v.n }, { onConflict: 'ubicacion,codigo' })));
+  A.ajustar = u => ask('Ajustar stock — ' + UBIC[u], 'Para cargar el stock inicial o corregir un conteo. Se registra en el libro de movimientos. Poné la diferencia: positivo suma, negativo resta.', [
+    { type: 'pieza', id: 'c', label: 'Pieza', value: '' }, { id: 'n', label: 'Diferencia (+/−)', value: 1, max: 99999, min: -99999 }, { type: 'text', id: 'x', label: 'Motivo', value: 'conteo inicial' }], 'Guardar',
+    v => { if (!v.n) throw new Error('La diferencia no puede ser 0.'); return rpc('mec_ajustar', { p_codigo: v.c, p_ubic: u, p_delta: v.n, p_motivo: v.x || 'ajuste' }); });
+  A.nuevoPlan = def => {
+    if (!C.recetas.length) { alert('Primero cargá una receta (macho + hembra → aro armado) en la sección Recetas.'); return; }
+    ask('Nuevo plan de armado', 'Cuántos aros arma Mecanizado y para qué día. Terminación entrega el día hábil anterior.', [
+      { type: 'select', id: 'r', label: 'Aro a armar', options: C.recetas.map(r => [r.id, r.nombre]), value: C.recetas[0].id }, { id: 'n', label: 'Cantidad de aros', value: def || 10, max: 9999 }, { type: 'date', id: 'f', label: 'Fecha en que Mecanizado lo arma', value: bizN(4) }], 'Crear plan',
+      v => tbl(supabaseClient.from('mec_planes').insert({ receta: v.r, cantidad: v.n, fecha: v.f })));
+  };
+  A.cambiarFecha = pid => { const p = C.planes.find(x => x.id === pid);
+    ask('Cambiar fecha del plan #' + pid, `${p.cantidad} × ${esc(rec(p.receta).nombre)}`, [{ type: 'date', id: 'f', label: 'Nueva fecha en Mecanizado', value: p.fecha }], 'Guardar', v => tbl(supabaseClient.from('mec_planes').update({ fecha: v.f }).eq('id', pid))); };
+  A.delPlan = async pid => { if (!confirm('¿Borrar el plan #' + pid + '?')) return; try { await tbl(supabaseClient.from('mec_planes').delete().eq('id', pid)); await reload(); } catch (e) { alert(e.message); } };
+  A.receta = () => ask('Nueva receta de aro', 'Qué pieza macho y qué pieza hembra arman cada aro, y con qué código se maneja el aro armado (el que se pide y va a kanban).', [
+    { type: 'text', id: 'n', label: 'Nombre', ph: 'Ej: Aro 1000x90 doble hilera' }, { type: 'pieza', id: 'm', label: 'Macho', value: '' }, { type: 'pieza', id: 'h', label: 'Hembra', value: '' }, { type: 'pieza', id: 's', label: 'Aro armado (código)', value: '' }], 'Guardar',
+    v => { if (!v.n.trim()) throw new Error('Falta el nombre.'); return tbl(supabaseClient.from('mec_recetas').insert({ id: 'r' + Date.now().toString(36), nombre: v.n.trim(), macho: v.m, hembra: v.h, salida: v.s })); });
+  A.delReceta = async id => { if (!confirm('¿Borrar la receta?')) return; try { await tbl(supabaseClient.from('mec_recetas').delete().eq('id', id)); await reload(); } catch (e) { alert('No se pudo borrar (¿tiene planes?): ' + e.message); } };
+  A.excepcion = () => ask('Agregar excepción de día', 'Los sábados, domingos y feriados nacionales ya se descuentan solos. Usá esto cuando un día cambia respecto del calendario.', [
+    { type: 'date', id: 'f', label: 'Fecha', value: bizN(5) },
+    { type: 'select', id: 't', label: '¿Qué pasa ese día?', options: [['no', 'No se trabaja (parada, puente interno, etc.)'], ['si', 'Sí se trabaja (aunque sea feriado o fin de semana)']], value: 'no' }, { type: 'text', id: 'x', label: 'Nota (opcional)', ph: 'Ej: parada de planta' }], 'Agregar',
+    v => tbl(supabaseClient.from('mec_excepciones').upsert({ fecha: v.f, tipo: v.t, nota: v.x || null }, { onConflict: 'fecha' })));
+  A.quitarExc = async f => { try { await tbl(supabaseClient.from('mec_excepciones').delete().eq('fecha', f)); await reload(); } catch (e) { alert(e.message); } };
+  const pedidoOpts = c => pedidosAbiertos(c).map(r => [rowKey(r), `${r.cliente} — ${r.comprobante} (pend: ${remainingPend(r)}, entrega: ${formatDate(r.fecha_entrega)})`]);
+  // marca el pedido como "preparado" igual que lo hace "Asignar stock a pedido" del tablero
+  async function marcarPreparado(row, cant) {
+    const base = baseRow(row.id) || row;
+    const nuevo = Math.min(base.pend, prepCant(row.id) + cant);
+    await dbRef.collection('preparados').doc(String(row.id)).set({ cant: nuevo, ts: new Date().toISOString() });
+  }
+  A.retirar = c => {
+    const opts = pedidoOpts(c);
+    if (!opts.length) { alert('No hay pedidos pendientes con esta pieza.'); return; }
+    const row0 = findRow(opts[0][0]), max = Math.min(stock(c, 'kanban'), remainingPend(row0));
+    ask('Retirar de la estantería kanban para un pedido', esc(nombre(c)) + `<br>Hay ${stock(c, 'kanban')} en la estantería. El pedido queda como preparado para despachar.`, [
+      { type: 'select', id: 'p', label: 'Pedido', options: opts, value: opts[0][0] }, { id: 'n', label: 'Cantidad', value: Math.max(1, max), max: Math.min(stock(c, 'kanban'), 99999) }], 'Retirar',
+      async v => { const row = findRow(v.p); if (!row) throw new Error('No se encontró el pedido.'); if (v.n > remainingPend(row)) throw new Error('Ese pedido solo necesita ' + remainingPend(row) + ' más.');
+        await rpc('mec_egresar', { p_codigo: c, p_ubic: 'kanban', p_cant: v.n, p_pedido: row.comprobante });
+        try { await marcarPreparado(row, v.n); } catch (e) { throw new Error('Se descontó de la estantería pero no se pudo marcar el pedido como preparado. Avisale a quien administra el tablero. (' + (e.message || e) + ')'); } });
+  };
+  A.armar = pid => { const p = C.planes.find(x => x.id === pid), r = rec(p.receta);
+    const max = Math.min(p.hold_macho, p.hold_hembra, pendPlan(p));
+    const sug = (kOf('kanban', r.salida) != null && nivel('kanban', r.salida) !== 'verde') ? 'kanban' : 'pedido';
+    const peds = pedidoOpts(r.salida);
+    ask('Armar aros — plan #' + pid, `${esc(r.nombre)}: consume 1 macho + 1 hembra por aro.` + (sug === 'kanban' ? '<br>🏬 La estantería kanban no está en verde: se sugiere reponerla.' : ''), [
+      { id: 'n', label: 'Aros armados (máx. ' + max + ')', value: max, max },
+      { type: 'select', id: 'd', label: '¿A dónde sale el aro armado?', options: [['kanban', '🏬 Estantería kanban']].concat(peds.length ? [['pedido', '📦 Directo a un pedido (venta en caliente)']] : []), value: (sug === 'pedido' && !peds.length) ? 'kanban' : sug }]
+        .concat(peds.length ? [{ type: 'select', id: 'p', label: 'Pedido (si va directo)', options: peds, value: peds[0][0] }] : []), 'Registrar',
+      async v => { const row = v.d === 'pedido' ? findRow(v.p) : null; if (v.d === 'pedido' && (!row || v.n > remainingPend(row))) throw new Error('El pedido elegido necesita menos aros (' + (row ? remainingPend(row) : 0) + ').');
+        await rpc('mec_armar', { p_plan: pid, p_cant: v.n, p_destino: v.d, p_pedido: row ? row.comprobante : null });
+        if (row) { try { await marcarPreparado(row, v.n); } catch (e) { throw new Error('Se registró el armado pero no se pudo marcar el pedido como preparado. Avisale a quien administra el tablero.'); } } }); };
+  // --- fuera de plan ---
+  A.entregaSuelta = () => ask('Entrega suelta a Mecanizado', 'Piezas que Terminación (o Sector Z) le pasa a Mecanizado sin que estén en ningún plan: anillos sueltos, piezas que llevan mecanizado, lo que sea.', [
+    { type: 'pieza', id: 'c', label: 'Pieza', value: '' },
+    { type: 'select', id: 'o', label: '¿De dónde sale?', options: [['terminacion', '🔧 Terminación'], ['sector_z', '🗄️ Sector Z']], value: 'terminacion' },
+    { id: 'n', label: 'Cantidad', value: 1, max: 99999 }], 'Entregar',
+    v => rpc('mec_mover', { p_codigo: v.c, p_desde: v.o, p_hasta: 'mecanizado', p_cant: v.n, p_motivo: 'entrega suelta a Mecanizado' }));
+  A.armarLibre = () => {
+    const rs = C.recetas.map(r => ({ r, max: Math.min(libre(r.macho), libre(r.hembra)) })).filter(x => x.max > 0);
+    if (!C.recetas.length) { alert('Primero hay que cargar una receta (macho + hembra → aro armado) en Planificación.'); return; }
+    if (!rs.length) { alert('No hay machos y hembras sueltos para armar. Terminación tiene que entregarlos primero (Entrega suelta).'); return; }
+    const first = rs[0], peds = pedidoOpts(first.r.salida);
+    ask('Armar aros fuera de plan', 'Mecanizado hizo algo que no estaba planificado. Consume 1 macho + 1 hembra sueltos por aro (no toca lo reservado para un plan).', [
+      { type: 'select', id: 'r', label: 'Aro armado', options: rs.map(x => [x.r.id, `${x.r.nombre} (se pueden armar hasta ${x.max})`]), value: first.r.id },
+      { id: 'n', label: 'Aros armados', value: first.max, max: 99999 },
+      { type: 'select', id: 'd', label: '¿A dónde sale?', options: [['kanban', '🏬 Estantería kanban']].concat(peds.length ? [['pedido', '📦 Directo al pedido más próximo de ese aro']] : []), value: 'kanban' }], 'Registrar',
+      async v => { const x = rs.find(z => z.r.id === v.r); if (!x) throw new Error('Receta inválida.'); if (v.n > x.max) throw new Error('Solo hay piezas sueltas para ' + x.max + ' aros de ese tipo.');
+        let row = null;
+        if (v.d === 'pedido') { const ps = pedidosAbiertos(x.r.salida); if (!ps.length) throw new Error('No hay pedidos pendientes de ese aro; mandalo a la estantería kanban.'); row = ps[0]; if (v.n > remainingPend(row)) throw new Error('El pedido más próximo (' + row.comprobante + ') necesita ' + remainingPend(row) + ' aros.'); }
+        await rpc('mec_armar_libre', { p_receta: v.r, p_cant: v.n, p_destino: v.d, p_pedido: row ? row.comprobante : null });
+        if (row) { try { await marcarPreparado(row, v.n); } catch (e) { throw new Error('Se registró el armado pero no se pudo marcar el pedido como preparado. Avisale a quien administra el tablero.'); } } });
+  };
+  A.salidaLibre = c => {
+    const mx = libre(c);
+    ask('Sale de Mecanizado (pieza suelta)', esc(nombre(c)) + ` — sueltas en Mecanizado: ${mx}.<br>La pieza ya fue procesada y sale a la estantería kanban, o directo a un pedido.`, [
+      { id: 'n', label: 'Cantidad (máx. ' + mx + ')', value: mx, max: mx },
+      { type: 'pieza', id: 's', label: 'Código con el que sale (dejá el mismo si no cambia)', value: c },
+      { type: 'select', id: 'd', label: '¿A dónde sale?', options: [['kanban', '🏬 Estantería kanban']], value: 'kanban' }], 'Registrar',
+      v => rpc('mec_salida_libre', { p_codigo: c, p_cant: v.n, p_salida: v.s === c ? null : v.s, p_destino: 'kanban', p_pedido: null }));
+  };
+  const DEST_RECH = [['terminacion', '🔧 Vuelve a Terminación para repararse'], ['descarte', '🗑️ Se descarta (se pierde)']];
+  const rechazarFields = mx => [{ id: 'n', label: 'Cantidad rechazada (máx. ' + mx + ')', value: 1, max: mx },
+    { type: 'select', id: 'd', label: '¿Qué pasa con las piezas?', options: DEST_RECH, value: 'terminacion' }, { type: 'text', id: 'x', label: 'Motivo (opcional)', ph: 'Ej: rajadura, medida fuera de tolerancia' }];
+  // piezas sueltas (sin plan)
+  A.rechazar = c => { const mx = libre(c);
+    ask('Rechazar piezas en Mecanizado', esc(nombre(c)) + ` — sueltas en Mecanizado: ${mx}.`, rechazarFields(mx),
+      'Registrar rechazo', v => rpc('mec_rechazar', { p_codigo: c, p_cant: v.n, p_destino: v.d, p_plan: null, p_causa: v.x || null })); };
+  // piezas reservadas por un plan (aunque sea de un día anterior): el plan vuelve a pedir la reposición
+  A.rechazarPlan = pid => { const p = C.planes.find(x => x.id === pid), r = p && rec(p.receta); if (!r) return;
+    const opts = [[r.macho, `Macho — ${nombre(r.macho)} (en Mecanizado para este plan: ${p.hold_macho})`], [r.hembra, `Hembra — ${nombre(r.hembra)} (en Mecanizado para este plan: ${p.hold_hembra})`]];
+    ask('Rechazar piezas del plan #' + pid, `${esc(r.nombre)} · plan del ${fmt(p.fecha)}.<br>Lo rechazado se descuenta de lo entregado a este plan: Terminación tiene que volver a entregarlo.`,
+      [{ type: 'select', id: 'c', label: 'Pieza', options: opts, value: r.macho }].concat(rechazarFields(Math.max(p.hold_macho, p.hold_hembra, 1))),
+      'Registrar rechazo', v => rpc('mec_rechazar', { p_codigo: v.c, p_cant: v.n, p_destino: v.d, p_plan: pid, p_causa: v.x || null })); };
+  A.cerrarPlan = pid => { const p = C.planes.find(x => x.id === pid); if (!p) return;
+    if (!confirm(`¿Cerrar el plan #${pid}? Quedan ${p.armados} aros armados y se deja de pedir lo que falta (${pendPlan(p)}). Lo ya entregado y no armado queda como piezas sueltas en Mecanizado.`)) return;
+    rpc('mec_cerrar_plan', { p_plan: pid }).then(reload).catch(e => alert(e.message)); };
+  Object.keys(A).forEach(k => { window['cir_' + k] = A[k]; });
+
+  // ---------- vistas ----------
+  const nameCell = c => `<b>${esc(nombre(c))}</b><div class="code">${esc(c)}</div>`;
+  const btn = (txt, js, cls, dis) => `<button class="${cls || ''}" ${dis ? 'disabled' : ''} onclick="${js}">${txt}</button>`;
+  function alertPanel(u, quien, conPlan) {
+    return alertas(u).map(c => { const n = nivel(u, c), L = lote(u, c);
+      const b = L <= 0 ? '' : (u === 'sector_z' ? (puedePlanificar() ? btn(`Cargar moldeo de ${L}`, `cir_moldeo(${L})`, 'pri') : '') : (conPlan && puedePlanificar() ? btn(`Crear plan de reposición de ${L}`, `cir_nuevoPlan(${L})`, 'pri') : ''));
+      return `<div class="alert"><div>${n === 'rojo' ? '🔴' : '🟡'} <b>${UBIC[u]} en ${n}</b> — ${esc(nombre(c))}: hay <b>${stock(c, u)}</b> (k = ${kOf(u, c)}). ${quien}<br><span class="code">Stock virtual ${sv(u, c)} = ${svTxt(u, c)}</span><br>${L > 0 ? `<b>Lote sugerido: ${L}</b>` : '<b>Ya hay suficiente en proceso: no hace falta pedir más.</b>'}</div>${b}</div>`; }).join('');
+  }
+  function shelf(u, actions) {
+    const cs = [...new Set([...Object.keys(C.stock[u] || {}).filter(c => stock(c, u) > 0), ...C.k.filter(r => r.ubicacion === u).map(r => r.codigo)])];
+    const rows = cs.map(c => { const hk = kOf(u, c) != null, n = nivel(u, c);
+      return `<tr><td>${nameCell(c)}</td><td class="num"><b>${stock(c, u)}</b></td><td class="num">${hk ? kOf(u, c) : '—'}</td><td>${hk ? `<span class="${n === 'verde' ? 'ok' : n === 'rojo' ? 'rep' : 'soon'}">${NIV[n]}</span>` : '<span class="code">sin k</span>'}</td>
+        <td class="num">${hk ? `<b>${sv(u, c)}</b><div class="code">${svTxt(u, c)}</div>` : '—'}</td><td class="num">${hk && alertas(u).includes(c) ? (lote(u, c) > 0 ? `<b class="soon">${lote(u, c)}</b>` : '<span class="code">no hace falta</span>') : '—'}</td>
+        <td><div class="row-actions">${actions(c)}${puedePlanificar() ? btn('k…', `cir_k('${u}','${esc(c)}')`) : ''}</div></td></tr>`; }).join('');
+    return rows ? `<table><tr><th>Pieza</th><th class="num">En estantería</th><th class="num">k</th><th>Nivel</th><th class="num">Stock virtual</th><th class="num">Lote sugerido</th><th></th></tr>${rows}</table>` : '<div class="empty">Todavía no hay piezas ni k definidos. Cargá el stock inicial con "Ajustar stock" y definí el k de cada pieza.</div>';
+  }
+  const shelfHead = (u, titulo) => `<div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>${titulo}</h2><div class="row-actions">${puedePlanificar() ? btn('+ Definir k', `cir_kNuevo('${u}')`) + btn('Ajustar stock', `cir_ajustar('${u}')`) : ''}</div></div>`;
+
+  function vTerm() {
+    const rows = [];
+    planesOrd().filter(p => pendPlan(p) > 0 && rec(p.receta)).forEach(p => { const r = rec(p.receta);
+      [r.macho, r.hembra].forEach(c => {
+        const falta = Math.max(0, pendPlan(p) - holdOf(p, c)), disp = stock(c, 'sector_z') + stock(c, 'terminacion');
+        rows.push(`<tr><td>${dueTxt(dueOf(p))}<div class="code">arma Mecanizado el ${fmt(p.fecha)} · plan #${p.id}</div></td><td>${nameCell(c)}</td><td class="num">${pendPlan(p)}</td><td class="num">${holdOf(p, c)}</td>
+          <td class="num"><b style="color:${falta ? 'var(--warn)' : 'var(--ok)'}">${falta}</b></td><td class="num">${stock(c, 'sector_z')} / ${stock(c, 'terminacion')}</td>
+          <td>${falta ? (puedeOperar() ? btn('Entregar ' + Math.min(falta, disp), `cir_entregar(${p.id},'${esc(c)}')`, 'pri', !disp) : '') + (disp < falta ? `<div class="code">faltan ${falta - disp} por terminar</div>` : '') : '<span class="ok">✔ entregado</span>'}</td></tr>`); }); });
+    const term = Object.keys(C.stock.terminacion || {}).filter(c => stock(c, 'terminacion') > 0).map(c => `<tr><td>${nameCell(c)}</td><td class="num">${stock(c, 'terminacion')}</td><td>${puedeOperar() ? btn('Terminé piezas…', `cir_terminar('${esc(c)}')`) : ''}</td></tr>`).join('');
+    const mold = C.moldeos.map(o => `<tr><td>${nameCell(o.codigo)}${o.nota ? `<div class="code">${esc(o.nota)}</div>` : ''}</td><td class="num">${o.cantidad}</td><td>${fmt(o.fecha)}</td><td><div class="row-actions">${puedeOperar() ? btn('Pasó a Terminación…', `cir_pasoTerm(${o.id})`) : ''}${puedePlanificar() ? btn('🗑', `cir_delMoldeo(${o.id})`) : ''}</div></td></tr>`).join('');
+    return alertPanel('sector_z', 'Terminación tiene que reponer esta estantería.', false) +
+      `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>🏭 En moldeo / fusión (para kanban)</h2>${puedePlanificar() ? btn('+ Cargar moldeo', 'cir_moldeo()') : ''}</div>
+        <div class="sub">Pedidos internos de kanban que no vienen de SGA: se cargan a mano. Cuentan en el stock virtual de Sector Z.</div>
+        ${mold ? `<table><tr><th>Pieza</th><th class="num">Cantidad</th><th>Cargado</th><th></th></tr>${mold}</table>` : '<div class="empty">No hay moldeos cargados.</div>'}</div>
+      <div class="panel"><h2>📥 A entregar a Mecanizado — por fecha</h2><div class="sub">Sale de la planificación: cada plan se entrega el <b>día hábil anterior</b> a la fecha en que Mecanizado lo arma (sin fines de semana ni feriados). Sale primero de Sector Z y después de Terminación.</div>
+        ${rows.length ? `<table><tr><th>Entregar el</th><th>Pieza</th><th class="num">Necesita</th><th class="num">Ya entregado</th><th class="num">Falta</th><th class="num">Disp. Z / Term.</th><th></th></tr>${rows.join('')}</table>` : '<div class="empty">No hay planes de armado pendientes.</div>'}</div>
+      <div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>🔧 En Terminación (para kanban / mecanizado)</h2>${puedeOperar() ? btn('+ Entrega suelta a Mecanizado', 'cir_entregaSuelta()') : ''}</div><div class="sub">Piezas que llegaron de moldeo/fusión y esperan procesarse. Al terminar, van a Sector Z o directo a Mecanizado.</div>
+        ${term ? `<table><tr><th>Pieza</th><th class="num">Cantidad</th><th></th></tr>${term}</table>` : '<div class="empty">No hay piezas en Terminación.</div>'}</div>`;
+  }
+  function vZ() {
+    return alertPanel('sector_z', 'Terminación tiene que reponer esta estantería.', false) +
+      `<div class="panel">${shelfHead('sector_z', '🗄️ Sector Z — kanban de piezas que llevan mecanizado')}<div class="sub">Plazo de reposición: <b>${C.cfg.plazo_sector_z || '—'} días</b>. Nivel según k: verde 2k o más, amarillo entre 1k y 2k (avisa reponer), rojo menos de 1k. Stock virtual: estantería + en Terminación + en moldeo/fusión − aros planificados sin entregar.</div>
+        ${shelf('sector_z', c => puedeOperar() ? btn('→ Mecanizado (suelto)', `cir_zaM('${esc(c)}')`, '', !stock(c, 'sector_z')) : '')}</div>`;
+  }
+  function vK() {
+    return alertPanel('kanban', 'Planificación / Mecanizado tienen que reponer esta estantería.', true) +
+      `<div class="panel">${shelfHead('kanban', '🏬 Estantería kanban — después de Mecanizado')}<div class="sub">Producto terminado que se usa para kanban. Los pedidos retiran de acá. Plazo de reposición: <b>${C.cfg.plazo_kanban || '—'} días</b>. Stock virtual: estantería + planificado en Mecanizado − aros en notas de pedido.</div>
+        ${shelf('kanban', c => puedeOperar() ? btn('Retirar para pedido…', `cir_retirar('${esc(c)}')`, 'pri', !stock(c, 'kanban') || !pedidosAbiertos(c).length) : '')}</div>`;
+  }
+  function vPlan() {
+    const mon = mondayOf(TODAY()), cells = [];
+    for (let w = 0; w < 4; w++) for (let d = 0; d < 5; d++) cells.push(addD(mon, w * 7 + d));
+    const cell = d => { const off = !isBiz(d);
+      const arma = C.planes.filter(p => p.fecha === d && pendPlan(p) > 0), entr = C.planes.filter(p => dueOf(p) === d && pendPlan(p) > 0);
+      const aros = arma.reduce((a, p) => a + pendPlan(p), 0), pzs = entr.reduce((a, p) => a + pendPlan(p), 0);
+      return `<div class="day ${d === TODAY() ? 'today' : ''} ${off ? 'off' : ''} ${d < TODAY() ? 'past' : ''}"><h4>${fmt(d)}${d === TODAY() ? ' · hoy' : ''}</h4>` + (off ? `<div class="why">🚫 ${esc(whyOff(d) || 'no hábil')}</div>`
+        : (aros ? `<div class="a">⚙️ Mecanizado arma: <b>${aros}</b> aros</div>` : '<div class="none">⚙️ sin armado</div>') + (pzs ? `<div class="t">🔧 Terminación entrega: <b>${pzs}</b> machos + <b>${pzs}</b> hembras</div>` : '<div class="none">🔧 sin entregas</div>')) + '</div>'; };
+    const rows = planesOrd().map(p => { const r = rec(p.receta), pd = pendPlan(p), pct = p.cantidad ? Math.round(100 * p.armados / p.cantidad) : 100;
+      return `<tr><td><b>${fmt(p.fecha)}</b>${isBiz(p.fecha) ? '' : `<div class="late">no es día hábil (${esc(whyOff(p.fecha))})</div>`}</td><td>${dueTxt(dueOf(p))}</td><td><b>Plan #${p.id}</b> · ${esc(r ? r.nombre : '?')}</td><td class="num">${p.cantidad}</td><td class="num">${p.armados}</td>
+        <td><div class="bar"><i style="width:${pct}%"></i></div></td><td><div class="row-actions">${pd > 0 && puedePlanificar() ? btn('Cambiar fecha', `cir_cambiarFecha(${p.id})`) + btn('Cerrar', `cir_cerrarPlan(${p.id})`) : (pd <= 0 ? '<span class="ok">' + (p.cantidad ? '✔ completo' : 'cerrado') + '</span>' : '')}${puedePlanificar() && !p.armados && !p.hold_macho && !p.hold_hembra ? btn('🗑', `cir_delPlan(${p.id})`) : ''}</div></td></tr>`; }).join('');
+    const prox = Object.keys(FERIADOS).filter(f => f >= TODAY()).sort().slice(0, 4).map(f => `${fmt(f)} · ${esc(FERIADOS[f])}`).join(' &nbsp;|&nbsp; ');
+    const exc = C.exc.slice().sort((a, b) => a.fecha.localeCompare(b.fecha)).map(e => `<div style="display:flex; gap:8px; align-items:center; padding:3px 0;"><span>${fmt(e.fecha)} — <b>${e.tipo === 'no' ? 'no se trabaja' : 'sí se trabaja'}</b>${e.nota ? ' · ' + esc(e.nota) : ''}</span>${puedePlanificar() ? btn('Quitar', `cir_quitarExc('${e.fecha}')`) : ''}</div>`).join('');
+    const recs = C.recetas.map(r => `<tr><td><b>${esc(r.nombre)}</b></td><td>${nameCell(r.macho)}</td><td>${nameCell(r.hembra)}</td><td>${nameCell(r.salida)}</td><td>${puedePlanificar() ? btn('🗑', `cir_delReceta('${esc(r.id)}')`) : ''}</td></tr>`).join('');
+    const movs = C.movs.map(m => `<div>${new Date(m.ts).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} · <b>${esc(UBIC[m.ubicacion])}</b> ${m.cantidad > 0 ? '+' : ''}${m.cantidad} × ${esc(nombre(m.codigo))} — ${esc(m.motivo || '')}${m.pedido_ref ? ' (' + esc(m.pedido_ref) + ')' : ''}</div>`).join('');
+    return alertPanel('kanban', 'Planificación tiene que reponer esta estantería.', true) + alertPanel('sector_z', 'Terminación tiene que reponer esta estantería.', false) +
+      `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>📅 Planificación por fecha (4 semanas)</h2>${puedePlanificar() ? btn('+ Nuevo plan', 'cir_nuevoPlan()', 'pri') : ''}</div>
+        <div class="sub">Cuántos aros arma Mecanizado cada día. La entrega de Terminación se calcula sola: el día hábil anterior. Los días apagados no son hábiles y se saltan.</div><div class="week">${cells.map(cell).join('')}</div></div>
+      <div class="panel"><h2>Planes cargados</h2>${rows ? `<table><tr><th>Mecanizado arma</th><th>Terminación entrega</th><th>Plan</th><th class="num">Aros</th><th class="num">Armados</th><th>Avance</th><th></th></tr>${rows}</table>` : '<div class="empty">Sin planes.</div>'}</div>
+      <div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>🔩 Recetas de aros</h2>${puedePlanificar() ? btn('+ Nueva receta', 'cir_receta()') : ''}</div><div class="sub">Qué macho y qué hembra arman cada aro, y con qué código se maneja el aro armado.</div>
+        ${recs ? `<table><tr><th>Aro</th><th>Macho</th><th>Hembra</th><th>Aro armado</th><th></th></tr>${recs}</table>` : '<div class="empty">Todavía no hay recetas: cargá una para poder planificar.</div>'}</div>
+      <div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>📆 Días no hábiles</h2>${puedePlanificar() ? btn('+ Agregar excepción', 'cir_excepcion()') : ''}</div>
+        <div class="sub">Se descuentan solos los sábados, domingos y feriados nacionales (calendario 2026 cargado; falta cargar los de 2027 en adelante). Los puentes turísticos también quedan sin trabajo por defecto: se pueden dejar como "sí se trabaja" con una excepción.</div>
+        <div class="sub"><b>Próximos feriados:</b> ${prox}</div>${exc ? `<div style="font-size:.8rem;"><b>Excepciones cargadas:</b>${exc}</div>` : '<div class="empty" style="padding:0;">Sin excepciones cargadas.</div>'}</div>
+      <div class="panel"><h2>🧾 Últimos movimientos</h2><div class="log">${movs || '<div>Sin movimientos todavía.</div>'}</div></div>`;
+  }
+  function vMec() {
+    const planes = planesOrd().filter(p => pendPlan(p) > 0 && rec(p.receta)).map(p => { const r = rec(p.receta), max = Math.min(p.hold_macho, p.hold_hembra, pendPlan(p));
+      const fm = pendPlan(p) - p.hold_macho, fh = pendPlan(p) - p.hold_hembra;
+      return `<tr><td><b>${p.fecha === TODAY() ? '<span class="soon">HOY</span> · ' : ''}${fmt(p.fecha)}</b>${p.fecha < TODAY() ? '<div class="late">de días anteriores</div>' : ''}</td><td>Plan #${p.id} · ${esc(r.nombre)}</td><td class="num">${pendPlan(p)}</td><td class="num">${p.hold_macho}</td><td class="num">${p.hold_hembra}</td>
+        <td><div class="row-actions">${puedeOperar() ? btn('Armar' + (max ? ' hasta ' + max : ''), `cir_armar(${p.id})`, 'pri', !max) + btn('Rechazar…', `cir_rechazarPlan(${p.id})`, '', !(p.hold_macho || p.hold_hembra)) : ''}</div>${(fm > 0 || fh > 0) ? `<div class="code">falta que Terminación entregue ${Math.max(fm, 0)} machos / ${Math.max(fh, 0)} hembras (el ${fmt(dueOf(p))})</div>` : ''}</td></tr>`; }).join('');
+    const sueltas = Object.keys(C.stock.mecanizado || {}).filter(c => libre(c) > 0).map(c => { const rs = C.recetas.filter(r => r.macho === c || r.hembra === c);
+      return `<tr><td>${nameCell(c)}${rs.length ? `<div class="code">${rs.map(r => (r.macho === c ? 'macho' : 'hembra') + ' de ' + esc(r.nombre)).join(' · ')}</div>` : ''}</td><td class="num"><b>${libre(c)}</b></td><td>${puedeOperar() ? btn('Sale procesada…', `cir_salidaLibre('${esc(c)}')`) + btn('Rechazar…', `cir_rechazar('${esc(c)}')`) : ''}</td></tr>`; }).join('');
+    const hayArmable = C.recetas.some(r => Math.min(libre(r.macho), libre(r.hembra)) > 0);
+    return alertPanel('kanban', 'Hay que armar aros para reponerla.', false) + `<div class="panel"><h2>⚙️ Armado de aros — por fecha</h2><div class="sub">Lo planificado para cada día. Cuando Terminación entrega los machos y hembras, se arma. El aro sale a la estantería kanban o directo a un pedido (venta en caliente).</div>
+      ${planes ? `<table><tr><th>Armar el</th><th>Plan</th><th class="num">Faltan armar</th><th class="num">Machos acá</th><th class="num">Hembras acá</th><th></th></tr>${planes}</table>` : '<div class="empty">No hay planes pendientes.</div>'}</div>
+      <div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>🧰 Fuera de plan — piezas sueltas en Mecanizado</h2>${puedeOperar() ? btn('Armar aros fuera de plan…', 'cir_armarLibre()', hayArmable ? 'pri' : '') : ''}</div>
+        <div class="sub">Si Mecanizado hace algo distinto de lo planificado, se carga acá. Son las piezas que Terminación entregó sin plan (entrega suelta) o lo que sobró de un plan cerrado. Se pueden armar aros con machos y hembras sueltos, o sacar piezas ya procesadas a la estantería kanban.</div>
+        ${sueltas ? `<table><tr><th>Pieza</th><th class="num">Sueltas</th><th></th></tr>${sueltas}</table>` : '<div class="empty">No hay piezas sueltas en Mecanizado.</div>'}</div>`;
+  }
+
+  // ---------- armado de la pantalla ----------
+  const CSS = `
+  #cir-root { position:fixed; inset:0; background:#0f172a; color:#e2e8f0; z-index:60; overflow:auto; display:none; font-size:14px; line-height:1.45; --card:#1e293b; --line:#334155; --dim:#94a3b8; --acc:#38bdf8; --ok:#34d399; --warn:#fbbf24; --bad:#f87171; }
+  #cir-root.on { display:block; } #cir-root * { box-sizing:border-box; }
+  #cir-root .wrap { max-width:1100px; margin:0 auto; padding:14px 16px 40px; } #cir-root h1 { font-size:1.15rem; margin:0; }
+  #cir-root .top { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }
+  #cir-root .flow { display:flex; align-items:stretch; gap:6px; flex-wrap:wrap; margin-bottom:14px; } #cir-root .node { flex:1 1 120px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 10px; text-align:center; min-width:110px; }
+  #cir-root .node .n { font-size:1.4rem; font-weight:800; color:#fff; } #cir-root .node .l { font-size:.72rem; color:var(--dim); } #cir-root .node.z { border-color:#a78bfa; } #cir-root .node.m { border-color:var(--warn); } #cir-root .node.k { border-color:#f472b6; }
+  #cir-root .arrow { align-self:center; color:var(--dim); } #cir-root .tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+  #cir-root .tab { background:var(--card); border:1px solid var(--line); color:#e2e8f0; padding:8px 12px; border-radius:8px; cursor:pointer; font-size:.85rem; } #cir-root .tab.on { background:var(--acc); color:#0f172a; border-color:var(--acc); font-weight:700; }
+  #cir-root .panel { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:12px; } #cir-root .panel h2 { font-size:.95rem; margin:0 0 4px; } #cir-root .sub { color:var(--dim); font-size:.78rem; margin-bottom:10px; }
+  #cir-root table { width:100%; border-collapse:collapse; } #cir-root th { text-align:left; font-size:.7rem; color:var(--dim); font-weight:600; padding:4px 6px; border-bottom:1px solid var(--line); } #cir-root td { padding:7px 6px; border-bottom:1px solid #263449; vertical-align:middle; }
+  #cir-root .num { text-align:right; font-variant-numeric:tabular-nums; } #cir-root .code { color:var(--dim); font-size:.72rem; } #cir-root .empty { color:var(--dim); font-size:.8rem; padding:8px 0; }
+  #cir-root button { background:#334155; color:#fff; border:none; border-radius:7px; padding:6px 11px; font-size:.8rem; cursor:pointer; } #cir-root button:hover:not(:disabled) { background:#475569; } #cir-root button.pri { background:var(--acc); color:#0f172a; font-weight:700; } #cir-root button:disabled { opacity:.4; cursor:default; }
+  #cir-root .bar { height:7px; background:#0f172a; border-radius:99px; overflow:hidden; min-width:80px; } #cir-root .bar > i { display:block; height:100%; background:var(--ok); } #cir-root .row-actions { display:flex; gap:6px; flex-wrap:wrap; }
+  #cir-root .week { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin-bottom:8px; } @media (max-width:900px){ #cir-root .week { grid-template-columns:repeat(2,1fr); } }
+  #cir-root .day { background:#0f172a; border:1px solid var(--line); border-radius:8px; padding:7px 9px; min-height:92px; font-size:.76rem; } #cir-root .day.today { border-color:var(--acc); } #cir-root .day.off { opacity:.55; background:#111c30; } #cir-root .day.past { opacity:.4; }
+  #cir-root .day h4 { margin:0 0 4px; font-size:.78rem; text-transform:capitalize; } #cir-root .day .a { color:var(--warn); } #cir-root .day .t { color:#7dd3fc; } #cir-root .day .none { color:#475569; } #cir-root .day .why { color:#a78bfa; }
+  #cir-root .late { color:var(--bad); font-weight:700; } #cir-root .soon { color:var(--warn); font-weight:700; } #cir-root .ok { color:var(--ok); } #cir-root .rep { color:var(--bad); font-weight:700; }
+  #cir-root .alert { background:rgba(248,113,113,.1); border:1px solid #7f1d1d; border-radius:8px; padding:8px 12px; margin-bottom:8px; font-size:.8rem; display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+  #cir-root .log { max-height:220px; overflow:auto; font-size:.76rem; color:var(--dim); } #cir-root .log div { padding:2px 0; border-bottom:1px solid #263449; } #cir-root .err { color:var(--bad); padding:20px 0; }
+  #cir-ov { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; padding:16px; z-index:70; } #cir-ov.on { display:flex; }
+  #cir-modal { background:#1e293b; color:#e2e8f0; border:1px solid #334155; border-radius:12px; padding:16px; width:100%; max-width:400px; max-height:90vh; overflow:auto; } #cir-modal h3 { margin:0 0 4px; font-size:1rem; } #cir-modal .d { color:#94a3b8; font-size:.78rem; margin-bottom:10px; }
+  #cir-modal label { display:block; font-size:.74rem; color:#94a3b8; margin:8px 0 3px; } #cir-modal input, #cir-modal select { width:100%; background:#0f172a; color:#fff; border:1px solid #334155; border-radius:7px; padding:7px 9px; font-size:.9rem; }
+  #cir-modal .btns { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; } #cir-modal button { background:#334155; color:#fff; border:none; border-radius:7px; padding:7px 14px; cursor:pointer; } #cir-modal button.pri { background:#38bdf8; color:#0f172a; font-weight:700; }
+  #cir-modal .cir-err { color:#f87171; font-size:.78rem; margin-top:8px; min-height:1em; } #cir-modal .cir-res .it { padding:5px 8px; cursor:pointer; border-bottom:1px solid #263449; font-size:.78rem; } #cir-modal .cir-res .it:hover { background:#334155; } #cir-modal .code { color:#94a3b8; font-size:.72rem; }`;
+
+  function ensureDom() {
+    if (document.getElementById('cir-root')) return;
+    const st = document.createElement('style'); st.textContent = CSS; document.head.appendChild(st);
+    const root = document.createElement('div'); root.id = 'cir-root';
+    root.innerHTML = '<div class="wrap"><div class="top"><h1>🔩 Circuito: Terminación → Sector Z → Mecanizado → Kanban</h1><button onclick="cirClose()">✕ Cerrar</button></div><div class="flow" id="cir-flow"></div><div class="tabs" id="cir-tabs"></div><div id="cir-screen"></div></div>';
+    document.body.appendChild(root);
+    const ov = document.createElement('div'); ov.id = 'cir-ov'; ov.innerHTML = '<div id="cir-modal"></div>'; ov.addEventListener('click', e => { if (e.target.id === 'cir-ov') cirCloseAsk(); }); document.body.appendChild(ov);
+  }
+  function render() {
+    const screen = document.getElementById('cir-screen'); if (!screen) return;
+    if (C.error) { document.getElementById('cir-flow').innerHTML = ''; document.getElementById('cir-tabs').innerHTML = ''; screen.innerHTML = `<div class="err">${esc(C.error)}</div>`; return; }
+    if (!C.loaded) { screen.innerHTML = '<div class="empty">Cargando…</div>'; return; }
+    const tot = u => Object.values(C.stock[u] || {}).reduce((a, n) => a + n, 0);
+    const mold = C.moldeos.reduce((a, o) => a + o.cantidad, 0), nz = alertas('sector_z').length, nk = alertas('kanban').length;
+    const tag = n => n ? ` <span class="rep">● ${n}</span>` : '';
+    document.getElementById('cir-flow').innerHTML =
+      `<div class="node"><div class="n">${tot('terminacion')}</div><div class="l">🔧 Terminación (+ ${mold} en moldeo)</div></div><div class="arrow">→</div>
+       <div class="node z"><div class="n">${tot('sector_z')}</div><div class="l">🗄️ Sector Z · kanban piezas c/ mecanizado${tag(nz)}</div></div><div class="arrow">→</div>
+       <div class="node m"><div class="n">${tot('mecanizado')}</div><div class="l">⚙️ Mecanizado</div></div><div class="arrow">→</div>
+       <div class="node k"><div class="n">${tot('kanban')}</div><div class="l">🏬 Estantería kanban post-mecanizado${tag(nk)}</div></div>`;
+    const tabs = [['plan', '📅 Planificación'], ['term', '🔧 Terminación'], ['z', '🗄️ Sector Z' + tag(nz)], ['mec', '⚙️ Mecanizado'], ['k', '🏬 Kanban' + tag(nk)]];
+    document.getElementById('cir-tabs').innerHTML = tabs.map(t => `<button class="tab ${C.tab === t[0] ? 'on' : ''}" onclick="cirTab('${t[0]}')">${t[1]}</button>`).join('');
+    try { screen.innerHTML = { term: vTerm, z: vZ, k: vK, plan: vPlan, mec: vMec }[C.tab](); }
+    catch (e) { console.error('Circuito:', e); screen.innerHTML = '<div class="err">Error al mostrar esta pantalla: ' + esc(e.message) + '</div>'; }
+  }
+  async function reload() { await load(); render(); }
+  window.cirTab = t => { C.tab = t; render(); };
+  window.cirOpen = async () => { ensureDom(); document.getElementById('cir-root').classList.add('on'); render(); await reload(); };
+  window.cirClose = () => { const r = document.getElementById('cir-root'); if (r) r.classList.remove('on'); };
+  window.__cir = { C, load, render, nivel, sv, lote, isBiz, prevBiz, FERIADOS };
+})();
+
 </script>
 </body>
 </html>
