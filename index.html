@@ -439,6 +439,7 @@
       <button class="hdr-btn install" id="install-btn" onclick="onInstallClick()" title="Instalar el tablero como app en tu pantalla de inicio">⬇️ Instalar app</button>
       <button class="hdr-btn" id="admin-btn" style="display:none;" onclick="openAdminDialog()">👥 Usuarios y permisos</button>
       <button class="hdr-btn" id="area-btn" style="display:none;" onclick="openAreaDialog()">🗂️ Áreas</button>
+      <button class="hdr-btn" id="mec-btn" style="display:none;" onclick="openMecDialog()">🔩 Mecanizado</button>
       <span class="badge-live" id="asof-badge">ACTUALIZADO</span>
       <span class="user-pill" id="user-pill" style="margin-left:10px;"></span>
       <button class="logout-link" onclick="changeOwnPassword()">Cambiar contraseña</button>
@@ -671,6 +672,9 @@
   </div>
   <div class="stock-overlay" id="admin-overlay" onclick="if(event.target.id==='admin-overlay')closeAdminDialog()">
     <div class="stock-dialog admin-dialog" id="admin-dialog-content"></div>
+  </div>
+  <div class="stock-overlay" id="mec-overlay" onclick="if(event.target.id==='mec-overlay')closeMecDialog()">
+    <div class="stock-dialog admin-dialog" id="mec-dialog-content"></div>
   </div>
   <div class="stock-overlay" id="area-overlay" onclick="if(event.target.id==='area-overlay')closeAreaDialog()">
     <div class="stock-dialog admin-dialog" id="area-dialog-content"></div>
@@ -1459,6 +1463,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 
 // ---- Pantalla de administración de usuarios (solo es_admin) ----
 let ADMIN_USERS = [];
+let CATALOGO_MEC = new Set(); // códigos con la marca "lleva mecanizado"
 function openAdminDialog() {
   if (!CURRENT_PROFILE || !CURRENT_PROFILE.es_admin) return;
   document.getElementById('admin-overlay').classList.add('open');
@@ -1682,6 +1687,111 @@ async function deleteAreaPreset(btn) {
   if (error) { alert('No se pudo eliminar: ' + error.message); return; }
   await loadAreaPresets();
   renderAreaDialog();
+}
+
+// ---- Piezas que llevan mecanizado — Version 43 ----
+// Marca por artículo (catalogo_articulos.lleva_mecanizado). Se tilda desde acá,
+// con buscador; la carga semanal de SGA no la pisa. Solo rol "editor" (así lo
+// exige la base). Más adelante esta marca decide si Terminación entrega la
+// pieza a Mecanizado en vez de pasarla a Preparado.
+function openMecDialog() {
+  if (!CURRENT_PROFILE || CURRENT_PROFILE.rol !== 'editor') return;
+  document.getElementById('mec-overlay').classList.add('open');
+  renderMecDialog();
+}
+function closeMecDialog() { document.getElementById('mec-overlay').classList.remove('open'); }
+
+function mecMatches(q) {
+  const t = normTxt(q || '').trim();
+  if (t.length < 2) return [];
+  const words = t.split(/\s+/);
+  const out = [];
+  for (const it of CATALOGO) {
+    const hay = normTxt(it[1] + ' ' + it[0]);
+    if (words.every(w => hay.includes(w))) out.push(it);
+  }
+  return out;
+}
+
+function renderMecDialog() {
+  const box = document.getElementById('mec-dialog-content');
+  if (!box) return;
+  const prevQ = (document.getElementById('mec-q') || {}).value || '';
+  box.innerHTML = '<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;"><h3>🔩 Piezas que llevan mecanizado</h3><button style="background:#334155; border:none; color:#fff; width:28px; height:28px; border-radius:50%; cursor:pointer;" onclick="closeMecDialog()">✕</button></div>' +
+    '<div class="text-dim" style="margin-bottom:10px; font-size:0.78rem; line-height:1.5;">Buscá piezas por nombre o código y tildalas. Las tildadas son las que Terminación va a entregar a Mecanizado en vez de dejarlas preparadas para despachar. Podés tildar de a una o todos los resultados de una búsqueda.</div>' +
+    '<input type="text" id="mec-q" placeholder="Buscar (ej: aro giratorio hembra, 97017…)" style="width:100%; box-sizing:border-box;" oninput="renderMecResults()" value="' + escHtml(prevQ) + '" autocomplete="off">' +
+    '<div id="mec-msg" class="adm-msg" style="display:block; min-height:1.2em; margin:6px 0;"></div>' +
+    '<div id="mec-results"></div>' +
+    '<details id="mec-tildadas" style="margin-top:12px;"><summary style="cursor:pointer; font-weight:700; color:#fff;">✅ Ya tildadas (<span id="mec-count">0</span>)</summary><div id="mec-list" style="margin-top:8px;"></div></details>';
+  renderMecResults();
+  renderMecList();
+}
+
+function mecRowHtml(it) {
+  const on = CATALOGO_MEC.has(it[0]);
+  return '<label style="display:flex; align-items:flex-start; gap:8px; padding:5px 0; border-bottom:1px solid #1e293b; cursor:pointer;">' +
+    '<input type="checkbox" data-cod="' + escHtml(it[0]) + '"' + (on ? ' checked' : '') + ' onchange="toggleMec(this)" style="margin-top:3px;">' +
+    '<span style="flex:1; font-size:0.8rem; line-height:1.3;"><b style="color:#fff;">' + escHtml(it[1]) + '</b><br><span class="text-dim">' + escHtml(it[0]) + (it[2] && it[2] !== '-' ? ' · ' + escHtml(it[2]) : '') + '</span></span></label>';
+}
+
+function renderMecResults() {
+  const el = document.getElementById('mec-results');
+  if (!el) return;
+  const q = (document.getElementById('mec-q') || {}).value || '';
+  if (normTxt(q).trim().length < 2) { el.innerHTML = '<div class="text-dim" style="font-size:0.78rem;">Escribí al menos 2 letras para buscar.</div>'; return; }
+  const all = mecMatches(q);
+  if (!all.length) { el.innerHTML = '<div class="text-dim" style="font-size:0.78rem;">Sin resultados.</div>'; return; }
+  const shown = all.slice(0, 60);
+  const sinTildar = all.filter(it => !CATALOGO_MEC.has(it[0])).length;
+  el.innerHTML = '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px; font-size:0.78rem;">' +
+      '<span class="text-dim">' + all.length + ' resultado' + (all.length === 1 ? '' : 's') + (all.length > shown.length ? ' (se muestran 60)' : '') + '</span>' +
+      (sinTildar ? '<button class="hdr-btn" style="margin:0;" onclick="bulkMec(true)">Tildar los ' + all.length + '</button>' : '') +
+      (sinTildar < all.length ? '<button class="hdr-btn" style="margin:0;" onclick="bulkMec(false)">Destildar los ' + all.length + '</button>' : '') +
+    '</div>' + shown.map(mecRowHtml).join('');
+}
+
+function renderMecList() {
+  const el = document.getElementById('mec-list');
+  const cnt = document.getElementById('mec-count');
+  if (cnt) cnt.textContent = CATALOGO_MEC.size;
+  if (!el) return;
+  const items = CATALOGO.filter(it => CATALOGO_MEC.has(it[0])).sort((a, b) => a[1].localeCompare(b[1]));
+  el.innerHTML = items.length ? items.map(mecRowHtml).join('') : '<div class="text-dim" style="font-size:0.78rem;">Todavía no hay ninguna.</div>';
+}
+
+async function setMec(codes, val) {
+  const msg = document.getElementById('mec-msg');
+  const say = (txt, ok) => { if (msg) { msg.style.color = ok ? '#34d399' : '#f87171'; msg.textContent = txt; } };
+  say('Guardando…', true); if (msg) msg.style.color = '#94a3b8';
+  let hechos = 0;
+  for (let i = 0; i < codes.length; i += 100) {
+    const grupo = codes.slice(i, i + 100);
+    const { data, error } = await supabaseClient.from('catalogo_articulos').update({ lleva_mecanizado: val }).in('codigo', grupo).select('codigo');
+    if (error) {
+      say(/lleva_mecanizado|schema cache/i.test(error.message) ? 'Falta correr el parche 009 en Supabase (ver instrucciones).' : 'No se pudo guardar: ' + error.message, false);
+      return false;
+    }
+    if (!data || !data.length) { say('No se guardó nada: hace falta rol "editor".', false); return false; }
+    data.forEach(r => { if (val) CATALOGO_MEC.add(r.codigo); else CATALOGO_MEC.delete(r.codigo); });
+    hechos += data.length;
+  }
+  say(hechos + (val ? ' tildada' : ' destildada') + (hechos === 1 ? '' : 's') + ' ✓', true);
+  renderMecResults(); renderMecList();
+  return true;
+}
+
+async function toggleMec(cb) {
+  const cod = cb.getAttribute('data-cod');
+  const ok = await setMec([cod], cb.checked);
+  if (!ok) cb.checked = !cb.checked;
+}
+
+async function bulkMec(val) {
+  const q = (document.getElementById('mec-q') || {}).value || '';
+  const codes = mecMatches(q).map(it => it[0]).filter(c => CATALOGO_MEC.has(c) !== val);
+  if (!codes.length) return;
+  if (!window.confirm((val ? 'Tildar ' : 'Destildar ') + codes.length + ' pieza' + (codes.length === 1 ? '' : 's') + ' como "lleva mecanizado"?')) return;
+  await setMec(codes, val);
 }
 
 async function saveAdminUser(uid, btn) {
@@ -2238,6 +2348,8 @@ function applyInspectorVisibility() {
   if (f && !puedeVer(f)) setFilterFromCard('all');
   const adminBtn = document.getElementById('admin-btn');
   if (adminBtn) adminBtn.style.display = (CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? '' : 'none';
+  const mecBtn = document.getElementById('mec-btn');
+  if (mecBtn) mecBtn.style.display = (CURRENT_PROFILE && CURRENT_PROFILE.rol === 'editor') ? '' : 'none';
   const areaBtn = document.getElementById('area-btn');
   if (areaBtn) areaBtn.style.display = (CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? '' : 'none';
   const nav = document.getElementById('main-nav');
@@ -2360,6 +2472,8 @@ async function initDb() {
       });
       CATALOGO = items;
       catalogoByCodigo = new Map(items.map(it => [it[0], it]));
+      CATALOGO_MEC = new Set(qs.docs.filter(d => d.exists && d.data().lleva_mecanizado).map(d => d.data().codigo));
+      if (document.getElementById('mec-overlay').classList.contains('open')) { renderMecResults(); renderMecList(); }
     }, err => {
       console.error('catalogo_articulos onSnapshot error:', err && err.code, err && err.message);
     });
