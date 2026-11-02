@@ -1721,11 +1721,6 @@ function renderMecDialog() {
     '<input type="text" id="mec-q" placeholder="Buscar (ej: aro giratorio hembra, 97017…)" style="width:100%; box-sizing:border-box;" oninput="onMecInput()" value="' + escHtml(prevQ) + '" autocomplete="off">' +
     '<div id="mec-msg" class="adm-msg" style="display:block; min-height:1.2em; margin:6px 0;"></div>' +
     '<div id="mec-results"></div>' +
-    '<details id="mec-alta" style="margin-top:12px;"><summary style="cursor:pointer; font-weight:700; color:#fff;">➕ Dar de alta una pieza nueva</summary>' +
-      '<div style="margin-top:8px;"><div class="text-dim" style="font-size:0.76rem; margin-bottom:6px;">Para piezas que todavía no están en SGA. El código no puede repetirse: si ya existe, no se carga. Cuando la pieza aparezca en SGA, la carga semanal la conserva.</div>' +
-      '<input type="text" id="mec-n-cod" placeholder="Código" style="width:170px;"> <input type="text" id="mec-n-desc" placeholder="Nombre / descripción" style="width:300px; max-width:100%;"> <input type="text" id="mec-n-mat" placeholder="Material (ej: NODULAR)" style="width:150px;">' +
-      '<label style="display:flex; gap:6px; align-items:center; margin:8px 0; font-size:0.8rem;"><input type="checkbox" id="mec-n-mec"> Lleva mecanizado</label>' +
-      '<button class="stock-btn-primary" style="padding:6px 14px; border-radius:6px; border:none; font-weight:700; cursor:pointer;" onclick="createArticulo(this)">Dar de alta</button></div></details>' +
     '<details id="mec-tildadas" style="margin-top:12px;"><summary style="cursor:pointer; font-weight:700; color:#fff;">✅ Ya tildadas (<span id="mec-count">…</span>)</summary><div id="mec-list" style="margin-top:8px;"></div></details>';
   if (prevQ) runMecSearch(); else renderMecResults();
   renderMecList();
@@ -1822,31 +1817,6 @@ async function bulkMec(val) {
   if (!codes.length) return;
   if (!window.confirm((val ? 'Tildar ' : 'Destildar ') + codes.length + ' pieza' + (codes.length === 1 ? '' : 's') + ' como "lleva mecanizado"?')) return;
   await setMec(codes, val);
-}
-
-async function createArticulo(btn) {
-  const msg = document.getElementById('mec-msg');
-  const say = (txt, ok) => { if (msg) { msg.style.color = ok ? '#34d399' : '#f87171'; msg.textContent = txt; } };
-  const codigo = document.getElementById('mec-n-cod').value.trim();
-  const descripcion = document.getElementById('mec-n-desc').value.trim();
-  const material = document.getElementById('mec-n-mat').value.trim() || '-';
-  const lleva = document.getElementById('mec-n-mec').checked;
-  if (!codigo || !descripcion) { say('Faltan el código y el nombre.', false); return; }
-  btn.disabled = true; say('Guardando…', true);
-  const { error } = await supabaseClient.from('catalogo_articulos').insert({ codigo, descripcion, material, lleva_mecanizado: lleva, origen: 'app' });
-  btn.disabled = false;
-  if (error) {
-    if (error.code === '23505' || /duplicate key/i.test(error.message)) say('Ese código ya existe: no se puede volver a cargar ni pisar.', false);
-    else if (/origen|lleva_mecanizado|schema cache/i.test(error.message)) say('Faltan los parches 009 y 010 en Supabase (ver instrucciones).', false);
-    else if (/row-level security|permission/i.test(error.message)) say('Hace falta rol "editor".', false);
-    else say('No se pudo cargar: ' + error.message, false);
-    return;
-  }
-  ['mec-n-cod', 'mec-n-desc', 'mec-n-mat'].forEach(id => { document.getElementById(id).value = ''; });
-  document.getElementById('mec-n-mec').checked = false;
-  say('Pieza ' + codigo + ' dada de alta ✓', true);
-  if (lleva) CATALOGO_MEC.add(codigo);
-  loadMecTildadas();
 }
 
 async function saveAdminUser(uid, btn) {
