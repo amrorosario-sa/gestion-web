@@ -1689,28 +1689,27 @@ async function deleteAreaPreset(btn) {
   renderAreaDialog();
 }
 
-// ---- Piezas que llevan mecanizado — Version 43 ----
+// ---- Piezas que llevan mecanizado — Version 44 ----
 // Marca por artículo (catalogo_articulos.lleva_mecanizado). Se tilda desde acá,
-// con buscador; la carga semanal de SGA no la pisa. Solo rol "editor" (así lo
-// exige la base). Más adelante esta marca decide si Terminación entrega la
-// pieza a Mecanizado en vez de pasarla a Preparado.
+// con buscador que consulta directo a la base; la carga semanal de SGA no la
+// pisa. Solo rol "editor" (así lo exige la base). Más adelante esta marca
+// decide si Terminación entrega la pieza a Mecanizado en vez de pasarla a Preparado.
+let MEC_RESULTS = [], MEC_TOTAL = 0, MEC_TIL = [], mecTimer = null, mecSeq = 0;
+
 function openMecDialog() {
   if (!CURRENT_PROFILE || CURRENT_PROFILE.rol !== 'editor') return;
   document.getElementById('mec-overlay').classList.add('open');
   renderMecDialog();
+  loadMecTildadas();
 }
 function closeMecDialog() { document.getElementById('mec-overlay').classList.remove('open'); }
 
-function mecMatches(q) {
-  const t = normTxt(q || '').trim();
-  if (t.length < 2) return [];
-  const words = t.split(/\s+/);
-  const out = [];
-  for (const it of CATALOGO) {
-    const hay = normTxt(it[1] + ' ' + it[0]);
-    if (words.every(w => hay.includes(w))) out.push(it);
-  }
-  return out;
+function mecWords(q) { return normTxt(q).replace(/[,()%*\\"]/g, ' ').split(/\s+/).filter(Boolean); }
+
+function mecQuery(sel, words) {
+  let qb = supabaseClient.from('catalogo_articulos').select(sel, { count: 'exact' });
+  words.forEach(w => { qb = qb.or('descripcion.ilike.%' + w + '%,codigo.ilike.%' + w + '%'); });
+  return qb.order('descripcion').limit(500);
 }
 
 function renderMecDialog() {
@@ -1719,44 +1718,70 @@ function renderMecDialog() {
   const prevQ = (document.getElementById('mec-q') || {}).value || '';
   box.innerHTML = '<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;"><h3>🔩 Piezas que llevan mecanizado</h3><button style="background:#334155; border:none; color:#fff; width:28px; height:28px; border-radius:50%; cursor:pointer;" onclick="closeMecDialog()">✕</button></div>' +
     '<div class="text-dim" style="margin-bottom:10px; font-size:0.78rem; line-height:1.5;">Buscá piezas por nombre o código y tildalas. Las tildadas son las que Terminación va a entregar a Mecanizado en vez de dejarlas preparadas para despachar. Podés tildar de a una o todos los resultados de una búsqueda.</div>' +
-    '<input type="text" id="mec-q" placeholder="Buscar (ej: aro giratorio hembra, 97017…)" style="width:100%; box-sizing:border-box;" oninput="renderMecResults()" value="' + escHtml(prevQ) + '" autocomplete="off">' +
+    '<input type="text" id="mec-q" placeholder="Buscar (ej: aro giratorio hembra, 97017…)" style="width:100%; box-sizing:border-box;" oninput="onMecInput()" value="' + escHtml(prevQ) + '" autocomplete="off">' +
     '<div id="mec-msg" class="adm-msg" style="display:block; min-height:1.2em; margin:6px 0;"></div>' +
     '<div id="mec-results"></div>' +
-    '<details id="mec-tildadas" style="margin-top:12px;"><summary style="cursor:pointer; font-weight:700; color:#fff;">✅ Ya tildadas (<span id="mec-count">0</span>)</summary><div id="mec-list" style="margin-top:8px;"></div></details>';
-  renderMecResults();
+    '<details id="mec-tildadas" style="margin-top:12px;"><summary style="cursor:pointer; font-weight:700; color:#fff;">✅ Ya tildadas (<span id="mec-count">…</span>)</summary><div id="mec-list" style="margin-top:8px;"></div></details>';
+  if (prevQ) runMecSearch(); else renderMecResults();
   renderMecList();
 }
 
-function mecRowHtml(it) {
-  const on = CATALOGO_MEC.has(it[0]);
+function mecRowHtml(r) {
+  const on = CATALOGO_MEC.has(r.codigo);
   return '<label style="display:flex; align-items:flex-start; gap:8px; padding:5px 0; border-bottom:1px solid #1e293b; cursor:pointer;">' +
-    '<input type="checkbox" data-cod="' + escHtml(it[0]) + '"' + (on ? ' checked' : '') + ' onchange="toggleMec(this)" style="margin-top:3px;">' +
-    '<span style="flex:1; font-size:0.8rem; line-height:1.3;"><b style="color:#fff;">' + escHtml(it[1]) + '</b><br><span class="text-dim">' + escHtml(it[0]) + (it[2] && it[2] !== '-' ? ' · ' + escHtml(it[2]) : '') + '</span></span></label>';
+    '<input type="checkbox" data-cod="' + escHtml(r.codigo) + '"' + (on ? ' checked' : '') + ' onchange="toggleMec(this)" style="margin-top:3px;">' +
+    '<span style="flex:1; font-size:0.8rem; line-height:1.3;"><b style="color:#fff;">' + escHtml(r.descripcion) + '</b><br><span class="text-dim">' + escHtml(r.codigo) + (r.material && r.material !== '-' ? ' · ' + escHtml(r.material) : '') + '</span></span></label>';
 }
 
-function renderMecResults() {
+function onMecInput() { clearTimeout(mecTimer); mecTimer = setTimeout(runMecSearch, 250); }
+
+async function runMecSearch() {
+  const el = document.getElementById('mec-results');
+  if (!el) return;
+  const words = mecWords((document.getElementById('mec-q') || {}).value || '');
+  if (words.join('').length < 2) { MEC_RESULTS = []; MEC_TOTAL = 0; renderMecResults(); return; }
+  const my = ++mecSeq;
+  el.innerHTML = '<div class="text-dim" style="font-size:0.78rem;">Buscando…</div>';
+  let sinCol = false;
+  let res = await mecQuery('codigo,descripcion,material,lleva_mecanizado', words);
+  if (res.error && /lleva_mecanizado/.test(res.error.message || '')) { sinCol = true; res = await mecQuery('codigo,descripcion,material', words); }
+  if (my !== mecSeq) return;
+  if (res.error) { el.innerHTML = '<div style="color:#f87171; font-size:0.8rem;">No se pudo buscar: ' + escHtml(res.error.message || String(res.error)) + '</div>'; return; }
+  MEC_RESULTS = res.data || [];
+  MEC_TOTAL = (typeof res.count === 'number') ? res.count : MEC_RESULTS.length;
+  MEC_RESULTS.forEach(r => { if (r.lleva_mecanizado) CATALOGO_MEC.add(r.codigo); else CATALOGO_MEC.delete(r.codigo); });
+  renderMecResults(sinCol);
+}
+
+function renderMecResults(sinCol) {
   const el = document.getElementById('mec-results');
   if (!el) return;
   const q = (document.getElementById('mec-q') || {}).value || '';
-  if (normTxt(q).trim().length < 2) { el.innerHTML = '<div class="text-dim" style="font-size:0.78rem;">Escribí al menos 2 letras para buscar.</div>'; return; }
-  const all = mecMatches(q);
-  if (!all.length) { el.innerHTML = '<div class="text-dim" style="font-size:0.78rem;">Sin resultados.</div>'; return; }
-  const shown = all.slice(0, 60);
-  const sinTildar = all.filter(it => !CATALOGO_MEC.has(it[0])).length;
-  el.innerHTML = '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px; font-size:0.78rem;">' +
-      '<span class="text-dim">' + all.length + ' resultado' + (all.length === 1 ? '' : 's') + (all.length > shown.length ? ' (se muestran 60)' : '') + '</span>' +
-      (sinTildar ? '<button class="hdr-btn" style="margin:0;" onclick="bulkMec(true)">Tildar los ' + all.length + '</button>' : '') +
-      (sinTildar < all.length ? '<button class="hdr-btn" style="margin:0;" onclick="bulkMec(false)">Destildar los ' + all.length + '</button>' : '') +
+  if (mecWords(q).join('').length < 2) { el.innerHTML = '<div class="text-dim" style="font-size:0.78rem;">Escribí al menos 2 letras para buscar.</div>'; return; }
+  if (!MEC_RESULTS.length) { el.innerHTML = '<div class="text-dim" style="font-size:0.78rem;">Sin resultados.</div>'; return; }
+  const sinTildar = MEC_RESULTS.filter(r => !CATALOGO_MEC.has(r.codigo)).length;
+  const shown = MEC_RESULTS.slice(0, 60);
+  el.innerHTML = (sinCol ? '<div style="color:#fbbf24; font-size:0.78rem; margin-bottom:6px;">Falta correr el parche 009 en Supabase: sin eso no se puede tildar.</div>' : '') +
+    '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px; font-size:0.78rem;">' +
+      '<span class="text-dim">' + MEC_TOTAL + ' resultado' + (MEC_TOTAL === 1 ? '' : 's') + (MEC_TOTAL > MEC_RESULTS.length ? ' (afiná la búsqueda: solo se pueden tildar en grupo los primeros ' + MEC_RESULTS.length + ')' : '') + (MEC_RESULTS.length > shown.length ? ' · se muestran 60' : '') + '</span>' +
+      (sinTildar ? '<button class="hdr-btn" style="margin:0;" onclick="bulkMec(true)">Tildar los ' + MEC_RESULTS.length + '</button>' : '') +
+      (sinTildar < MEC_RESULTS.length ? '<button class="hdr-btn" style="margin:0;" onclick="bulkMec(false)">Destildar los ' + MEC_RESULTS.length + '</button>' : '') +
     '</div>' + shown.map(mecRowHtml).join('');
+}
+
+async function loadMecTildadas() {
+  const { data, error } = await supabaseClient.from('catalogo_articulos').select('codigo,descripcion,material').eq('lleva_mecanizado', true).order('descripcion').limit(1000);
+  if (error) { MEC_TIL = null; } else { MEC_TIL = data || []; MEC_TIL.forEach(r => CATALOGO_MEC.add(r.codigo)); }
+  renderMecList();
 }
 
 function renderMecList() {
   const el = document.getElementById('mec-list');
   const cnt = document.getElementById('mec-count');
-  if (cnt) cnt.textContent = CATALOGO_MEC.size;
+  if (cnt) cnt.textContent = MEC_TIL ? MEC_TIL.length : '—';
   if (!el) return;
-  const items = CATALOGO.filter(it => CATALOGO_MEC.has(it[0])).sort((a, b) => a[1].localeCompare(b[1]));
-  el.innerHTML = items.length ? items.map(mecRowHtml).join('') : '<div class="text-dim" style="font-size:0.78rem;">Todavía no hay ninguna.</div>';
+  if (!MEC_TIL) { el.innerHTML = '<div class="text-dim" style="font-size:0.78rem;">No se pudo leer (¿falta correr el parche 009?).</div>'; return; }
+  el.innerHTML = MEC_TIL.length ? MEC_TIL.map(mecRowHtml).join('') : '<div class="text-dim" style="font-size:0.78rem;">Todavía no hay ninguna.</div>';
 }
 
 async function setMec(codes, val) {
@@ -1776,7 +1801,8 @@ async function setMec(codes, val) {
     hechos += data.length;
   }
   say(hechos + (val ? ' tildada' : ' destildada') + (hechos === 1 ? '' : 's') + ' ✓', true);
-  renderMecResults(); renderMecList();
+  renderMecResults();
+  await loadMecTildadas();
   return true;
 }
 
@@ -1787,8 +1813,7 @@ async function toggleMec(cb) {
 }
 
 async function bulkMec(val) {
-  const q = (document.getElementById('mec-q') || {}).value || '';
-  const codes = mecMatches(q).map(it => it[0]).filter(c => CATALOGO_MEC.has(c) !== val);
+  const codes = MEC_RESULTS.map(r => r.codigo).filter(c => CATALOGO_MEC.has(c) !== val);
   if (!codes.length) return;
   if (!window.confirm((val ? 'Tildar ' : 'Destildar ') + codes.length + ' pieza' + (codes.length === 1 ? '' : 's') + ' como "lleva mecanizado"?')) return;
   await setMec(codes, val);
@@ -2473,7 +2498,7 @@ async function initDb() {
       CATALOGO = items;
       catalogoByCodigo = new Map(items.map(it => [it[0], it]));
       CATALOGO_MEC = new Set(qs.docs.filter(d => d.exists && d.data().lleva_mecanizado).map(d => d.data().codigo));
-      if (document.getElementById('mec-overlay').classList.contains('open')) { renderMecResults(); renderMecList(); }
+      if (document.getElementById('mec-overlay').classList.contains('open')) { renderMecResults(); }
     }, err => {
       console.error('catalogo_articulos onSnapshot error:', err && err.code, err && err.message);
     });
