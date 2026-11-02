@@ -1465,6 +1465,7 @@ function closeAdminDialog() { document.getElementById('admin-overlay').classList
 async function loadAdminUsers() {
   const box = document.getElementById('admin-dialog-content');
   box.innerHTML = '<h3>👥 Usuarios y permisos</h3><div class="text-dim">Cargando…</div>';
+  await loadAreaPresets();
   const { data, error } = await supabaseClient.from('profiles').select('*').order('email');
   if (error) { box.innerHTML = '<h3>👥 Usuarios y permisos</h3><div class="text-dim">No se pudo cargar: ' + escHtml(error.message) + '</div>'; return; }
   ADMIN_USERS = data || [];
@@ -1499,6 +1500,7 @@ function renderAdminUsers() {
     '<div class="text-dim" style="margin-bottom:12px; line-height:1.5;">' +
     '<b>Rol</b>: visualizador solo mira; colaborador además carga Preparado/Despachos/Stock; editor además fija prioridades y catálogo. ' +
     '<b>Secciones</b>: lo que cada persona ve en el tablero (Stock, Despachado y Hoja de Pesada además quedan bloqueados en la base de datos).</div>' +
+    renderAreaManagerHtml() +
     addUserFormHtml() +
     (cards || '<div class="text-dim">No hay usuarios.</div>');
 }
@@ -1604,6 +1606,75 @@ function applyAreaPreset(selectEl) {
   const preset = AREA_PRESETS[selectEl.value];
   if (!preset || !card) return;
   card.querySelectorAll('input[data-sec]').forEach(cb => { cb.checked = preset.includes(cb.getAttribute('data-sec')); });
+}
+
+// ---- Gestión de áreas (presets) — Version 41 ----
+// Cualquier admin puede crear/borrar áreas acá mismo (tabla area_presets en
+// Supabase) sin tocar código. Borrar un área solo la saca del desplegable
+// "Área" de las personas nuevas — NO toca las secciones ya guardadas de
+// nadie que la tuviera asignada (esas quedan como estaban).
+function renderAreaManagerHtml() {
+  const rows = Object.keys(AREA_PRESETS).sort().map(nombre => {
+    const secs = AREA_PRESETS[nombre] || [];
+    const label = secs.map(s => { const d = SECCIONES_DEF.find(x => x[0] === s); return d ? d[1] : s; }).join(', ') || '(sin secciones)';
+    return '<div class="adm-user" data-area="' + escHtml(nombre) + '" style="padding:8px 12px;">' +
+      '<div class="adm-user-head" style="align-items:center;">' +
+        '<span class="em" style="min-width:140px;">' + escHtml(nombre) + '</span>' +
+        '<span class="text-dim" style="font-size:0.74rem; flex:1;">' + escHtml(label) + '</span>' +
+        '<button class="hdr-btn" style="margin:0; color:#f87171;" onclick="deleteAreaPreset(this)">🗑 Eliminar</button>' +
+      '</div></div>';
+  }).join('');
+  const checks = SECCIONES_DEF.map(s => '<label><input type="checkbox" data-nsec="' + s[0] + '"> ' + s[1] + '</label>').join('');
+  return '<details id="adm-areas" class="adm-user" style="border-color:var(--accent);"><summary style="cursor:pointer; font-weight:700; color:#fff;">🗂️ Gestionar áreas (presets del desplegable "Área")</summary>' +
+    '<div style="margin-top:10px;">' +
+    '<div class="text-dim" style="margin-bottom:10px; font-size:0.8rem; line-height:1.5;">Estas son las opciones que ve cualquier admin en el desplegable "Área" de cada persona — elegir una ahí solo tilda de una las secciones típicas, como atajo. Crear o borrar un área acá no cambia los permisos de nadie que ya esté creado, solo lo que vas a poder elegir para las personas nuevas (o al cambiar de área a alguien).</div>' +
+    rows +
+    '<div style="margin-top:12px; padding-top:12px; border-top:1px solid #334155;">' +
+      '<input type="text" id="adm-new-area-nombre" placeholder="Nombre del área nueva (ej: Calidad)" style="width:230px;">' +
+      '<div class="adm-secs">' + checks + '</div>' +
+      '<button class="stock-btn-primary" style="padding:6px 14px; border-radius:6px; border:none; font-weight:700; cursor:pointer;" onclick="createAreaPreset(this)">Crear área</button>' +
+      '<span class="adm-msg" id="adm-area-msg"></span>' +
+    '</div>' +
+    '</div></details>';
+}
+
+async function createAreaPreset(btn) {
+  const holder = document.getElementById('adm-areas');
+  const msg = document.getElementById('adm-area-msg');
+  const nombreInput = document.getElementById('adm-new-area-nombre');
+  const nombre = nombreInput.value.trim();
+  const secciones = [...holder.querySelectorAll('input[data-nsec]')].filter(cb => cb.checked).map(cb => cb.getAttribute('data-nsec'));
+  if (!nombre) { msg.style.color = '#f87171'; msg.textContent = 'Falta el nombre del área.'; return; }
+  if (AREA_PRESETS[nombre]) { msg.style.color = '#f87171'; msg.textContent = 'Ya existe un área con ese nombre.'; return; }
+  if (!secciones.length) { msg.style.color = '#f87171'; msg.textContent = 'Tildá al menos una sección.'; return; }
+  btn.disabled = true; msg.style.color = '#94a3b8'; msg.textContent = 'Creando…';
+  const { error } = await supabaseClient.from('area_presets').insert({ nombre, secciones, updated_by: CURRENT_USER_ID });
+  btn.disabled = false;
+  if (error) {
+    msg.style.color = '#f87171';
+    msg.textContent = /schema cache|does not exist|relation .* does not exist/i.test(error.message) ? 'Falta correr el parche 008 en Supabase (ver instrucciones).' : 'No se pudo crear: ' + error.message;
+    return;
+  }
+  msg.style.color = '#34d399'; msg.textContent = 'Área creada ✓';
+  await loadAreaPresets();
+  renderAdminUsers();
+  const reopened = document.getElementById('adm-areas');
+  if (reopened) reopened.open = true;
+}
+
+async function deleteAreaPreset(btn) {
+  const card = btn.closest('.adm-user');
+  const nombre = card ? card.getAttribute('data-area') : null;
+  if (!nombre) return;
+  if (!window.confirm('¿Eliminar el área "' + nombre + '"? Deja de aparecer en el desplegable "Área" — no toca las secciones ya guardadas de quien la tuviera asignada.')) return;
+  btn.disabled = true;
+  const { error } = await supabaseClient.from('area_presets').delete().eq('nombre', nombre);
+  btn.disabled = false;
+  if (error) { alert('No se pudo eliminar: ' + error.message); return; }
+  await loadAreaPresets();
+  renderAdminUsers();
+  const reopened = document.getElementById('adm-areas');
+  if (reopened) reopened.open = true;
 }
 
 async function saveAdminUser(uid, btn) {
@@ -2091,7 +2162,6 @@ const SECCIONES_DEF = [
   ['indicadores', '📊 Indicadores'],
   ['rechazo', '❌ Registrar rechazos (Terminación)'],
   ['replanificar', '🔁 Replanificar rechazos (Planificación)'],
-  ['dividir', '✂️ Dividir pedidos en entregas'],
 ];
 const SECCION_ELEMS = {
   moldeo: ['card-moldeo', 'chip-moldeo'],
@@ -2116,14 +2186,28 @@ const FILTER_SECCION = {
 };
 const SECCIONES_DEFAULT = ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades'];
 const ALL_SECCIONES = SECCIONES_DEF.map(s => s[0]);
-const AREA_PRESETS = {
+// Desde Version 41: AREA_PRESETS ya no es fijo — se carga desde la tabla
+// Supabase `area_presets` (editable por cualquier admin desde la pantalla
+// de Usuarios y permisos, o directo en el Table Editor de Supabase, parche
+// 008). Este objeto queda como valor de arranque / fallback si todavía no
+// se corrió el parche o si falla la carga.
+const AREA_PRESETS_FALLBACK = {
   'Gerencia': ALL_SECCIONES,
-  'Comercial': ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades', 'despachado', 'dividir'],
-  'Planeamiento': ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades', 'stock', 'despachado', 'indicadores', 'replanificar', 'dividir'],
+  'Comercial': ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades', 'despachado'],
+  'Planeamiento': ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades', 'stock', 'despachado', 'indicadores', 'replanificar'],
   'Terminación': ['moldeo', 'listas', 'preparado', 'stock', 'despachado', 'rechazo'],
   'Despacho': ['listas', 'preparado', 'despachado', 'stock'],
   'Inspección Final': ['listas', 'preparado', 'despachado', 'armar_hoja'],
 };
+let AREA_PRESETS = { ...AREA_PRESETS_FALLBACK };
+
+async function loadAreaPresets() {
+  const { data, error } = await supabaseClient.from('area_presets').select('*').order('nombre');
+  if (error || !data || !data.length) return; // sin el parche 008 corrido, o sin filas: se queda con el fallback
+  const fresh = {};
+  data.forEach(r => { fresh[r.nombre] = Array.isArray(r.secciones) ? r.secciones : []; });
+  AREA_PRESETS = fresh;
+}
 
 function puedeVer(sec) {
   if (!CURRENT_PROFILE) return false;
@@ -2187,7 +2271,7 @@ async function initDb() {
     });
     const recargarSiCorresponde = () => {
       actualizarBadgeReplan();
-      applyFilters();
+      if (['indicadores', 'rechazo', 'replanificar', 'despachado'].includes(currentFilter)) applyFilters();
     };
     db.collection('rechazos').onSnapshot(qs => {
       rechazosList = qs.docs.filter(d => d.exists).map(d => d.data());
@@ -2357,11 +2441,9 @@ async function savePrep(key, pend, cellEl) {
 
 // ---- Dividir un pedido en entregas parciales ----
 let splitState = null;
-function puedeEscribir() {
+function puedeDividir() {
   return !!(CURRENT_PROFILE && (CURRENT_PROFILE.rol === 'editor' || CURRENT_PROFILE.rol === 'colaborador'));
 }
-// Dividir pedidos en entregas: solo quien tenga la sección "dividir" (Comercial y Planeamiento) y pueda escribir.
-function puedeDividir() { return puedeVer('dividir') && puedeEscribir(); }
 function buildDividirBtnHtml(r, enModal) {
   if (!puedeDividir() || r.estado_general === 'Cancelado') return '';
   const label = r._pk ? '✂️ Editar entregas' : '✂️ Dividir en entregas';
@@ -2523,18 +2605,6 @@ let rechazosList = [], motivosList = [], eventosProd = [];
 let rechazoVerReplan = false;
 let indState = { periodo: 'semana', desde: '', hasta: '', medida: 'kg' };
 
-// Comentario automático en el pedido: lo que se rechazó, que hay que rehacerlo y, cuando
-// Planificación lo replanifica, queda anotado en el mismo pedido (vinculado por item_id).
-function buildRechazoNotasHtml(r) {
-  const lista = rechazosList.filter(x => String(x.item_id) === String(r.id));
-  if (!lista.length) return '';
-  const pend = lista.filter(x => x.estado === 'pendiente').sort((a, b) => String(a.dia).localeCompare(String(b.dia)));
-  const rep = lista.filter(x => x.estado === 'replanificado')
-    .sort((a, b) => String(b.replanificado_dia || '').localeCompare(String(a.replanificado_dia || ''))).slice(0, 2);
-  const l1 = pend.map(x => `<div style="color:#f87171;">❌ Se rechazaron ${fmtN(x.cantidad)} u.${x.probeta ? ' (probeta ' + escHtml(x.probeta) + ')' : ''} el ${x.dia ? cortoIso(x.dia) : ''}${x.motivo ? ' por ' + escHtml(x.motivo) : ''} — se tienen que volver a hacer</div>`);
-  const l2 = rep.map(x => `<div style="color:#34d399;">🔁 Se replanificaron ${fmtN(x.cantidad)} u. rechazadas${x.replanificado_dia ? ' el ' + cortoIso(x.replanificado_dia) : ''}${x.replanificado_nota ? ' — ' + escHtml(x.replanificado_nota) : ''}</div>`);
-  return `<div class="text-dim" style="font-size:0.72rem; margin-top:3px;">${l1.join('')}${l2.join('')}</div>`;
-}
 function actualizarBadgeReplan() {
   const el = document.getElementById('replan-badge');
   if (!el) return;
@@ -2736,7 +2806,7 @@ function renderIndicadoresPanel() {
 
 // ---- Rechazos: carga desde Terminación ----
 let rz = null;
-function puedeCargarRechazo() { return puedeVer('rechazo') && puedeEscribir(); }
+function puedeCargarRechazo() { return puedeVer('rechazo') && puedeDividir(); }
 function renderRechazoPanel() {
   const nuevo = document.getElementById('rz-nuevo-btn');
   if (nuevo) nuevo.style.display = puedeCargarRechazo() ? '' : 'none';
@@ -2766,7 +2836,7 @@ function rechazoCardHtml(r, conBoton) {
     <div class="stock-card">
       <div class="info" style="flex:1; min-width:200px;">
         <div class="name">${escHtml(r.descripcion || '(sin descripción)')}</div>
-        <div class="sub">${escHtml(r.cliente || '')} · NV ${escHtml(r.comprobante || '')}${r.oc && r.oc !== '-' ? ' · OC ' + escHtml(r.oc) : ''}${r.codigo ? ' · Cód: ' + escHtml(r.codigo) : ''}${r.probeta ? ' · Probeta ' + escHtml(r.probeta) : ''}</div>
+        <div class="sub">${escHtml(r.cliente || '')} · NV ${escHtml(r.comprobante || '')}${r.codigo ? ' · Cód: ' + escHtml(r.codigo) : ''}${r.probeta ? ' · Probeta ' + escHtml(r.probeta) : ''}</div>
         <div class="sub" style="margin-top:4px;">Motivo: <span style="color:#fbbf24;">${escHtml(r.motivo || '—')}</span>${r.detalle ? ' · ' + escHtml(r.detalle) : ''}</div>
         ${r.replanificado_nota ? `<div class="sub" style="margin-top:2px;">📝 ${escHtml(r.replanificado_nota)}</div>` : ''}
       </div>
@@ -2876,7 +2946,7 @@ async function saveRechazo() {
 function renderReplanificarPanel() {
   const el = document.getElementById('replanificar-list');
   if (!el) return;
-  const puede = puedeVer('replanificar') && puedeEscribir();
+  const puede = puedeVer('replanificar') && puedeDividir();
   const lista = rechazosList.filter(r => rechazoVerReplan || r.estado === 'pendiente')
     .sort((a, b) => (a.estado === b.estado ? String(a.dia).localeCompare(String(b.dia)) : (a.estado === 'pendiente' ? -1 : 1)));
   if (!lista.length) {
@@ -4037,7 +4107,7 @@ function showToast(message, kind) {
           <td class="col-comprobante" data-label="Comprobante"><div class="font-bold">${escHtml(r.comprobante)}</div><div class="text-dim">OC: ${escHtml(r.oc)}</div></td>
           <td class="col-fecha" data-label="Fecha Entrega"><div class="font-bold">${formatDate(r.fecha_entrega)}</div></td>
           <td class="col-alerta" data-label="Alerta">${alertPill}</td>
-          <td class="col-descripcion" data-label="Descripción"><div>${repBadge}<span class="font-bold" style="color:#f1f5f9;">${escHtml(r.descripcion)}</span></div>${parteBadge}<div class="mobile-oc-mat">OC: ${escHtml(r.oc)} · Mat: ${escHtml(r.material)}</div><div class="text-dim">Mat: ${escHtml(r.material)} | ${r.kxu} Kg/u</div>${r.notas ? `<div class="text-dim" style="color:#fbbf24;">💬 ${escHtml(r.notas)}</div>` : ''}${buildRechazoNotasHtml(r)}${dividirBtn}</td>
+          <td class="col-descripcion" data-label="Descripción"><div>${repBadge}<span class="font-bold" style="color:#f1f5f9;">${escHtml(r.descripcion)}</span></div>${parteBadge}<div class="mobile-oc-mat">OC: ${escHtml(r.oc)} · Mat: ${escHtml(r.material)}</div><div class="text-dim">Mat: ${escHtml(r.material)} | ${r.kxu} Kg/u</div>${r.notas ? `<div class="text-dim" style="color:#fbbf24;">💬 ${escHtml(r.notas)}</div>` : ''}${dividirBtn}</td>
           <td class="col-pend num" data-label="Pend." style="font-weight:600;" title="Pendiente de SGA (${r.pend.toLocaleString()}) ya descontado lo que esté Preparado para Despacho">${remainingPend(r).toLocaleString()}</td>
           <td class="col-kilos num" data-label="Kilos" style="font-weight:600; color: var(--accent);">${r.kilos.toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1})} Kg</td>
           <td class="col-estado" data-label="Estado / Área">${statusPill}${buildAvanceManualHtml(r)}</td>
@@ -4610,7 +4680,6 @@ function showToast(message, kind) {
         <div class="modal-row"><div class="k">Flujo Áreas</div><div class="v">${buildPipeHtml(r)}</div></div>
         <div class="modal-row"><div class="k">Preparado p/ Desp.</div><div class="v">${buildPrepCellHtml(r)}</div></div>
         ${r.notas ? `<div class="modal-row"><div class="k">💬 Comentario (SGA)</div><div class="v" style="color:#fbbf24;">${escHtml(r.notas)}</div></div>` : ''}
-        ${buildRechazoNotasHtml(r) ? `<div class="modal-row"><div class="k">Rechazos</div><div class="v">${buildRechazoNotasHtml(r)}</div></div>` : ''}
       `;
       showModal(escHtml(r.cliente), `<div style="margin-bottom:10px; font-size:0.85rem; color:#f1f5f9;">${buildRepBadge(r)}${escHtml(r.descripcion)}</div>` + html);
     }
