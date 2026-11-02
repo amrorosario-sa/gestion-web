@@ -439,7 +439,7 @@
       <button class="hdr-btn install" id="install-btn" onclick="onInstallClick()" title="Instalar el tablero como app en tu pantalla de inicio">⬇️ Instalar app</button>
       <button class="hdr-btn" id="admin-btn" style="display:none;" onclick="openAdminDialog()">👥 Usuarios y permisos</button>
       <button class="hdr-btn" id="area-btn" style="display:none;" onclick="openAreaDialog()">🗂️ Áreas</button>
-      <button class="hdr-btn" id="cir-btn" style="display:none;" onclick="window.cirOpen && window.cirOpen()">🔩 Programación mecanizado</button>
+      <button class="hdr-btn" id="cir-btn" style="display:none;" onclick="window.cirMenu && window.cirMenu()">🔩 Programación mecanizado</button>
       <button class="hdr-btn" id="mec-btn" style="display:none;" onclick="openMecDialog()">🔩 Mecanizado</button>
       <span class="badge-live" id="asof-badge">ACTUALIZADO</span>
       <span class="user-pill" id="user-pill" style="margin-left:10px;"></span>
@@ -2305,7 +2305,9 @@ const SECCIONES_DEF = [
   ['indicadores', '📊 Indicadores'],
   ['rechazo', '❌ Registrar rechazos (Terminación)'],
   ['replanificar', '🔁 Replanificar rechazos (Planificación)'],
-  ['circuito', '🔩 Programación mecanizado'],
+  ['circuito', '🔩 Programación mecanizado (cronograma completo: jefe de planta / planificación)'],
+  ['prog_mecanizado', '⚙️ Mecanizado: mi programa del día'],
+  ['prog_terminacion', '🔧 Terminación: mis entregas del día'],
 ];
 const SECCION_ELEMS = {
   moldeo: ['card-moldeo', 'chip-moldeo'],
@@ -2321,7 +2323,6 @@ const SECCION_ELEMS = {
   indicadores: ['nav-indicadores'],
   rechazo: ['nav-rechazo'],
   replanificar: ['nav-replanificar'],
-  circuito: ['cir-btn'],
 };
 const FILTER_SECCION = {
   moldeo: 'moldeo', listas: 'listas', preparado: 'preparado', proceso: 'proceso', repuestos: 'repuestos',
@@ -2378,6 +2379,7 @@ function applyInspectorVisibility() {
   if (adminBtn) adminBtn.style.display = (CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? '' : 'none';
   const mecBtn = document.getElementById('mec-btn');
   if (mecBtn) mecBtn.style.display = (CURRENT_PROFILE && CURRENT_PROFILE.rol === 'editor') ? '' : 'none';
+  if (window.cirRefreshBtn) window.cirRefreshBtn();
   const areaBtn = document.getElementById('area-btn');
   if (areaBtn) areaBtn.style.display = (CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? '' : 'none';
   const nav = document.getElementById('main-nav');
@@ -5037,7 +5039,7 @@ function showToast(message, kind) {
     '2027-01-01': 'Año Nuevo',
     '2026-03-23': 'Puente turístico (no laborable)', '2026-07-10': 'Puente turístico (no laborable)', '2026-12-07': 'Puente turístico (no laborable)',
   };
-  const C = { tab: 'plan', loaded: false, error: null, stock: {}, planes: [], moldeos: [], k: [], exc: [], recetas: [], cfg: {}, movs: [] };
+  const C = { mode: 'full', tab: 'plan', loaded: false, error: null, stock: {}, planes: [], moldeos: [], k: [], exc: [], recetas: [], cfg: {}, movs: [] };
 
   // ---------- utilidades ----------
   const esc = s => (typeof escHtml === 'function' ? escHtml(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
@@ -5433,15 +5435,80 @@ function showToast(message, kind) {
       const fm = pendPlan(p) - p.hold_macho, fh = pendPlan(p) - p.hold_hembra;
       return `<tr><td><b>${p.fecha === TODAY() ? '<span class="soon">HOY</span> · ' : ''}${fmt(p.fecha)}</b>${p.fecha < TODAY() ? '<div class="late">de días anteriores</div>' : ''}</td><td>Plan #${p.id} · ${esc(r.nombre)}</td><td class="num">${pendPlan(p)}</td><td class="num">${p.hold_macho}</td><td class="num">${p.hold_hembra}</td>
         <td><div class="row-actions">${puedeOperar() ? btn('Armar' + (max ? ' hasta ' + max : ''), `cir_armar(${p.id})`, 'pri', !max) + btn('Rechazar…', `cir_rechazarPlan(${p.id})`, '', !(p.hold_macho || p.hold_hembra)) : ''}</div>${(fm > 0 || fh > 0) ? `<div class="code">falta que Terminación entregue ${Math.max(fm, 0)} machos / ${Math.max(fh, 0)} hembras (el ${fmt(dueOf(p))})</div>` : ''}</td></tr>`; }).join('');
+    return alertPanel('kanban', 'Hay que armar aros para reponerla.', false) + `<div class="panel"><h2>⚙️ Armado de aros — por fecha</h2><div class="sub">Lo planificado para cada día. Cuando Terminación entrega los machos y hembras, se arma. El aro sale a la estantería kanban o directo a un pedido (venta en caliente).</div>
+      ${planes ? `<table><tr><th>Armar el</th><th>Plan</th><th class="num">Faltan armar</th><th class="num">Machos acá</th><th class="num">Hembras acá</th><th></th></tr>${planes}</table>` : '<div class="empty">No hay planes pendientes.</div>'}</div>` + sueltasPanel();
+  }
+
+  // ---------- vistas simples del día (supervisor de Mecanizado / Terminación) ----------
+  const hoyTxt = () => parse(TODAY()).toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: 'long' });
+  const diaHeader = (titulo, tiles) => `<div class="dia-head"><div><h2 style="font-size:1.1rem;margin:0;">${titulo}</h2><div class="code">Hoy es ${hoyTxt()}${isBiz(TODAY()) ? '' : ' · día no hábil (' + esc(whyOff(TODAY())) + ')'}</div></div><div class="dia-tiles">${tiles.map(t => `<div class="tile ${t[2] || ''}"><div class="n">${t[0]}</div><div class="l">${t[1]}</div></div>`).join('')}</div></div>`;
+
+  function sueltasPanel() {
     const sueltas = Object.keys(C.stock.mecanizado || {}).filter(c => libre(c) > 0).map(c => { const rs = C.recetas.filter(r => r.macho === c || r.hembra === c);
       return `<tr><td>${nameCell(c)}${rs.length ? `<div class="code">${rs.map(r => (r.macho === c ? 'macho' : 'hembra') + ' de ' + esc(r.nombre)).join(' · ')}</div>` : ''}</td><td class="num"><b>${libre(c)}</b></td><td>${puedeOperar() ? btn('Sale procesada…', `cir_salidaLibre('${esc(c)}')`) + btn('Rechazar…', `cir_rechazar('${esc(c)}')`) : ''}</td></tr>`; }).join('');
     const hayArmable = C.recetas.some(r => Math.min(libre(r.macho), libre(r.hembra)) > 0);
-    return alertPanel('kanban', 'Hay que armar aros para reponerla.', false) + `<div class="panel"><h2>⚙️ Armado de aros — por fecha</h2><div class="sub">Lo planificado para cada día. Cuando Terminación entrega los machos y hembras, se arma. El aro sale a la estantería kanban o directo a un pedido (venta en caliente).</div>
-      ${planes ? `<table><tr><th>Armar el</th><th>Plan</th><th class="num">Faltan armar</th><th class="num">Machos acá</th><th class="num">Hembras acá</th><th></th></tr>${planes}</table>` : '<div class="empty">No hay planes pendientes.</div>'}</div>
-      <div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>🧰 Fuera de plan — piezas sueltas en Mecanizado</h2>${puedeOperar() ? btn('Armar aros fuera de plan…', 'cir_armarLibre()', hayArmable ? 'pri' : '') : ''}</div>
-        <div class="sub">Si Mecanizado hace algo distinto de lo planificado, se carga acá. Son las piezas que Terminación entregó sin plan (entrega suelta) o lo que sobró de un plan cerrado. Se pueden armar aros con machos y hembras sueltos, o sacar piezas ya procesadas a la estantería kanban.</div>
-        ${sueltas ? `<table><tr><th>Pieza</th><th class="num">Sueltas</th><th></th></tr>${sueltas}</table>` : '<div class="empty">No hay piezas sueltas en Mecanizado.</div>'}</div>`;
+    return `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>🧰 Fuera de plan — piezas sueltas en Mecanizado</h2>${puedeOperar() ? btn('Armar aros fuera de plan…', 'cir_armarLibre()', hayArmable ? 'pri' : '') : ''}</div>
+      <div class="sub">Si hacés algo distinto de lo planificado, cargalo acá. Son las piezas que Terminación entregó sin plan o lo que sobró de un plan cerrado.</div>
+      ${sueltas ? `<table><tr><th>Pieza</th><th class="num">Sueltas</th><th></th></tr>${sueltas}</table>` : '<div class="empty">No hay piezas sueltas en Mecanizado.</div>'}</div>`;
   }
+
+  function vDiaMec() {
+    const hoy = TODAY();
+    const act = planesOrd().filter(p => pendPlan(p) > 0 && rec(p.receta));
+    const hoyP = act.filter(p => p.fecha <= hoy), prox = act.filter(p => p.fecha > hoy);
+    const delDia = hoyP.filter(p => p.fecha === hoy), atras = hoyP.filter(p => p.fecha < hoy);
+    const sum = l => l.reduce((a, p) => a + pendPlan(p), 0);
+    const listos = hoyP.reduce((a, p) => a + Math.min(p.hold_macho, p.hold_hembra, pendPlan(p)), 0);
+    const card = p => { const r = rec(p.receta), max = Math.min(p.hold_macho, p.hold_hembra, pendPlan(p)), fm = Math.max(0, pendPlan(p) - p.hold_macho), fh = Math.max(0, pendPlan(p) - p.hold_hembra), late = p.fecha < hoy;
+      const estado = max >= pendPlan(p) ? '<span class="ok">✔ Tenés todo para armar</span>' : max > 0 ? `<span class="soon">Podés armar ${max} ahora · falta que Terminación entregue ${fm} machos / ${fh} hembras</span>` : `<span class="late">⏳ Esperando a Terminación: faltan ${fm} machos / ${fh} hembras</span>`;
+      return `<div class="card ${late ? 'c-late' : 'c-hoy'}"><div class="card-top"><div><div class="big">${pendPlan(p)} × ${esc(r.nombre)}</div><div class="code">Plan #${p.id}${p.cantidad !== pendPlan(p) ? ` · ya armaste ${p.armados} de ${p.cantidad}` : ''}</div></div><div>${late ? `<span class="chip rojo">ATRASADO · era del ${fmt(p.fecha)}</span>` : '<span class="chip hoy">HOY</span>'}</div></div>
+        <div class="card-mid">⚙️ Machos acá: <b>${p.hold_macho}</b> &nbsp;·&nbsp; Hembras acá: <b>${p.hold_hembra}</b></div><div class="card-mid">${estado}</div>
+        ${puedeOperar() ? `<div class="row-actions" style="margin-top:8px;">${btn('Armar' + (max ? ' ' + max : ''), `cir_armar(${p.id})`, 'pri', !max)}${btn('Rechazar piezas…', `cir_rechazarPlan(${p.id})`, '', !(p.hold_macho || p.hold_hembra))}</div>` : ''}</div>`; };
+    const proxRows = prox.slice(0, 12).map(p => `<tr><td><b>${fmt(p.fecha)}</b></td><td>${esc(rec(p.receta).nombre)}</td><td class="num"><b>${pendPlan(p)}</b></td></tr>`).join('');
+    return diaHeader('⚙️ Mecanizado — mi programa del día', [[sum(delDia), 'aros para HOY', delDia.length ? 'hoy' : ''], [sum(atras), 'atrasados', atras.length ? 'rojo' : ''], [listos, 'listos para armar ahora']]) +
+      alertPanel('kanban', 'Hay que armar aros para reponerla.', false) +
+      (hoyP.length ? `<div class="sec-title">Lo que tenés que armar</div>${hoyP.map(card).join('')}` : '<div class="panel"><div class="empty" style="font-size:.9rem;">✔ No tenés aros planificados para hoy ni atrasados.</div></div>') +
+      `<div class="panel"><h2>📅 Próximos días</h2><div class="sub">Lo que viene en tu programa.</div>${proxRows ? `<table><tr><th>Armar el</th><th>Aro</th><th class="num">Cantidad</th></tr>${proxRows}</table>` : '<div class="empty">No hay nada más planificado.</div>'}</div>` + sueltasPanel();
+  }
+
+  function vDiaTerm() {
+    const hoy = TODAY();
+    const act = planesOrd().filter(p => pendPlan(p) > 0 && rec(p.receta));
+    const items = p => { const r = rec(p.receta); return [r.macho, r.hembra].map(c => ({ c, falta: Math.max(0, pendPlan(p) - holdOf(p, c)), disp: stock(c, 'sector_z') + stock(c, 'terminacion') })); };
+    const deb = act.filter(p => dueOf(p) <= hoy && items(p).some(i => i.falta > 0)), prox = act.filter(p => dueOf(p) > hoy);
+    const delDia = deb.filter(p => dueOf(p) === hoy), atras = deb.filter(p => dueOf(p) < hoy);
+    const pzs = l => l.reduce((a, p) => a + items(p).reduce((b, i) => b + i.falta, 0), 0);
+    const card = p => { const r = rec(p.receta), late = dueOf(p) < hoy;
+      const rows = items(p).map(i => `<tr><td>${nameCell(i.c)}</td><td class="num"><b style="font-size:1.1rem;">${i.falta}</b><div class="code">a entregar</div></td><td class="num">${i.disp}<div class="code">disp. Z + Term.</div></td>
+        <td>${i.falta ? (puedeOperar() ? btn('Entregar ' + Math.min(i.falta, i.disp), `cir_entregar(${p.id},'${esc(i.c)}')`, 'pri', !i.disp) : '') + (i.disp < i.falta ? `<div class="late" style="font-size:.74rem;">faltan ${i.falta - i.disp} por terminar</div>` : '') : '<span class="ok">✔ entregado</span>'}</td></tr>`).join('');
+      return `<div class="card ${late ? 'c-late' : 'c-hoy'}"><div class="card-top"><div><div class="big">Para armar ${pendPlan(p)} × ${esc(r.nombre)}</div><div class="code">Mecanizado lo arma el ${fmt(p.fecha)} · plan #${p.id}</div></div><div>${late ? `<span class="chip rojo">ATRASADA · era del ${fmt(dueOf(p))}</span>` : '<span class="chip hoy">HOY</span>'}</div></div><table>${rows}</table></div>`; };
+    const proxRows = prox.slice(0, 12).map(p => { const r = rec(p.receta); return `<tr><td><b>${fmt(dueOf(p))}</b></td><td>${esc(r.nombre)}</td><td class="num"><b>${pendPlan(p)}</b> machos + <b>${pendPlan(p)}</b> hembras</td></tr>`; }).join('');
+    const term = Object.keys(C.stock.terminacion || {}).filter(c => stock(c, 'terminacion') > 0).map(c => `<tr><td>${nameCell(c)}</td><td class="num">${stock(c, 'terminacion')}</td><td>${puedeOperar() ? btn('Terminé piezas…', `cir_terminar('${esc(c)}')`) : ''}</td></tr>`).join('');
+    const mold = C.moldeos.map(o => `<tr><td>${nameCell(o.codigo)}${o.nota ? `<div class="code">${esc(o.nota)}</div>` : ''}</td><td class="num">${o.cantidad}</td><td>${puedeOperar() ? btn('Pasó a Terminación…', `cir_pasoTerm(${o.id})`) : ''}</td></tr>`).join('');
+    return diaHeader('🔧 Terminación — mis entregas del día', [[pzs(delDia), 'piezas a entregar HOY', delDia.length ? 'hoy' : ''], [pzs(atras), 'atrasadas', atras.length ? 'rojo' : '']]) +
+      alertPanel('sector_z', 'Hay que reponer esta estantería.', false) +
+      (deb.length ? `<div class="sec-title">Lo que tenés que entregar a Mecanizado</div>${deb.map(card).join('')}` : '<div class="panel"><div class="empty" style="font-size:.9rem;">✔ No tenés entregas pendientes para hoy ni atrasadas.</div></div>') +
+      `<div class="panel"><h2>📅 Próximas entregas</h2><div class="sub">Lo que viene en los próximos días hábiles.</div>${proxRows ? `<table><tr><th>Entregar el</th><th>Aro</th><th class="num">Piezas</th></tr>${proxRows}</table>` : '<div class="empty">No hay nada más planificado.</div>'}</div>
+      <div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>🔧 En Terminación</h2>${puedeOperar() ? btn('+ Entrega suelta a Mecanizado', 'cir_entregaSuelta()') : ''}</div><div class="sub">Piezas que están para procesar. Al terminar van a Sector Z o directo a Mecanizado. Con "Entrega suelta" le pasás a Mecanizado una pieza que no está en ningún plan.</div>
+        ${term ? `<table><tr><th>Pieza</th><th class="num">Cantidad</th><th></th></tr>${term}</table>` : '<div class="empty">No hay piezas en Terminación.</div>'}</div>
+      ${mold ? `<div class="panel"><h2>🏭 En moldeo / fusión</h2><div class="sub">Cuando lleguen a Terminación, marcalas.</div><table><tr><th>Pieza</th><th class="num">Cantidad</th><th></th></tr>${mold}</table></div>` : ''}`;
+  }
+
+  // ---------- menú y vistas por rol ----------
+  const VIEWS = [
+    { key: 'full', sec: 'circuito', label: '📅 Programación mecanizado', desc: 'Cronograma, planificación y kanban completos (jefe de planta / planificación)', title: '🔩 Programación mecanizado: Terminación → Sector Z → Mecanizado → Kanban' },
+    { key: 'mec', sec: 'prog_mecanizado', label: '⚙️ Mecanizado — mi programa del día', desc: 'Solo lo que Mecanizado tiene que armar, resaltado por día', title: '⚙️ Mecanizado' },
+    { key: 'term', sec: 'prog_terminacion', label: '🔧 Terminación — mis entregas del día', desc: 'Solo lo que Terminación tiene que entregar hoy', title: '🔧 Terminación' },
+  ];
+  const puede = sec => (typeof puedeVer === 'function') ? puedeVer(sec) : false;
+  const misVistas = () => VIEWS.filter(v => puede(v.sec));
+  window.cirRefreshBtn = () => { const b = document.getElementById('cir-btn'); if (!b) return; const v = misVistas();
+    b.style.display = v.length ? '' : 'none'; b.textContent = v.length === 1 ? v[0].label : '🔩 Programación mecanizado ▾'; };
+  window.cirMenu = () => { const v = misVistas(); if (!v.length) return; if (v.length === 1) { window.cirOpen(v[0].key); return; }
+    ensureDom(); const m = document.getElementById('cir-modal');
+    m.innerHTML = '<h3>¿Qué querés ver?</h3><div class="d">Elegí tu vista.</div>' + v.map(x => `<button class="menu-it" onclick="cirCloseAsk(); cirOpen('${x.key}')"><b>${x.label}</b><span>${x.desc}</span></button>`).join('') + '<div class="btns"><button onclick="cirCloseAsk()">Cancelar</button></div>';
+    document.getElementById('cir-ov').classList.add('on'); };
+  setTimeout(window.cirRefreshBtn, 0); [1500, 4000, 9000, 20000].forEach(t => setTimeout(window.cirRefreshBtn, t));
 
   // ---------- armado de la pantalla ----------
   const CSS = `
@@ -5464,6 +5531,17 @@ function showToast(message, kind) {
   #cir-root .late { color:var(--bad); font-weight:700; } #cir-root .soon { color:var(--warn); font-weight:700; } #cir-root .ok { color:var(--ok); } #cir-root .rep { color:var(--bad); font-weight:700; }
   #cir-root .alert { background:rgba(248,113,113,.1); border:1px solid #7f1d1d; border-radius:8px; padding:8px 12px; margin-bottom:8px; font-size:.8rem; display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
   #cir-root .log { max-height:220px; overflow:auto; font-size:.76rem; color:var(--dim); } #cir-root .log div { padding:2px 0; border-bottom:1px solid #263449; } #cir-root .err { color:var(--bad); padding:20px 0; }
+
+  #cir-root .dia-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+  #cir-root .dia-tiles { display:flex; gap:8px; flex-wrap:wrap; } #cir-root .tile { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 14px; text-align:center; min-width:110px; }
+  #cir-root .tile .n { font-size:1.7rem; font-weight:800; color:#fff; } #cir-root .tile .l { font-size:.72rem; color:var(--dim); }
+  #cir-root .tile.hoy { border-color:var(--warn); background:rgba(251,191,36,.1); } #cir-root .tile.hoy .n { color:var(--warn); } #cir-root .tile.rojo { border-color:var(--bad); background:rgba(248,113,113,.1); } #cir-root .tile.rojo .n { color:var(--bad); }
+  #cir-root .sec-title { font-size:.8rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--dim); margin:14px 0 6px; }
+  #cir-root .card { background:var(--card); border:2px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:10px; }
+  #cir-root .card.c-hoy { border-color:var(--warn); background:linear-gradient(180deg, rgba(251,191,36,.12), var(--card)); } #cir-root .card.c-late { border-color:var(--bad); background:linear-gradient(180deg, rgba(248,113,113,.14), var(--card)); }
+  #cir-root .card-top { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap; } #cir-root .card .big { font-size:1.15rem; font-weight:800; color:#fff; } #cir-root .card-mid { margin-top:6px; font-size:.88rem; }
+  #cir-root .chip { display:inline-block; font-size:.72rem; font-weight:800; padding:3px 9px; border-radius:99px; } #cir-root .chip.hoy { background:var(--warn); color:#1c1917; } #cir-root .chip.rojo { background:var(--bad); color:#1c1917; }
+  #cir-modal .menu-it { display:block; width:100%; text-align:left; background:#0f172a; border:1px solid #334155; border-radius:10px; padding:10px 12px; margin-bottom:8px; color:#e2e8f0; cursor:pointer; } #cir-modal .menu-it:hover { border-color:#38bdf8; } #cir-modal .menu-it span { display:block; font-size:.74rem; color:#94a3b8; margin-top:2px; }
   #cir-ov { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; padding:16px; z-index:70; } #cir-ov.on { display:flex; }
   #cir-modal { background:#1e293b; color:#e2e8f0; border:1px solid #334155; border-radius:12px; padding:16px; width:100%; max-width:400px; max-height:90vh; overflow:auto; } #cir-modal h3 { margin:0 0 4px; font-size:1rem; } #cir-modal .d { color:#94a3b8; font-size:.78rem; margin-bottom:10px; }
   #cir-modal label { display:block; font-size:.74rem; color:#94a3b8; margin:8px 0 3px; } #cir-modal input, #cir-modal select { width:100%; background:#0f172a; color:#fff; border:1px solid #334155; border-radius:7px; padding:7px 9px; font-size:.9rem; }
@@ -5474,12 +5552,20 @@ function showToast(message, kind) {
     if (document.getElementById('cir-root')) return;
     const st = document.createElement('style'); st.textContent = CSS; document.head.appendChild(st);
     const root = document.createElement('div'); root.id = 'cir-root';
-    root.innerHTML = '<div class="wrap"><div class="top"><h1>🔩 Programación mecanizado: Terminación → Sector Z → Mecanizado → Kanban</h1><button onclick="cirClose()">✕ Cerrar</button></div><div class="flow" id="cir-flow"></div><div class="tabs" id="cir-tabs"></div><div id="cir-screen"></div></div>';
+    root.innerHTML = '<div class="wrap"><div class="top"><h1 id="cir-title">🔩 Programación mecanizado</h1><button onclick="cirClose()">✕ Cerrar</button></div><div class="flow" id="cir-flow"></div><div class="tabs" id="cir-tabs"></div><div id="cir-screen"></div></div>';
     document.body.appendChild(root);
     const ov = document.createElement('div'); ov.id = 'cir-ov'; ov.innerHTML = '<div id="cir-modal"></div>'; ov.addEventListener('click', e => { if (e.target.id === 'cir-ov') cirCloseAsk(); }); document.body.appendChild(ov);
   }
   function render() {
     const screen = document.getElementById('cir-screen'); if (!screen) return;
+    const vw = VIEWS.find(v => v.key === C.mode) || VIEWS[0]; document.getElementById('cir-title').textContent = vw.title;
+    if (C.mode !== 'full') {
+      document.getElementById('cir-flow').innerHTML = ''; document.getElementById('cir-tabs').innerHTML = '';
+      if (C.error) { screen.innerHTML = `<div class="err">${esc(C.error)}</div>`; return; }
+      if (!C.loaded) { screen.innerHTML = '<div class="empty">Cargando…</div>'; return; }
+      try { screen.innerHTML = (C.mode === 'mec' ? vDiaMec : vDiaTerm)(); } catch (e) { console.error('Programación mecanizado:', e); screen.innerHTML = '<div class="err">Error al mostrar esta pantalla: ' + esc(e.message) + '</div>'; }
+      return;
+    }
     if (C.error) { document.getElementById('cir-flow').innerHTML = ''; document.getElementById('cir-tabs').innerHTML = ''; screen.innerHTML = `<div class="err">${esc(C.error)}</div>`; return; }
     if (!C.loaded) { screen.innerHTML = '<div class="empty">Cargando…</div>'; return; }
     const tot = u => Object.values(C.stock[u] || {}).reduce((a, n) => a + n, 0);
@@ -5497,7 +5583,7 @@ function showToast(message, kind) {
   }
   async function reload() { await load(); render(); }
   window.cirTab = t => { C.tab = t; render(); };
-  window.cirOpen = async () => { ensureDom(); document.getElementById('cir-root').classList.add('on'); render(); await reload(); };
+  window.cirOpen = async mode => { C.mode = (typeof mode === 'string' && VIEWS.some(v => v.key === mode)) ? mode : 'full'; ensureDom(); document.getElementById('cir-root').classList.add('on'); render(); await reload(); };
   window.cirClose = () => { const r = document.getElementById('cir-root'); if (r) r.classList.remove('on'); };
   window.__cir = { C, load, render, nivel, sv, lote, isBiz, prevBiz, FERIADOS };
 })();
