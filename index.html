@@ -438,6 +438,7 @@
     <div style="display:flex; align-items:center; flex-wrap:wrap; gap:6px 0;">
       <button class="hdr-btn install" id="install-btn" onclick="onInstallClick()" title="Instalar el tablero como app en tu pantalla de inicio">⬇️ Instalar app</button>
       <button class="hdr-btn" id="admin-btn" style="display:none;" onclick="openAdminDialog()">👥 Usuarios y permisos</button>
+      <button class="hdr-btn" id="area-btn" style="display:none;" onclick="openAreaDialog()">🗂️ Áreas</button>
       <span class="badge-live" id="asof-badge">ACTUALIZADO</span>
       <span class="user-pill" id="user-pill" style="margin-left:10px;"></span>
       <button class="logout-link" onclick="changeOwnPassword()">Cambiar contraseña</button>
@@ -670,6 +671,9 @@
   </div>
   <div class="stock-overlay" id="admin-overlay" onclick="if(event.target.id==='admin-overlay')closeAdminDialog()">
     <div class="stock-dialog admin-dialog" id="admin-dialog-content"></div>
+  </div>
+  <div class="stock-overlay" id="area-overlay" onclick="if(event.target.id==='area-overlay')closeAreaDialog()">
+    <div class="stock-dialog admin-dialog" id="area-dialog-content"></div>
   </div>
 
   <div class="stock-section" id="stock-section" style="display:none;">
@@ -1500,7 +1504,6 @@ function renderAdminUsers() {
     '<div class="text-dim" style="margin-bottom:12px; line-height:1.5;">' +
     '<b>Rol</b>: visualizador solo mira; colaborador además carga Preparado/Despachos/Stock; editor además fija prioridades y catálogo. ' +
     '<b>Secciones</b>: lo que cada persona ve en el tablero (Stock, Despachado y Hoja de Pesada además quedan bloqueados en la base de datos).</div>' +
-    renderAreaManagerHtml() +
     addUserFormHtml() +
     (cards || '<div class="text-dim">No hay usuarios.</div>');
 }
@@ -1608,34 +1611,42 @@ function applyAreaPreset(selectEl) {
   card.querySelectorAll('input[data-sec]').forEach(cb => { cb.checked = preset.includes(cb.getAttribute('data-sec')); });
 }
 
-// ---- Gestión de áreas (presets) — Version 41 ----
-// Cualquier admin puede crear/borrar áreas acá mismo (tabla area_presets en
-// Supabase) sin tocar código. Borrar un área solo la saca del desplegable
-// "Área" de las personas nuevas — NO toca las secciones ya guardadas de
-// nadie que la tuviera asignada (esas quedan como estaban).
-function renderAreaManagerHtml() {
+// ---- Gestión de áreas (presets) — Version 42 ----
+// Diálogo propio (botón "🗂️ Áreas" en el encabezado, solo admins). Crear/borrar
+// áreas acá (tabla area_presets en Supabase) sin tocar código. Borrar un área
+// solo la saca del desplegable "Área" — NO toca las secciones ya guardadas de
+// nadie que la tuviera asignada.
+function openAreaDialog() {
+  if (!CURRENT_PROFILE || !CURRENT_PROFILE.es_admin) return;
+  document.getElementById('area-overlay').classList.add('open');
+  loadAreaPresets().then(renderAreaDialog);
+  renderAreaDialog();
+}
+function closeAreaDialog() { document.getElementById('area-overlay').classList.remove('open'); }
+
+function renderAreaDialog() {
+  const box = document.getElementById('area-dialog-content');
+  if (!box) return;
   const rows = Object.keys(AREA_PRESETS).sort().map(nombre => {
     const secs = AREA_PRESETS[nombre] || [];
     const label = secs.map(s => { const d = SECCIONES_DEF.find(x => x[0] === s); return d ? d[1] : s; }).join(', ') || '(sin secciones)';
-    return '<div class="adm-user" data-area="' + escHtml(nombre) + '" style="padding:8px 12px;">' +
-      '<div class="adm-user-head" style="align-items:center;">' +
-        '<span class="em" style="min-width:140px;">' + escHtml(nombre) + '</span>' +
-        '<span class="text-dim" style="font-size:0.74rem; flex:1;">' + escHtml(label) + '</span>' +
-        '<button class="hdr-btn" style="margin:0; color:#f87171;" onclick="deleteAreaPreset(this)">🗑 Eliminar</button>' +
-      '</div></div>';
+    return '<div data-area="' + escHtml(nombre) + '" style="display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid #1e293b;">' +
+      '<span class="em" style="min-width:120px; font-weight:700; color:#fff;">' + escHtml(nombre) + '</span>' +
+      '<span class="text-dim" style="font-size:0.72rem; flex:1; line-height:1.3;">' + escHtml(label) + '</span>' +
+      '<button class="hdr-btn" style="margin:0; padding:2px 8px; color:#f87171;" title="Eliminar área" onclick="deleteAreaPreset(this)">🗑</button>' +
+      '</div>';
   }).join('');
   const checks = SECCIONES_DEF.map(s => '<label><input type="checkbox" data-nsec="' + s[0] + '"> ' + s[1] + '</label>').join('');
-  return '<details id="adm-areas" class="adm-user" style="border-color:var(--accent);"><summary style="cursor:pointer; font-weight:700; color:#fff;">🗂️ Gestionar áreas (presets del desplegable "Área")</summary>' +
-    '<div style="margin-top:10px;">' +
-    '<div class="text-dim" style="margin-bottom:10px; font-size:0.8rem; line-height:1.5;">Estas son las opciones que ve cualquier admin en el desplegable "Área" de cada persona — elegir una ahí solo tilda de una las secciones típicas, como atajo. Crear o borrar un área acá no cambia los permisos de nadie que ya esté creado, solo lo que vas a poder elegir para las personas nuevas (o al cambiar de área a alguien).</div>' +
+  box.innerHTML = '<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;"><h3>🗂️ Áreas</h3><button style="background:#334155; border:none; color:#fff; width:28px; height:28px; border-radius:50%; cursor:pointer;" onclick="closeAreaDialog()">✕</button></div>' +
+    '<div class="text-dim" style="margin-bottom:10px; font-size:0.78rem; line-height:1.5;">Opciones del desplegable "Área" en Usuarios y permisos: elegir una tilda de una las secciones típicas. Crear o borrar un área no cambia los permisos de nadie ya creado.</div>' +
     rows +
-    '<div style="margin-top:12px; padding-top:12px; border-top:1px solid #334155;">' +
-      '<input type="text" id="adm-new-area-nombre" placeholder="Nombre del área nueva (ej: Calidad)" style="width:230px;">' +
+    '<details id="adm-areas" style="margin-top:12px;"><summary style="cursor:pointer; font-weight:700; color:#fff;">➕ Agregar un área nueva</summary>' +
+      '<div style="margin-top:10px;">' +
+      '<input type="text" id="adm-new-area-nombre" placeholder="Nombre del área (ej: Calidad)" style="width:230px;">' +
       '<div class="adm-secs">' + checks + '</div>' +
       '<button class="stock-btn-primary" style="padding:6px 14px; border-radius:6px; border:none; font-weight:700; cursor:pointer;" onclick="createAreaPreset(this)">Crear área</button>' +
       '<span class="adm-msg" id="adm-area-msg"></span>' +
-    '</div>' +
-    '</div></details>';
+      '</div></details>';
 }
 
 async function createAreaPreset(btn) {
@@ -1655,16 +1666,14 @@ async function createAreaPreset(btn) {
     msg.textContent = /schema cache|does not exist|relation .* does not exist/i.test(error.message) ? 'Falta correr el parche 008 en Supabase (ver instrucciones).' : 'No se pudo crear: ' + error.message;
     return;
   }
-  msg.style.color = '#34d399'; msg.textContent = 'Área creada ✓';
   await loadAreaPresets();
-  renderAdminUsers();
-  const reopened = document.getElementById('adm-areas');
-  if (reopened) reopened.open = true;
+  renderAreaDialog();
+  showToast('Área "' + nombre + '" creada', 'success');
 }
 
 async function deleteAreaPreset(btn) {
-  const card = btn.closest('.adm-user');
-  const nombre = card ? card.getAttribute('data-area') : null;
+  const row = btn.closest('[data-area]');
+  const nombre = row ? row.getAttribute('data-area') : null;
   if (!nombre) return;
   if (!window.confirm('¿Eliminar el área "' + nombre + '"? Deja de aparecer en el desplegable "Área" — no toca las secciones ya guardadas de quien la tuviera asignada.')) return;
   btn.disabled = true;
@@ -1672,9 +1681,7 @@ async function deleteAreaPreset(btn) {
   btn.disabled = false;
   if (error) { alert('No se pudo eliminar: ' + error.message); return; }
   await loadAreaPresets();
-  renderAdminUsers();
-  const reopened = document.getElementById('adm-areas');
-  if (reopened) reopened.open = true;
+  renderAreaDialog();
 }
 
 async function saveAdminUser(uid, btn) {
@@ -2231,6 +2238,8 @@ function applyInspectorVisibility() {
   if (f && !puedeVer(f)) setFilterFromCard('all');
   const adminBtn = document.getElementById('admin-btn');
   if (adminBtn) adminBtn.style.display = (CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? '' : 'none';
+  const areaBtn = document.getElementById('area-btn');
+  if (areaBtn) areaBtn.style.display = (CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? '' : 'none';
   const nav = document.getElementById('main-nav');
   if (nav) nav.style.display = ['indicadores', 'rechazo', 'replanificar'].some(k => puedeVer(k)) ? '' : 'none';
 }
