@@ -440,6 +440,7 @@
       <button class="hdr-btn" id="admin-btn" style="display:none;" onclick="openAdminDialog()">👥 Usuarios y permisos</button>
       <button class="hdr-btn" id="area-btn" style="display:none;" onclick="openAreaDialog()">🗂️ Áreas</button>
       <button class="hdr-btn" id="cir-btn" style="display:none;" onclick="window.cirMenu && window.cirMenu()">🔩 Programación mecanizado</button>
+      <button class="hdr-btn" id="ven-btn" style="display:none;" onclick="window.venOpen && window.venOpen()">💰 Ventas</button>
       <button class="hdr-btn" id="mec-btn" style="display:none;" onclick="openMecDialog()">🔩 Mecanizado</button>
       <span class="badge-live" id="asof-badge">ACTUALIZADO</span>
       <span class="user-pill" id="user-pill" style="margin-left:10px;"></span>
@@ -1132,7 +1133,8 @@
     var rowH = 34;
     var headerBlockH = 190;
     var footerReserve = 36;
-    var availH = doc.pageH - margin * 2 - headerBlockH - footerReserve;
+    var totH = ((data.totales || []).length) * 15 + 6;
+    var availH = doc.pageH - margin * 2 - headerBlockH - footerReserve - totH;
     var rowsPerPage = Math.max(1, Math.floor((availH - headerRowH) / (rowH + 11)));
 
     var items = data.items || [];
@@ -1152,7 +1154,12 @@
     chunks.forEach(function (chunk, pageIdx) {
       if (pageIdx > 0) doc.newPage();
       var y = drawPageHeader(doc, margin, data, logo);
-      drawTable(doc, x0, y, chunk, headerRowH, rowH);
+      var yEnd = drawTable(doc, x0, y, chunk, headerRowH, rowH);
+      if (pageIdx === chunks.length - 1) {
+        (data.totales || []).forEach(function (t, i) {
+          doc.text(x0 + tableW - 4, yEnd - 16 - i * 15, t.texto, { size: 9.5, bold: true, align: 'right' });
+        });
+      }
     });
 
     return doc.toBlob();
@@ -2076,6 +2083,7 @@ let sortAsc = true;
 let selectedMatRep = 'ALL';
 let selectedHojaIds = new Set();
 let hojaFormState = null;
+let hojaPrecios = new Map(), hojaPreciosOk = false;   // precios de SGA (parche 014): solo los lee quien tiene 'armar_hoja' o 'ventas'
 let hojaConfirmPending = false;
 let hojaValidationError = null;
 let downloadsRef = null;
@@ -2317,6 +2325,7 @@ const SECCIONES_DEF = [
   ['circuito', '🔩 Programación mecanizado (cronograma completo: jefe de planta / planificación)'],
   ['prog_mecanizado', '⚙️ Mecanizado: mi programa del día'],
   ['prog_terminacion', '🔧 Terminación: mis entregas del día'],
+  ['ventas', '💰 Ventas (montos: indicador de ventas)'],
 ];
 const SECCION_ELEMS = {
   moldeo: ['card-moldeo', 'chip-moldeo'],
@@ -2389,6 +2398,7 @@ function applyInspectorVisibility() {
   const mecBtn = document.getElementById('mec-btn');
   if (mecBtn) mecBtn.style.display = (CURRENT_PROFILE && CURRENT_PROFILE.rol === 'editor') ? '' : 'none';
   if (window.cirRefreshBtn) window.cirRefreshBtn();
+  if (window.venRefreshBtn) window.venRefreshBtn();
   const areaBtn = document.getElementById('area-btn');
   if (areaBtn) areaBtn.style.display = (CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? '' : 'none';
   const nav = document.getElementById('main-nav');
@@ -4329,11 +4339,19 @@ function showToast(message, kind) {
       };
     }
 
-    function openHojaModal() {
+    async function openHojaModal() {
       if (selectedHojaIds.size === 0) return;
       const items = [...selectedHojaIds].map(id => baseRow(id)).filter(Boolean);
       if (!items.length) return;
       const cliente = items[0].cliente;
+      // precios (Importe Final + Moneda + unidad de venta): si la tabla no existe todavía, la hoja sale como antes
+      hojaPrecios = new Map(); hojaPreciosOk = false;
+      if (typeof supabaseClient !== 'undefined' && puedeVer('armar_hoja')) {
+        try {
+          const { data, error } = await supabaseClient.from('items_precios').select('item_id,importe_final,moneda,vta').in('item_id', items.map(r => r.id));
+          if (!error && data) { data.forEach(pr => hojaPrecios.set(pr.item_id, pr)); hojaPreciosOk = true; }
+        } catch (e) { console.warn('items_precios:', e && e.message); }
+      }
       hojaConfirmPending = false;
       hojaValidationError = null;
       hojaFormState = {
@@ -4353,12 +4371,48 @@ function showToast(message, kind) {
             oc: r.oc,
             pend: disponible,
             kxu: r.kxu,
+            precio: hojaPrecios.get(r.id) || null,
             renglones: [makeHojaRenglon(r.kxu, disponible)],
           };
         }),
       };
       renderHojaModal();
       document.getElementById('hoja-overlay').classList.add('open');
+    }
+
+    // ---- Precios en la Hoja de Pesada (Importe Final de SGA, sin IVA) ----
+    function precioHoja(it) { const pr = it.precio; return pr && Number(pr.importe_final) > 0 ? pr : null; }
+    function monedaSym(m) { return m === 'ARS' ? '$' : 'USD'; }
+    function fmtPlata(n) { return (Number(n) || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+    function esPorKg(pr) { return String(pr.vta).toUpperCase() === 'KG'; }
+    // por KG: precio x peso real pesado; por UN: precio x cantidad del renglón
+    function hojaImporteRg(it, rg) {
+      const pr = precioHoja(it); if (!pr) return null;
+      if (esPorKg(pr)) { const kg = parseFloat(rg.pesoReal); return isNaN(kg) ? null : Number(pr.importe_final) * kg; }
+      return Number(pr.importe_final) * (rg.cantidad || 0);
+    }
+    function hojaImpRefHtml(it, rg) {
+      if (!hojaPreciosOk) return '';
+      const pr = precioHoja(it);
+      if (!pr) return '<span style="color:#fbbf24;">💲 Sin precio cargado en SGA para esta pieza: el importe sale en blanco.</span>';
+      const imp = hojaImporteRg(it, rg);
+      return `💲 ${monedaSym(pr.moneda)} ${fmtPlata(pr.importe_final)} ${esPorKg(pr) ? 'por Kg × peso real' : 'por unidad × cantidad'} → Importe: <b>${imp == null ? '—' : monedaSym(pr.moneda) + ' ' + fmtPlata(imp)}</b>`;
+    }
+    function hojaTotalesPorMoneda() {
+      const t = {};
+      if (!hojaFormState) return t;
+      hojaFormState.items.forEach(it => { const pr = precioHoja(it); if (!pr) return; it.renglones.forEach(rg => { const v = hojaImporteRg(it, rg); if (v != null) t[pr.moneda === 'ARS' ? 'ARS' : 'USD'] = (t[pr.moneda === 'ARS' ? 'ARS' : 'USD'] || 0) + v; }); });
+      return t;
+    }
+    function hojaTotalesHtml() {
+      const t = hojaTotalesPorMoneda();
+      const parts = Object.keys(t).map(m => `<b>${monedaSym(m)} ${fmtPlata(t[m])}</b>`);
+      return `<div id="hoja-importes-total" class="hoja-kg-ref" style="margin:10px 0; font-size:0.85rem;">${hojaPreciosOk && parts.length ? '💲 Total de la hoja (sin IVA): ' + parts.join(' &nbsp;+&nbsp; ') : ''}</div>`;
+    }
+    function refreshHojaImportes() {
+      if (!hojaFormState) return;
+      hojaFormState.items.forEach((it, i) => it.renglones.forEach((rg, r) => { const el = document.getElementById(`hoja-imp-${i}-${r}`); if (el) el.innerHTML = hojaImpRefHtml(it, rg); }));
+      const tot = document.getElementById('hoja-importes-total'); if (tot) tot.outerHTML = hojaTotalesHtml();
     }
 
     function hojaRenglonTotal(it) {
@@ -4393,6 +4447,7 @@ function showToast(message, kind) {
             ${it.renglones.length > 1 ? `<button type="button" class="hoja-renglon-del" title="Quitar este renglón" onclick="removeHojaRenglon(${idx}, ${rIdx})">✕</button>` : '<span></span>'}
           </div>
           <div class="hoja-kg-ref" id="hoja-kgref-${idx}-${rIdx}">${kgRefHtml(rg, it.kxu)}</div>
+          <div class="hoja-kg-ref" id="hoja-imp-${idx}-${rIdx}">${hojaImpRefHtml(it, rg)}</div>
         </div>
       `).join('');
       return `
@@ -4429,6 +4484,7 @@ function showToast(message, kind) {
           <div class="hoja-field"><label>Mail destinatario</label><input type="email" placeholder="nombre@cliente.com" value="${escHtml(s.mail)}" oninput="hojaFormState.mail=this.value; refreshHojaGmailLink();"></div>
         </div>
         ${itemsHtml}
+        ${hojaTotalesHtml()}
         ${hojaValidationError ? `<div class="hoja-confirm-check" style="border-color:var(--danger); background:rgba(239,68,68,0.12); color:#fecaca;">⚠️ ${escHtml(hojaValidationError)}</div>` : ''}
         <div class="hoja-actions">
           ${s.confirmed ? `
@@ -4469,6 +4525,7 @@ function showToast(message, kind) {
       if (!hojaFormState || !hojaFormState.items[idx] || !hojaFormState.items[idx].renglones[rIdx]) return;
       hojaFormState.items[idx].renglones[rIdx][field] = value;
       if (field === 'probeta') refreshHojaGmailLink();
+      if (field === 'pesoReal') refreshHojaImportes();
     }
 
     function updateHojaItemField(idx, field, value) {
@@ -4494,6 +4551,7 @@ function showToast(message, kind) {
       const kgRefEl = document.getElementById(`hoja-kgref-${idx}-${rIdx}`);
       if (kgRefEl) kgRefEl.innerHTML = kgRefHtml(rg, it.kxu);
       updateHojaItemTotalHtml(idx);
+      refreshHojaImportes();
     }
 
     function updateHojaItemTotalHtml(idx) {
@@ -4513,6 +4571,7 @@ function showToast(message, kind) {
       it.renglones.push(makeHojaRenglon(it.kxu, restante));
       const blockEl = document.getElementById(`hoja-item-${idx}`);
       if (blockEl) blockEl.outerHTML = renderItemBlockHtml(idx);
+      refreshHojaImportes();
     }
     function removeHojaRenglon(idx, rIdx) {
       const it = hojaFormState.items[idx];
@@ -4520,6 +4579,7 @@ function showToast(message, kind) {
       it.renglones.splice(rIdx, 1);
       const blockEl = document.getElementById(`hoja-item-${idx}`);
       if (blockEl) blockEl.outerHTML = renderItemBlockHtml(idx);
+      refreshHojaImportes();
     }
 
     function validateHojaItems(items) {
@@ -4665,16 +4725,18 @@ function showToast(message, kind) {
             const nota = rg.pesoTeorico != null
               ? `Pieza id ${it.id}${probetaTxt} - Kg/u teórico de SGA: ${it.kxu.toLocaleString(undefined,{maximumFractionDigits:2})} Kg/u × ${rg.cantidad.toLocaleString()} = ${fmt1(rg.pesoTeorico)} Kg. Despacho pesó ${fmt1(pesoRealNum)} Kg reales.`
               : `Pieza id ${it.id}${probetaTxt} - SGA no tiene Kg/u teórico cargado para este código (0,0); el peso real pesado es el único dato.`;
+            const prH = hojaPreciosOk ? precioHoja(it) : null;
+            const impH = prH ? hojaImporteRg(it, rg) : null;
             items.push({
               cant: rg.cantidad.toLocaleString(),
               descripcion: it.descripcion,
               trazabilidad: '',
               material: it.material,
               oc: it.oc,
-              precio: '',
+              precio: prH ? fmtPlata(prH.importe_final) : '',
               peso: fmt1(pesoRealNum),
-              importe: '(a compl.)',
-              lista: 'x Kg. USD',
+              importe: prH ? (impH != null ? fmtPlata(impH) : '') : '(a compl.)',
+              lista: prH ? `x ${esPorKg(prH) ? 'Kg.' : 'Un.'} ${monedaSym(prH.moneda)}` : 'x Kg. USD',
               remito: '',
               probeta: rg.probeta || '-',
               nota,
@@ -4688,6 +4750,7 @@ function showToast(message, kind) {
         const blob = MiniPdf.buildHojaPesadaPdfBlob({
           numero: numeroStr, fechaStr, cliente: s.cliente, transporte: s.transporte, condPago: s.condPago,
           items, pesoTotal, comprobantes, logoPixels,
+          totales: hojaPreciosOk ? Object.entries(hojaTotalesPorMoneda()).map(([m, v]) => ({ moneda: m, texto: 'TOTAL ' + (m === 'ARS' ? '$' : 'USD') + ' ' + fmtPlata(v) + '  (sin IVA)' })) : [],
         });
 
         const filename = `HojaPesada_${sanitizeFilenamePart(s.cliente)}_${fechaFile}_${numeroStr}.pdf`;
@@ -5632,6 +5695,251 @@ function showToast(message, kind) {
   window.cirOpen = async mode => { C.mode = (typeof mode === 'string' && VIEWS.some(v => v.key === mode)) ? mode : 'full'; ensureDom(); document.getElementById('cir-root').classList.add('on'); render(); await reload(); };
   window.cirClose = () => { const r = document.getElementById('cir-root'); if (r) r.classList.remove('on'); };
   window.__cir = { C, load, render, nivel, sv, lote, isBiz, prevBiz, FERIADOS };
+})();
+
+</script>
+<script>
+// =====================================================================
+// Ventas (Version 53): indicador de lo que ENTRA (pedidos nuevos) y lo que SALE (despachos), en plata.
+// Módulo independiente: usa solo las tablas del parche 014 (ventas_log, ventas_config, items_precios).
+// Solo lo ve quien tiene la sección "ventas" (la base también lo bloquea con RLS).
+// =====================================================================
+(function () {
+  'use strict';
+  const V = { loaded: false, loading: false, error: null, log: [], precios: new Map(), tc: null, tcTs: null, periodo: 'mes', desde: '', hasta: '', moneda: 'USD' };
+
+  const esc = s => (typeof escHtml === 'function' ? escHtml(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
+  const pad = n => String(n).padStart(2, '0');
+  const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const parse = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+  const addD = (s, n) => { const d = parse(s); d.setDate(d.getDate() + n); return iso(d); };
+  const TODAY = () => iso(new Date());
+  const puede = () => (typeof puedeVer === 'function') ? puedeVer('ventas') : false;
+  const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+  // ---------- períodos ----------
+  function semana(off) { const d = parse(TODAY()); const dow = (d.getDay() + 6) % 7; d.setDate(d.getDate() - dow + 7 * off); const ini = iso(d); return { ini, fin: addD(ini, 6) }; }
+  function mes(off) { const t = parse(TODAY()); const a = new Date(t.getFullYear(), t.getMonth() + off, 1), b = new Date(t.getFullYear(), t.getMonth() + off + 1, 0); return { ini: iso(a), fin: iso(b) }; }
+  function rangos() {
+    const p = V.periodo;
+    if (p === 'semana') return { cur: semana(0), prev: semana(-1), nombre: 'esta semana' };
+    if (p === 'semana_ant') return { cur: semana(-1), prev: semana(-2), nombre: 'la semana pasada' };
+    if (p === 'mes') return { cur: mes(0), prev: mes(-1), nombre: 'este mes' };
+    if (p === 'mes_ant') return { cur: mes(-1), prev: mes(-2), nombre: 'el mes pasado' };
+    const ini = V.desde || TODAY(), fin = V.hasta || V.desde || TODAY();
+    const dias = Math.max(1, Math.round((parse(fin) - parse(ini)) / 86400000) + 1);
+    return { cur: { ini, fin }, prev: { ini: addD(ini, -dias), fin: addD(ini, -1) }, nombre: 'el rango elegido' };
+  }
+  const enRango = (d, r) => !!d && d >= r.ini && d <= r.fin;
+
+  // ---------- plata ----------
+  const nf = (n, d) => (Number(n) || 0).toLocaleString('es-AR', { maximumFractionDigits: d == null ? 0 : d, minimumFractionDigits: d == null ? 0 : d });
+  const sym = m => m === 'ARS' ? '$' : 'USD';
+  const money = (n, m) => `${sym(m)} ${nf(n)}`;
+  // convierte un monto a la moneda destino con el tipo de cambio ($ por 1 USD). null = no se puede.
+  function conv(monto, de, a) {
+    if (de === a) return monto;
+    if (!(V.tc > 0)) return null;
+    return de === 'USD' ? monto * V.tc : monto / V.tc;
+  }
+  // suma {USD, ARS} -> en la moneda pedida (si no hay TC, devuelve lo que se pueda y marca incompleto)
+  function totalEn(por, a) {
+    let t = por[a] || 0, incompleto = false;
+    const otra = a === 'USD' ? 'ARS' : 'USD';
+    if ((por[otra] || 0) !== 0) { const c = conv(por[otra], otra, a); if (c == null) incompleto = true; else t += c; }
+    return { t, incompleto };
+  }
+  function sumar(rows) {
+    const por = { USD: 0, ARS: 0 }; let n = 0, sin = 0;
+    rows.forEach(r => { if (r.valorizado && r.monto != null) { por[r.moneda === 'ARS' ? 'ARS' : 'USD'] += Number(r.monto) || 0; n++; } else sin++; });
+    return { por, n, sin };
+  }
+
+  // texto grande según la moneda elegida
+  function grande(por) {
+    if (V.moneda === 'ARS') { const x = totalEn(por, 'ARS'); return money(x.t, 'ARS') + (x.incompleto ? ' <small class="warn">+ USD sin convertir</small>' : ''); }
+    const x = totalEn(por, 'USD'); return money(x.t, 'USD') + (x.incompleto ? ' <small class="warn">+ $ sin convertir</small>' : '');
+  }
+  function chico(por) {
+    if (V.moneda !== 'ambas') return '';
+    const x = totalEn(por, 'ARS'); return x.incompleto ? '' : `<div class="s">≈ ${money(x.t, 'ARS')}</div>`;
+  }
+  function valorSerie(por) { const x = totalEn(por, V.moneda === 'ARS' ? 'ARS' : 'USD'); return x.t; }
+
+  // ---------- carga ----------
+  async function page(table, select, build) {
+    const out = []; let from = 0;
+    for (;;) {
+      let q = supabaseClient.from(table).select(select);
+      if (build) q = build(q);
+      const { data, error } = await q.range(from, from + 999);
+      if (error) throw error;
+      out.push(...(data || []));
+      if (!data || data.length < 1000) break;
+      from += 1000;
+    }
+    return out;
+  }
+  async function cargar(force) {
+    if (V.loading || (V.loaded && !force)) return;
+    V.loading = true; V.error = null; render();
+    try {
+      const [log, precios, cfg] = await Promise.all([
+        page('ventas_log', 'id,tipo,item_id,dia,cantidad,kg,monto,moneda,valorizado,cliente,comprobante,codigo,descripcion', q => q.order('id')),
+        page('items_precios', 'item_id,importe_final,moneda,vta', q => q.order('item_id')),
+        supabaseClient.from('ventas_config').select('valor,updated_at').eq('clave', 'tipo_cambio').maybeSingle(),
+      ]);
+      V.log = log; V.precios = new Map(precios.map(p => [p.item_id, p]));
+      V.tc = cfg && cfg.data && Number(cfg.data.valor) > 0 ? Number(cfg.data.valor) : null; V.tcTs = cfg && cfg.data ? cfg.data.updated_at : null;
+      V.loaded = true;
+    } catch (e) {
+      V.error = /relation|does not exist|schema cache|Could not find/i.test(String(e && e.message)) ? 'Falta correr el parche 014_ventas.sql en Supabase.' : 'No se pudieron cargar las ventas: ' + (e && e.message || e);
+    }
+    V.loading = false; render();
+  }
+
+  // cartera = lo que todavía falta entregar según SGA, valorizado con el precio final
+  function cartera() {
+    const items = (typeof BASE !== 'undefined' && BASE) ? BASE : (typeof DATA !== 'undefined' ? DATA : []);
+    const etapas = {}, clientes = {}; const tot = { USD: 0, ARS: 0 }; let sin = 0, n = 0;
+    items.forEach(it => {
+      if (!it || it.estado_general === 'Cancelado' || !(it.pend > 0)) return;
+      const p = V.precios.get(it.id); n++;
+      if (!p || !(Number(p.importe_final) > 0)) { sin++; return; }
+      let monto;
+      if (String(p.vta).toUpperCase() === 'KG') { if (!(it.kxu > 0)) { sin++; return; } monto = p.importe_final * it.kxu * it.pend; } else monto = p.importe_final * it.pend;
+      const m = p.moneda === 'ARS' ? 'ARS' : 'USD';
+      tot[m] += monto;
+      const e = it.area_actual || '—', c = it.cliente || '—';
+      (etapas[e] = etapas[e] || { USD: 0, ARS: 0 })[m] += monto;
+      (clientes[c] = clientes[c] || { USD: 0, ARS: 0 })[m] += monto;
+    });
+    return { tot, etapas, clientes, sin, n };
+  }
+
+  // ---------- dibujo ----------
+  function barras(entries, titulo) {
+    const vals = entries.map(([k, por]) => [k, valorSerie(por)]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]);
+    if (!vals.length) return '<div class="empty">Sin datos todavía.</div>';
+    const max = vals[0][1];
+    return vals.map(([k, v]) => `<div class="hb"><span class="l" title="${esc(k)}">${esc(k)}</span><span class="tr"><i style="width:${Math.max(1.5, v / max * 100).toFixed(1)}%"></i></span><span class="v">${nf(v)}</span></div>`).join('');
+  }
+  function deltaHtml(cur, prev) {
+    if (!(prev > 0)) return '<span class="dim">período anterior sin datos</span>';
+    const pct = Math.round((cur - prev) / prev * 100);
+    if (pct === 0) return '<span class="dim">= igual que el período anterior</span>';
+    return `<span style="color:${pct > 0 ? '#34d399' : '#f87171'}">${pct > 0 ? '▲' : '▼'} ${Math.abs(pct)}%</span> <span class="dim">vs período anterior</span>`;
+  }
+  function chart() {
+    const t = parse(TODAY()); const labels = [], ing = [], des = [];
+    for (let k = -5; k <= 0; k++) {
+      const r = mes(k); labels.push(MESES[parse(r.ini).getMonth()]);
+      ing.push(valorSerie(sumar(V.log.filter(x => x.tipo === 'ingreso' && enRango(x.dia, r))).por));
+      des.push(valorSerie(sumar(V.log.filter(x => x.tipo === 'despacho' && enRango(x.dia, r))).por));
+    }
+    if (typeof barChartSvg !== 'function') return '';
+    return barChartSvg({ labels, series: [{ name: 'Ingresó', color: '#38bdf8', values: ing }, { name: 'Despachó', color: '#34d399', values: des }], marcarUltimo: true });
+  }
+
+  function render() {
+    const body = document.getElementById('ven-body'); if (!body) return;
+    if (V.loading && !V.loaded) { body.innerHTML = '<div class="empty">Cargando…</div>'; return; }
+    if (V.error) { body.innerHTML = `<div class="err">${esc(V.error)}</div>`; return; }
+    if (!V.loaded) { body.innerHTML = ''; return; }
+    const { cur, prev, nombre } = rangos();
+    const ingC = V.log.filter(x => x.tipo === 'ingreso' && enRango(x.dia, cur)), ingP = V.log.filter(x => x.tipo === 'ingreso' && enRango(x.dia, prev));
+    const desC = V.log.filter(x => x.tipo === 'despacho' && enRango(x.dia, cur)), desP = V.log.filter(x => x.tipo === 'despacho' && enRango(x.dia, prev));
+    const sI = sumar(ingC), sD = sumar(desC), pI = sumar(ingP), pD = sumar(desP);
+    const mon = V.moneda === 'ARS' ? 'ARS' : 'USD';
+    const vI = valorSerie(sI.por), vD = valorSerie(sD.por);
+    // pedido más grande del período (para mostrar el ingreso "sin" ese pedido)
+    const porPed = {};
+    ingC.filter(x => x.valorizado && x.monto != null).forEach(x => { const m = x.moneda === 'ARS' ? 'ARS' : 'USD'; const k = (x.cliente || '—') + ' · ' + (x.comprobante || ''); (porPed[k] = porPed[k] || { USD: 0, ARS: 0 })[m] += Number(x.monto) || 0; });
+    let mayor = null; Object.entries(porPed).forEach(([k, por]) => { const v = valorSerie(por); if (!mayor || v > mayor.v) mayor = { k, v }; });
+    const sinMayor = mayor && Object.keys(porPed).length > 1 && vI > 0 && mayor.v / vI > 0.4 ? `<div class="s">sin el mayor pedido (${esc(mayor.k.split(' · ')[0])}): <b>${money(vI - mayor.v, mon)}</b></div>` : '';
+    const ratio = vI > 0 ? (vD / vI) : null;
+    const car = cartera();
+    // por cliente en el período
+    const cli = {};
+    ingC.concat(desC).forEach(x => { if (!x.valorizado || x.monto == null) return; const c = x.cliente || '—'; const o = (cli[c] = cli[c] || { i: { USD: 0, ARS: 0 }, d: { USD: 0, ARS: 0 } }); o[x.tipo === 'ingreso' ? 'i' : 'd'][x.moneda === 'ARS' ? 'ARS' : 'USD'] += Number(x.monto) || 0; });
+    const cliRows = Object.entries(cli).map(([c, o]) => [c, valorSerie(o.i), valorSerie(o.d)]).sort((a, b) => (b[1] + b[2]) - (a[1] + a[2])).slice(0, 10);
+    const sinTc = !(V.tc > 0) && (sI.por.ARS || sD.por.ARS || car.tot.ARS);
+    const chip = (k, t) => `<button class="chip ${V.periodo === k ? 'on' : ''}" onclick="venPeriodo('${k}')">${t}</button>`;
+    const mchip = (k, t) => `<button class="chip ${V.moneda === k ? 'on' : ''}" onclick="venMoneda('${k}')">${t}</button>`;
+    body.innerHTML = `
+      <div class="chips">${chip('semana', 'Esta semana')}${chip('semana_ant', 'Semana pasada')}${chip('mes', 'Este mes')}${chip('mes_ant', 'Mes pasado')}
+        <span class="rng"><input type="date" id="ven-desde" value="${esc(V.periodo === 'rango' ? V.desde : cur.ini)}"> – <input type="date" id="ven-hasta" value="${esc(V.periodo === 'rango' ? V.hasta : cur.fin)}"> <button class="chip ${V.periodo === 'rango' ? 'on' : ''}" onclick="venRango()">Ver</button></span></div>
+      <div class="chips"><span class="dim" style="align-self:center">Mostrar en:</span>${mchip('USD', 'USD')}${mchip('ARS', '$ pesos')}${mchip('ambas', 'USD y $')}
+        <span class="tc">Tipo de cambio: ${V.tc > 0 ? `<b>$ ${nf(V.tc, 2)}</b> por USD` : '<b class="warn">sin cargar</b>'} <button class="chip" onclick="venTc()">${V.tc > 0 ? 'Cambiar' : 'Cargar'}</button></span></div>
+      ${sinTc ? '<div class="alert">Hay montos en pesos y todavía no cargaste el tipo de cambio: los pesos no están sumados a los dólares.</div>' : ''}
+      <div class="tiles">
+        <div class="tile"><div class="t">💵 Ingresó (notas de venta de ${nombre})</div><div class="b" style="color:#38bdf8">${grande(sI.por)}</div>${chico(sI.por)}<div class="s">${sI.n} líneas · ${deltaHtml(vI, valorSerie(pI.por))}</div>${sinMayor}</div>
+        <div class="tile"><div class="t">🚚 Despachó (${nombre})</div><div class="b" style="color:#34d399">${grande(sD.por)}</div>${chico(sD.por)}<div class="s">${sD.n} despachos · ${deltaHtml(vD, valorSerie(pD.por))}</div></div>
+        <div class="tile"><div class="t">⚖️ Despachado / Ingresado</div><div class="b">${ratio == null ? '—' : nf(ratio, 2)}</div><div class="s">${ratio == null ? 'sin ingresos en el período' : ratio < 1 ? 'menor a 1: la cartera crece' : 'mayor o igual a 1: la cartera baja'}</div></div>
+        <div class="tile"><div class="t">📦 Cartera pendiente de entrega</div><div class="b" style="color:#38bdf8">${grande(car.tot)}</div>${chico(car.tot)}<div class="s">${car.n - car.sin} de ${car.n} renglones valorizados</div></div>
+      </div>
+      <div class="grid2">
+        <div class="panel"><h2>Ingresó vs. despachó por mes (${V.moneda === 'ARS' ? '$' : 'USD'})</h2>${chart()}
+          <div class="leg"><span><i style="background:#38bdf8"></i>Ingresó</span><span><i style="background:#34d399"></i>Despachó</span></div>
+          <div class="sub">Los meses anteriores al arranque del indicador pueden estar incompletos: SGA solo informa lo que sigue pendiente, no lo que ya se entregó y facturó.</div></div>
+        <div class="panel"><h2>Cartera pendiente por etapa (${V.moneda === 'ARS' ? '$' : 'USD'})</h2>${barras(Object.entries(car.etapas))}
+          <h2 style="margin-top:14px">Cartera por cliente (top 8)</h2>${barras(Object.entries(car.clientes).sort((a, b) => valorSerie(b[1]) - valorSerie(a[1])).slice(0, 8))}</div>
+      </div>
+      <div class="panel"><h2>Por cliente en ${nombre} (${V.moneda === 'ARS' ? '$' : 'USD'})</h2>
+        ${cliRows.length ? `<table><tr><th>Cliente</th><th class="num">Ingresó</th><th class="num">Despachó</th></tr>${cliRows.map(r => `<tr><td>${esc(r[0])}</td><td class="num">${r[1] ? nf(r[1]) : '—'}</td><td class="num">${r[2] ? nf(r[2]) : '—'}</td></tr>`).join('')}</table>` : '<div class="empty">Sin movimientos valorizados en el período.</div>'}</div>
+      <div class="panel"><h2>Calidad del dato</h2>
+        <table>
+          <tr><td>Ingresos del período sin valorizar</td><td class="num">${sI.sin}</td><td class="dim">Vendidos por KG y SGA no tiene el Kg/u, o sin precio.</td></tr>
+          <tr><td>Despachos del período sin valorizar</td><td class="num">${sD.sin}</td><td class="dim">Vendidos por KG y sin peso real, o sin precio cargado.</td></tr>
+          <tr><td>Renglones pendientes sin valorizar</td><td class="num">${car.sin}</td><td class="dim">Se valorizan al pesar (Hoja de Pesada) cuando son por KG.</td></tr>
+        </table>
+        <div class="sub" style="margin-top:8px">Todos los montos son <b>sin IVA</b> y con el <b>Importe Final</b> de SGA (ya con descuento). Por KG: importe final × kg (el teórico del pedido; el real cuando se pesó). Por UN: importe final × cantidad.</div></div>`;
+  }
+
+  // ---------- acciones ----------
+  window.venPeriodo = p => { V.periodo = p; render(); };
+  window.venMoneda = m => { V.moneda = m; render(); };
+  window.venRango = () => { const d = document.getElementById('ven-desde').value, h = document.getElementById('ven-hasta').value; if (!d) return; V.desde = d; V.hasta = h || d; V.periodo = 'rango'; render(); };
+  window.venTc = async () => {
+    const actual = V.tc > 0 ? String(V.tc) : '';
+    const r = window.prompt('Tipo de cambio: cuántos pesos vale 1 USD (ej. 1450,50)', actual.replace('.', ','));
+    if (r == null) return;
+    const v = parseFloat(String(r).replace(/\./g, '').replace(',', '.'));
+    if (!(v > 0)) { alert('Número no válido.'); return; }
+    const { error } = await supabaseClient.from('ventas_config').upsert({ clave: 'tipo_cambio', valor: v, updated_at: new Date().toISOString() });
+    if (error) { alert('No se pudo guardar el tipo de cambio: ' + error.message); return; }
+    V.tc = v; V.tcTs = new Date().toISOString(); render();
+  };
+  window.venRefrescar = () => cargar(true);
+
+  // ---------- botón + pantalla ----------
+  window.venRefreshBtn = () => { const b = document.getElementById('ven-btn'); if (b) b.style.display = puede() ? '' : 'none'; };
+  setTimeout(window.venRefreshBtn, 0); [1500, 4000, 9000, 20000].forEach(t => setTimeout(window.venRefreshBtn, t));
+  const CSS = `
+  #ven-root { position:fixed; inset:0; background:#0f172a; color:#e2e8f0; z-index:60; overflow:auto; display:none; font-size:14px; line-height:1.45; --card:#1e293b; --line:#334155; --dim:#94a3b8; --acc:#38bdf8; }
+  #ven-root.on { display:block; } #ven-root * { box-sizing:border-box; }
+  #ven-root .wrap { max-width:1100px; margin:0 auto; padding:14px 16px 40px; } #ven-root h1 { font-size:1.15rem; margin:0; } #ven-root h2 { font-size:.95rem; margin:0 0 6px; }
+  #ven-root .top { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+  #ven-root button { background:#334155; color:#fff; border:none; border-radius:7px; padding:6px 11px; font-size:.8rem; cursor:pointer; } #ven-root button:hover { background:#475569; }
+  #ven-root .chips { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; align-items:center; } #ven-root .chip { background:var(--card); border:1px solid var(--line); color:#cbd5e1; border-radius:99px; padding:5px 12px; } #ven-root .chip.on { border-color:var(--acc); color:#fff; background:#0b2a40; }
+  #ven-root .rng input { background:#0f172a; color:#fff; border:1px solid var(--line); border-radius:7px; padding:4px 6px; font-size:.8rem; } #ven-root .tc { margin-left:auto; font-size:.82rem; display:flex; gap:8px; align-items:center; }
+  #ven-root .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:10px; margin-bottom:12px; } #ven-root .tile { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:11px 13px; }
+  #ven-root .tile .t { font-size:.75rem; color:var(--dim); } #ven-root .tile .b { font-size:1.45rem; font-weight:800; margin:2px 0; } #ven-root .tile .s { font-size:.75rem; color:var(--dim); }
+  #ven-root .grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(310px,1fr)); gap:12px; margin-bottom:12px; } #ven-root .panel { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:12px; } #ven-root .grid2 .panel { margin-bottom:0; }
+  #ven-root .sub { color:var(--dim); font-size:.76rem; margin-top:8px; } #ven-root .dim { color:var(--dim); } #ven-root .warn { color:#fbbf24; } #ven-root .err { color:#f87171; padding:20px 0; } #ven-root .empty { color:var(--dim); font-size:.82rem; padding:6px 0; }
+  #ven-root .alert { background:rgba(251,191,36,.1); border:1px solid #92400e; border-radius:8px; padding:8px 12px; margin-bottom:10px; font-size:.8rem; }
+  #ven-root .hb { display:flex; align-items:center; gap:8px; margin:6px 0; font-size:.8rem; } #ven-root .hb .l { width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } #ven-root .hb .tr { flex:1; background:#0f172a; border-radius:5px; height:13px; overflow:hidden; } #ven-root .hb .tr i { display:block; height:100%; background:#38bdf8; } #ven-root .hb .v { width:78px; text-align:right; color:var(--dim); font-variant-numeric:tabular-nums; }
+  #ven-root .leg { display:flex; gap:14px; font-size:.75rem; color:var(--dim); margin-top:6px; } #ven-root .leg i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; }
+  #ven-root table { width:100%; border-collapse:collapse; font-size:.82rem; } #ven-root th { text-align:left; font-size:.7rem; color:var(--dim); font-weight:600; padding:4px 6px; border-bottom:1px solid var(--line); } #ven-root td { padding:6px; border-bottom:1px solid #263449; } #ven-root .num { text-align:right; font-variant-numeric:tabular-nums; }`;
+  function ensureDom() {
+    if (document.getElementById('ven-root')) return;
+    const st = document.createElement('style'); st.textContent = CSS; document.head.appendChild(st);
+    const root = document.createElement('div'); root.id = 'ven-root';
+    root.innerHTML = '<div class="wrap"><div class="top"><h1>💰 Ventas — lo que entra y lo que sale</h1><div style="display:flex;gap:8px"><button onclick="venRefrescar()">↻ Actualizar</button><button onclick="venClose()">✕ Cerrar</button></div></div><div id="ven-body"></div></div>';
+    document.body.appendChild(root);
+  }
+  window.venOpen = () => { if (!puede()) return; ensureDom(); document.getElementById('ven-root').classList.add('on'); document.body.style.overflow = 'hidden'; V.loaded ? render() : cargar(); };
+  window.venClose = () => { const r = document.getElementById('ven-root'); if (r) r.classList.remove('on'); document.body.style.overflow = ''; };
 })();
 
 </script>
