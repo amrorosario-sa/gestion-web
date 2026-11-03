@@ -5838,7 +5838,7 @@ function showToast(message, kind) {
       return `<tr><td>${nameCell(c)}</td><td class="num"><b>${stock(c, u)}</b></td><td class="num">${hk ? kOf(u, c) : '—'}</td><td>${hk ? `<span class="${n === 'verde' ? 'ok' : n === 'rojo' ? 'rep' : 'soon'}">${NIV[n]}</span>` : '<span class="code">sin k</span>'}</td>
         <td class="num">${hk ? `<b>${sv(u, c)}</b><div class="code">${svTxt(u, c)}</div>` : '—'}</td><td class="num">${hk && alertas(u).includes(c) ? (lote(u, c) > 0 ? `<b class="soon">${lote(u, c)}</b>` : '<span class="code">no hace falta</span>') : '—'}</td>
         <td><div class="row-actions">${actions(c)}${puedePlanificar() ? btn('k…', `cir_k('${u}','${esc(c)}')`) : ''}</div></td></tr>`; }).join('');
-    return rows ? `<table><tr><th>Pieza</th><th class="num">En estantería</th><th class="num">k</th><th>Nivel</th><th class="num">Stock virtual</th><th class="num">Lote sugerido</th><th class="num">Kg/u</th><th></th></tr>${rows}</table>` : '<div class="empty">Todavía no hay piezas ni k definidos. Cargá el stock inicial con "Ajustar stock" y definí el k de cada pieza.</div>';
+    return rows ? `<table><tr><th>Pieza</th><th class="num">En estantería</th><th class="num">k</th><th>Nivel</th><th class="num">Stock virtual</th><th class="num">Lote sugerido</th><th></th></tr>${rows}</table>` : '<div class="empty">Todavía no hay piezas ni k definidos. Cargá el stock inicial con "Ajustar stock" y definí el k de cada pieza.</div>';
   }
   const shelfHead = (u, titulo) => `<div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>${titulo}</h2><div class="row-actions">${puedePlanificar() ? btn('+ Definir k', `cir_kNuevo('${u}')`) + btn('Ajustar stock', `cir_ajustar('${u}')`) : ''}</div></div>`;
 
@@ -5899,7 +5899,7 @@ function showToast(message, kind) {
   function kanBar(k, f, v) {
     const max = 2.5 * k, pc = x => Math.max(0, Math.min(100, x / max * 100)).toFixed(1);
     const col = n => n === 'verde' ? 'var(--ok)' : n === 'rojo' ? 'var(--bad)' : 'var(--warn)';
-    return `<div class="kbar" title="Físico ${f} · Virtual ${v} · k ${k} · 2k ${2 * k}"><i style="width:${pc(f)}%; background:${col(nivelV(k, f))}"></i><b style="width:${pc(v)}%; border-color:${col(nivelV(k, v))}"></b><s style="left:${pc(k)}%"></s><s style="left:${pc(2 * k)}%"></s></div>`;
+    return `<div class="kbar-wrap"><div class="kbar" title="Izquierda: físico ${f} · Derecha: virtual ${v} · k ${k} · 2k ${2 * k}"><i style="height:${pc(f)}%; background:${col(nivelV(k, f))}"></i><b style="height:${pc(v)}%; border-color:${col(nivelV(k, v))}"></b><s style="bottom:${pc(k)}%"></s><s style="bottom:${pc(2 * k)}%"></s></div><div class="kbar-lbl"><span style="bottom:${pc(k)}%">k</span><span style="bottom:${pc(2 * k)}%">2k</span></div></div>`;
   }
   function vKan() {
     const u = C.kanTab, nom = u === 'sector_z' ? 'Kanban de Terminación (Sector Z)' : 'Kanban de Mecanizado (estantería post-mecanizado)';
@@ -5915,7 +5915,7 @@ function showToast(message, kind) {
     const nivCell = n => `<span class="${n === 'verde' ? 'ok' : n === 'rojo' ? 'rep' : 'soon'}">${NIV[n]}</span>`;
     const rows = lista.map(x => { const alerta = x.nf === 'amarillo' || x.nf === 'rojo';
       return `<tr><td>${nameCell(x.c)}</td><td class="num"><b>${x.f}</b></td><td class="num"><b>${x.v}</b><div class="code">${esc(svTxt(u, x.c))}</div></td><td class="num">${x.k}<div class="code">2k = ${2 * x.k}</div></td>
-        <td style="min-width:120px">${kanBar(x.k, x.f, x.v)}</td><td>${nivCell(x.nf)}</td><td>${nivCell(x.nv)}</td>
+        <td style="min-width:80px">${kanBar(x.k, x.f, x.v)}</td><td>${nivCell(x.nf)}</td><td>${nivCell(x.nv)}</td>
         <td class="num">${alerta ? (x.L > 0 ? `<b class="soon">${x.L}</b>` : '<span class="code">no hace falta</span>') : '—'}</td>
         <td class="num">${kgTxt(x.c)}${puedePlanificar() ? '<div>' + btn(kgDe(x.c) ? 'Kg/u' : 'Cargar Kg/u', `cir_kg('${esc(x.c)}')`) + '</div>' : ''}</td>
         <td><div class="row-actions">${puedePlanificar() ? btn('Cambiar k', `cir_k('${u}','${esc(x.c)}')`) + btn('Ajustar stock', `cir_ajustar('${u}','${esc(x.c)}')`) : ''}${u === 'sector_z' && alerta && x.L > 0 && puedePlanificar() ? btn('Cargar moldeo de ' + x.L, `cir_moldeo(${x.L},'${esc(x.c)}')`, 'pri') : ''}</div></td></tr>`; }).join('');
@@ -5927,7 +5927,7 @@ function showToast(message, kind) {
         <div class="dia-tiles" style="margin:10px 0;"><div class="tile"><div class="n">${all.length}</div><div class="l">piezas con kanban</div></div><div class="tile ${cnt('rojo') ? 'rojo' : ''}"><div class="n">${cnt('rojo')}</div><div class="l">🔴 rojo</div></div><div class="tile ${cnt('amarillo') ? 'hoy' : ''}"><div class="n">${cnt('amarillo')}</div><div class="l">🟡 amarillo</div></div><div class="tile"><div class="n">${cnt('verde')}</div><div class="l">🟢 verde</div></div></div>
         <div class="tabs">${fchip('todos', 'Todas (' + all.length + ')')}${fchip('rojo', '🔴 Rojo (' + cnt('rojo') + ')')}${fchip('amarillo', '🟡 Amarillo (' + cnt('amarillo') + ')')}${fchip('verde', '🟢 Verde (' + cnt('verde') + ')')}
           <input id="kan-q" class="kq" placeholder="Buscar pieza…" value="${esc(C.kanQ)}" oninput="cirKanQ(this.value)"></div>
-        ${rows ? `<table><tr><th>Pieza</th><th class="num">Físico</th><th class="num">Virtual</th><th class="num">k</th><th>Físico ▮ · virtual ▯</th><th>Nivel físico</th><th>Nivel virtual</th><th class="num">Lote sugerido</th><th></th></tr>${rows}</table>`
+        ${rows ? `<table><tr><th>Pieza</th><th class="num">Físico</th><th class="num">Virtual</th><th class="num">k</th><th>Físico ▮ · virtual ▯</th><th>Nivel físico</th><th>Nivel virtual</th><th class="num">Lote sugerido</th><th class="num">Kg/u</th><th></th></tr>${rows}</table>`
           : `<div class="empty">${all.length ? 'Ninguna pieza coincide con el filtro.' : 'Todavía no hay piezas con kanban acá. Tocá "+ Agregar pieza al kanban", elegí la pieza y definí su k.'}</div>`}</div>
       ${sinK.length ? `<div class="panel"><h2>Piezas con stock pero sin kanban definido (${sinK.length})</h2><div class="sub">Tienen stock en esta estantería pero no tienen k, así que no se controlan.</div><table>${sinK.map(c => `<tr><td>${nameCell(c)}</td><td class="num">${stock(c, u)}</td><td>${puedePlanificar() ? btn('Definir k', `cir_k('${u}','${esc(c)}')`, 'pri') : ''}</td></tr>`).join('')}</table></div>` : ''}`;
   }
@@ -6076,7 +6076,7 @@ function showToast(message, kind) {
   #cir-root .dia-tiles { display:flex; gap:8px; flex-wrap:wrap; } #cir-root .tile { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 14px; text-align:center; min-width:110px; }
   #cir-root .tile .n { font-size:1.7rem; font-weight:800; color:#fff; } #cir-root .tile .l { font-size:.72rem; color:var(--dim); }
   #cir-root .tile.hoy { border-color:var(--warn); background:rgba(251,191,36,.1); } #cir-root .tile.hoy .n { color:var(--warn); } #cir-root .tile.rojo { border-color:var(--bad); background:rgba(248,113,113,.1); } #cir-root .tile.rojo .n { color:var(--bad); }
-  #cir-root .kbar { position:relative; height:12px; background:#0f172a; border:1px solid var(--line); border-radius:6px; overflow:hidden; } #cir-root .kbar i { position:absolute; left:0; top:0; height:50%; } #cir-root .kbar b { position:absolute; left:0; bottom:0; height:50%; border-right:3px solid; background:rgba(148,163,184,.35); } #cir-root .kbar s { position:absolute; top:0; bottom:0; width:1px; background:#e2e8f0; opacity:.7; }
+  #cir-root .kbar { position:relative; width:44px; height:84px; margin:0 auto; background:#0f172a; border:1px solid var(--line); border-radius:6px; overflow:hidden; } #cir-root .kbar i { position:absolute; left:0; bottom:0; width:50%; } #cir-root .kbar b { position:absolute; right:0; bottom:0; width:50%; border-top:3px solid; background:rgba(148,163,184,.35); } #cir-root .kbar s { position:absolute; left:0; right:0; height:1px; background:#e2e8f0; opacity:.7; } #cir-root .kbar-wrap { display:flex; align-items:flex-end; justify-content:center; gap:4px; font-size:.62rem; color:var(--dim); } #cir-root .kbar-lbl { position:relative; width:18px; height:84px; } #cir-root .kbar-lbl span { position:absolute; left:0; transform:translateY(50%); line-height:1; }
   #cir-root .kq { background:#0f172a; color:#fff; border:1px solid var(--line); border-radius:7px; padding:6px 9px; font-size:.85rem; margin-left:auto; min-width:160px; }
   #cir-root .sec-title { font-size:.8rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--dim); margin:14px 0 6px; }
   #cir-root .card { background:var(--card); border:2px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:10px; }
