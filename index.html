@@ -2305,6 +2305,8 @@ function rebuildData() {
   BASE_BY_ID = new Map(BASE.map(r => [r.id, r]));
   // Los ítems cancelados no aparecen en ningún listado ni cuenta.
   DATA = expandItems(BASE.filter(it => it.estado_general !== 'Cancelado' && !realStatusFromFlags(it).cancelado));
+  // Lo que ya se despachó completo pasa a "Despachado" y sale de todos los demás tableros.
+  DATA = DATA.filter(r => !totalmenteDespachado(r));
   ROW_BY_KEY = new Map(DATA.map(r => [rowKey(r), r]));
   recomputeEffectiveStages();
 }
@@ -2325,6 +2327,10 @@ function splitShares(id) {
   });
   rows.forEach(r => { const d = Math.min(sh[r._pk].prep, D); sh[r._pk].desp = d; D -= d; });
   return sh;
+}
+function totalmenteDespachado(r) {
+  const p = Number(r.pend) || 0;
+  return p > 0 && despRowCant(r) >= p - 0.0001;
 }
 function prepRowCant(row) {
   if (row._pk) { const sh = splitShares(row.id); return sh && sh[row._pk] ? sh[row._pk].prep : 0; }
@@ -2590,7 +2596,7 @@ async function initDb() {
     let _refrescoTimer = null;
     const refrescarDiferido = () => {
       if (_refrescoTimer) clearTimeout(_refrescoTimer);
-      _refrescoTimer = setTimeout(() => { _refrescoTimer = null; renderKpis(); applyFilters(); }, 400);
+      _refrescoTimer = setTimeout(() => { _refrescoTimer = null; rebuildData(); renderKpis(); applyFilters(); }, 400);
     };
     db.collection('preparados').onSnapshot(qs => {
       const map = {};
@@ -4245,6 +4251,7 @@ function showToast(message, kind) {
       const nuevoCant = Math.min(Math.max(0, prepCant(row.id)), yaDespachado + val);
       await dbRef.collection('despachado').doc(String(row.id)).set({ cant: nuevoCant, ts: new Date().toISOString() });
       despachadoMap[String(row.id)] = { ...(despachadoMap[String(row.id)] || {}), cant: nuevoCant };
+      try { rebuildData(); } catch (e) { console.warn(e); }
       const kg = row.pend > 0 ? row.kilos * (val / row.pend) : 0;
       await dbRef.collection('despachos_log').add({
         itemId: row.id, cliente: row.cliente, comprobante: row.comprobante, codigo: row.codigo,
@@ -4282,7 +4289,7 @@ function showToast(message, kind) {
         await registrarDespachoDb(row, lineas, val);
         despSel.delete(String(s.key));
         closeDespachoDialog();
-        renderDespMultiBar();
+        renderKpis(); applyFilters();
       } catch (e) {
         alert(errorDespachoMsg(e));
       } finally {
@@ -4422,6 +4429,7 @@ function showToast(message, kind) {
           hechos++;
         }
         closeDespachoDialog();
+        renderKpis(); applyFilters();
         showToast(`Despachados ${hechos} ítem${hechos === 1 ? '' : 's'}`, 'success');
       } catch (e) {
         alert(`${errorDespachoMsg(e)}\n\nSe despacharon ${hechos} de ${plan.length} ítems. Los que faltan siguen tildados: revisá y volvé a intentar.`);
