@@ -2326,6 +2326,8 @@ const SECCIONES_DEF = [
   ['prog_mecanizado', '⚙️ Mecanizado: mi programa del día'],
   ['prog_terminacion', '🔧 Terminación: mis entregas del día'],
   ['ventas', '💰 Ventas (montos: indicador de ventas)'],
+  ['kanban_moldeo', '🏭 Moldeo / Fusión: cargar piezas para kanban'],
+  ['kanban', '🏬 Kanban: configuración y stock (Terminación y Mecanizado)'],
 ];
 const SECCION_ELEMS = {
   moldeo: ['card-moldeo', 'chip-moldeo'],
@@ -5126,7 +5128,7 @@ function showToast(message, kind) {
     '2027-01-01': 'Año Nuevo',
     '2026-03-23': 'Puente turístico (no laborable)', '2026-07-10': 'Puente turístico (no laborable)', '2026-12-07': 'Puente turístico (no laborable)',
   };
-  const C = { rechazos: [], motivos: null, mode: 'full', tab: 'plan', loaded: false, error: null, stock: {}, planes: [], moldeos: [], k: [], exc: [], recetas: [], cfg: {}, movs: [] };
+  const C = { kanTab: 'sector_z', kanFilter: 'todos', kanQ: '', rechazos: [], motivos: null, mode: 'full', tab: 'plan', loaded: false, error: null, stock: {}, planes: [], moldeos: [], k: [], exc: [], recetas: [], cfg: {}, movs: [] };
 
   // ---------- utilidades ----------
   const esc = s => (typeof escHtml === 'function' ? escHtml(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
@@ -5335,8 +5337,8 @@ function showToast(message, kind) {
   A.entregar = async (pid, c) => { try { await rpc('mec_entregar', { p_plan: pid, p_codigo: c, p_cant: null }); await reload(); } catch (e) { alert(e.message); } };
   A.zaM = c => ask('Entregar a Mecanizado', esc(nombre(c)) + '<br>Entrega suelta, sin plan.', [{ id: 'n', label: 'Cantidad (máx. ' + stock(c, 'sector_z') + ')', value: Math.min(stock(c, 'sector_z'), 5), max: stock(c, 'sector_z') }], 'Entregar',
     v => rpc('mec_mover', { p_codigo: c, p_desde: 'sector_z', p_hasta: 'mecanizado', p_cant: v.n, p_motivo: 'entrega suelta a Mecanizado' }));
-  A.moldeo = def => ask('Cargar moldeo / fusión para kanban', 'Piezas que se mandan a moldear y fundir para reponer kanban (pedidos internos que no vienen de SGA).', [
-    { type: 'pieza', id: 'c', label: 'Pieza', value: '' }, { id: 'n', label: 'Cantidad', value: def || 10, max: 99999 }, { type: 'text', id: 'x', label: 'Nota (opcional)', ph: 'Ej: colada del viernes' }], 'Cargar',
+  A.moldeo = (def, cod) => ask('Cargar moldeo / fusión para kanban', 'Piezas que se mandan a moldear y fundir para reponer kanban (pedidos internos que no vienen de SGA).', [
+    { type: 'pieza', id: 'c', label: 'Pieza', value: cod || '' }, { id: 'n', label: 'Cantidad', value: def || 10, max: 99999 }, { type: 'text', id: 'x', label: 'Nota (opcional)', ph: 'Ej: colada del viernes' }], 'Cargar',
     v => tbl(supabaseClient.from('mec_moldeos').insert({ codigo: v.c, cantidad: v.n, nota: v.x || null })));
   A.pasoTerm = id => { const o = C.moldeos.find(x => x.id === id);
     ask('Pasó a Terminación', esc(nombre(o.codigo)) + ' — en moldeo/fusión: ' + o.cantidad, [{ id: 'n', label: 'Cantidad que pasó (máx. ' + o.cantidad + ')', value: o.cantidad, max: o.cantidad }], 'Pasar a Terminación',
@@ -5346,10 +5348,13 @@ function showToast(message, kind) {
     ask('Cantidad k — ' + UBIC[u], esc(nombre(c)) + `<br>k es lo que se consume durante el plazo de reposición (${plazo} días). Verde: 2k o más · amarillo: entre 1k y 2k (avisa reponer) · rojo: menos de 1k. Poné 0 para quitarlo.`,
       [{ id: 'n', label: 'k (unidades)', value: cur == null ? 0 : cur, max: 99999, min: 0 }], 'Guardar',
       v => v.n === 0 ? tbl(supabaseClient.from('mec_k').delete().eq('ubicacion', u).eq('codigo', c)) : tbl(supabaseClient.from('mec_k').upsert({ ubicacion: u, codigo: c, k: v.n }, { onConflict: 'ubicacion,codigo' }))); };
+  A.plazo = u => { const key = u === 'sector_z' ? 'plazo_sector_z' : 'plazo_kanban';
+    ask('Plazo de reposición — ' + UBIC[u], 'Días que tarda en reponerse esta estantería. Es el período sobre el que se calcula el k de cada pieza.', [{ id: 'n', label: 'Plazo (días)', value: C.cfg[key] || 7, max: 365 }], 'Guardar',
+      v => tbl(supabaseClient.from('mec_config').upsert({ clave: key, valor: v.n }, { onConflict: 'clave' }))); };
   A.kNuevo = u => ask('Definir k — ' + UBIC[u], 'Elegí la pieza y su k (consumo durante el plazo de reposición).', [{ type: 'pieza', id: 'c', label: 'Pieza', value: '' }, { id: 'n', label: 'k (unidades)', value: 10, max: 99999 }], 'Guardar',
     v => tbl(supabaseClient.from('mec_k').upsert({ ubicacion: u, codigo: v.c, k: v.n }, { onConflict: 'ubicacion,codigo' })));
-  A.ajustar = u => ask('Ajustar stock — ' + UBIC[u], 'Para cargar el stock inicial o corregir un conteo. Se registra en el libro de movimientos. Poné la diferencia: positivo suma, negativo resta.', [
-    { type: 'pieza', id: 'c', label: 'Pieza', value: '' }, { id: 'n', label: 'Diferencia (+/−)', value: 1, max: 99999, min: -99999 }, { type: 'text', id: 'x', label: 'Motivo', value: 'conteo inicial' }], 'Guardar',
+  A.ajustar = (u, cod) => ask('Ajustar stock — ' + UBIC[u], 'Para cargar el stock inicial o corregir un conteo. Se registra en el libro de movimientos. Poné la diferencia: positivo suma, negativo resta.', [
+    { type: 'pieza', id: 'c', label: 'Pieza', value: cod || '' }, { id: 'n', label: 'Diferencia (+/−)', value: 1, max: 99999, min: -99999 }, { type: 'text', id: 'x', label: 'Motivo', value: 'conteo inicial' }], 'Guardar',
     v => { if (!v.n) throw new Error('La diferencia no puede ser 0.'); return rpc('mec_ajustar', { p_codigo: v.c, p_ubic: u, p_delta: v.n, p_motivo: v.x || 'ajuste' }); });
   A.nuevoPlan = def => {
     if (!C.recetas.length) { alert('Primero cargá una receta (macho + hembra → aro armado) en la sección Recetas.'); return; }
@@ -5467,7 +5472,7 @@ function showToast(message, kind) {
   const btn = (txt, js, cls, dis) => `<button class="${cls || ''}" ${dis ? 'disabled' : ''} onclick="${js}">${txt}</button>`;
   function alertPanel(u, quien, conPlan) {
     return alertas(u).map(c => { const n = nivel(u, c), L = lote(u, c);
-      const b = L <= 0 ? '' : (u === 'sector_z' ? (puedePlanificar() ? btn(`Cargar moldeo de ${L}`, `cir_moldeo(${L})`, 'pri') : '') : (conPlan && puedePlanificar() ? btn(`Crear plan de reposición de ${L}`, `cir_nuevoPlan(${L})`, 'pri') : ''));
+      const b = L <= 0 ? '' : (u === 'sector_z' ? (puedePlanificar() ? btn(`Cargar moldeo de ${L}`, `cir_moldeo(${L},'${esc(c)}')`, 'pri') : '') : (conPlan && puedePlanificar() ? btn(`Crear plan de reposición de ${L}`, `cir_nuevoPlan(${L})`, 'pri') : ''));
       return `<div class="alert"><div>${n === 'rojo' ? '🔴' : '🟡'} <b>${UBIC[u]} en ${n}</b> — ${esc(nombre(c))}: hay <b>${stock(c, u)}</b> (k = ${kOf(u, c)}). ${quien}<br><span class="code">Stock virtual ${sv(u, c)} = ${svTxt(u, c)}</span><br>${L > 0 ? `<b>Lote sugerido: ${L}</b>` : '<b>Ya hay suficiente en proceso: no hace falta pedir más.</b>'}</div>${b}</div>`; }).join('');
   }
   function shelf(u, actions) {
@@ -5509,6 +5514,70 @@ function showToast(message, kind) {
       `<div class="panel">${shelfHead('kanban', '🏬 Estantería kanban — después de Mecanizado')}<div class="sub">Producto terminado que se usa para kanban. Los pedidos retiran de acá. Plazo de reposición: <b>${C.cfg.plazo_kanban || '—'} días</b>. Stock virtual: estantería + planificado en Mecanizado − aros en notas de pedido.</div>
         ${shelf('kanban', c => puedeOperar() ? btn('Retirar para pedido…', `cir_retirar('${esc(c)}')`, 'pri', !stock(c, 'kanban') || !pedidosAbiertos(c).length) : '')}</div>`;
   }
+  // ---------- Moldeo / Fusión (pantalla aparte) ----------
+  function vMold() {
+    const hoy = TODAY(), n = C.moldeos.length, u = C.moldeos.reduce((a, o) => a + o.cantidad, 0);
+    const sug = alertas('sector_z').filter(c => lote('sector_z', c) > 0).map(c => ({ c, L: lote('sector_z', c), n: nivel('sector_z', c) })).sort((a, b) => (a.n === 'rojo' ? 0 : 1) - (b.n === 'rojo' ? 0 : 1));
+    const dias = o => Math.max(0, Math.round((parse(hoy) - parse(o.fecha)) / 86400000));
+    const plazo = C.cfg.plazo_sector_z || 21;
+    const rows = C.moldeos.slice().sort((a, b) => a.fecha.localeCompare(b.fecha) || a.id - b.id).map(o => { const d = dias(o);
+      return `<tr><td>${nameCell(o.codigo)}${o.nota ? `<div class="code">${esc(o.nota)}</div>` : ''}${C.k.some(r => r.codigo === o.codigo && r.ubicacion === 'sector_z') ? '' : '<div class="code">sin kanban definido</div>'}</td><td class="num"><b>${o.cantidad}</b></td>
+        <td>${fmt(o.fecha)}<div class="code">${d === 0 ? 'cargado hoy' : 'hace ' + d + (d === 1 ? ' día' : ' días')}</div></td>
+        <td><div class="row-actions">${puedeOperar() ? btn('Pasó a Terminación…', `cir_pasoTerm(${o.id})`, 'pri') : ''}${puedePlanificar() ? btn('🗑', `cir_delMoldeo(${o.id})`) : ''}</div></td></tr>`; }).join('');
+    const sugRows = sug.map(x => `<tr><td>${nameCell(x.c)}</td><td class="num">${stock(x.c, 'sector_z')}</td><td class="num">${kOf('sector_z', x.c)}</td><td class="num">${sv('sector_z', x.c)}<div class="code">${svTxt('sector_z', x.c)}</div></td>
+      <td><span class="${x.n === 'rojo' ? 'rep' : 'soon'}">${NIV[x.n]}</span></td><td class="num"><b class="soon">${x.L}</b></td><td>${puedePlanificar() ? btn('Cargar moldeo de ' + x.L, `cir_moldeo(${x.L},'${esc(x.c)}')`, 'pri') : ''}</td></tr>`).join('');
+    return `<div class="dia-head"><div class="dia-tiles">
+        <div class="tile"><div class="n">${n}</div><div class="l">cargas en moldeo / fusión</div></div>
+        <div class="tile"><div class="n">${u}</div><div class="l">piezas en curso</div></div>
+        <div class="tile ${sug.length ? 'hoy' : ''}"><div class="n">${sug.length}</div><div class="l">piezas que el kanban pide reponer</div></div></div>
+        <div>${puedePlanificar() ? btn('+ Cargar moldeo / fusión', 'cir_moldeo()', 'pri') : '<span class="code">Para cargar moldeo hace falta rol Editor.</span>'}</div></div>
+      <div class="panel"><h2>📌 El kanban pide reponer</h2><div class="sub">Piezas del kanban de Terminación (Sector Z) en amarillo o rojo. El lote sugerido ya descuenta lo que está en proceso (stock virtual). Plazo de reposición: ${plazo} días.</div>
+        ${sugRows ? `<table><tr><th>Pieza</th><th class="num">Estantería</th><th class="num">k</th><th class="num">Stock virtual</th><th>Nivel</th><th class="num">Lote sugerido</th><th></th></tr>${sugRows}</table>` : '<div class="empty">Ninguna pieza necesita reposición ahora.</div>'}</div>
+      <div class="panel"><h2>🏭 En moldeo / fusión ahora</h2><div class="sub">Cuentan en el stock virtual del kanban de Terminación. Cuando la pieza llega a Terminación, tocá <b>Pasó a Terminación</b> (total o parcial).</div>
+        ${rows ? `<table><tr><th>Pieza</th><th class="num">Cantidad</th><th>Cargado</th><th></th></tr>${rows}</table>` : '<div class="empty">No hay nada cargado en moldeo / fusión.</div>'}</div>`;
+  }
+
+  // ---------- Kanban: configuración + listado con stock físico y virtual ----------
+  const nivelV = (k, x) => x >= 2 * k ? 'verde' : x >= k ? 'amarillo' : 'rojo';
+  const SEV = { rojo: 0, amarillo: 1, verde: 2 };
+  function kanBar(k, f, v) {
+    const max = 2.5 * k, pc = x => Math.max(0, Math.min(100, x / max * 100)).toFixed(1);
+    const col = n => n === 'verde' ? 'var(--ok)' : n === 'rojo' ? 'var(--bad)' : 'var(--warn)';
+    return `<div class="kbar" title="Físico ${f} · Virtual ${v} · k ${k} · 2k ${2 * k}"><i style="width:${pc(f)}%; background:${col(nivelV(k, f))}"></i><b style="width:${pc(v)}%; border-color:${col(nivelV(k, v))}"></b><s style="left:${pc(k)}%"></s><s style="left:${pc(2 * k)}%"></s></div>`;
+  }
+  function vKan() {
+    const u = C.kanTab, nom = u === 'sector_z' ? 'Kanban de Terminación (Sector Z)' : 'Kanban de Mecanizado (estantería post-mecanizado)';
+    const plazoKey = u === 'sector_z' ? 'plazo_sector_z' : 'plazo_kanban';
+    const all = C.k.filter(r => r.ubicacion === u).map(r => { const c = r.codigo, k = r.k, f = stock(c, u), v = sv(u, c); return { c, k, f, v, nf: nivel(u, c), nv: nivelV(k, v), L: lote(u, c) }; });
+    const cnt = n => all.filter(x => x.nf === n).length;
+    const q = sane(C.kanQ);
+    const lista = all.filter(x => (C.kanFilter === 'todos' || x.nf === C.kanFilter) && q.every(w => (nombre(x.c) + ' ' + x.c).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(w)))
+      .sort((a, b) => SEV[a.nf] - SEV[b.nf] || SEV[a.nv] - SEV[b.nv] || nombre(a.c).localeCompare(nombre(b.c), 'es'));
+    const sinK = Object.keys(C.stock[u] || {}).filter(c => stock(c, u) > 0 && kOf(u, c) == null).sort((a, b) => nombre(a).localeCompare(nombre(b), 'es'));
+    const tabBtn = (k, t) => `<button class="tab ${C.kanTab === k ? 'on' : ''}" onclick="cirKanTab('${k}')">${t}</button>`;
+    const fchip = (k, t) => `<button class="tab ${C.kanFilter === k ? 'on' : ''}" onclick="cirKanFilter('${k}')">${t}</button>`;
+    const nivCell = n => `<span class="${n === 'verde' ? 'ok' : n === 'rojo' ? 'rep' : 'soon'}">${NIV[n]}</span>`;
+    const rows = lista.map(x => { const alerta = x.nf === 'amarillo' || x.nf === 'rojo';
+      return `<tr><td>${nameCell(x.c)}</td><td class="num"><b>${x.f}</b></td><td class="num"><b>${x.v}</b><div class="code">${esc(svTxt(u, x.c))}</div></td><td class="num">${x.k}<div class="code">2k = ${2 * x.k}</div></td>
+        <td style="min-width:120px">${kanBar(x.k, x.f, x.v)}</td><td>${nivCell(x.nf)}</td><td>${nivCell(x.nv)}</td>
+        <td class="num">${alerta ? (x.L > 0 ? `<b class="soon">${x.L}</b>` : '<span class="code">no hace falta</span>') : '—'}</td>
+        <td><div class="row-actions">${puedePlanificar() ? btn('Cambiar k', `cir_k('${u}','${esc(x.c)}')`) + btn('Ajustar stock', `cir_ajustar('${u}','${esc(x.c)}')`) : ''}${u === 'sector_z' && alerta && x.L > 0 && puedePlanificar() ? btn('Cargar moldeo de ' + x.L, `cir_moldeo(${x.L},'${esc(x.c)}')`, 'pri') : ''}</div></td></tr>`; }).join('');
+    return `<div class="tabs">${tabBtn('sector_z', '🗄️ Kanban de Terminación')}${tabBtn('kanban', '🏬 Kanban de Mecanizado')}</div>
+      <div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:center;"><h2>${nom}</h2>
+        <div class="row-actions">${puedePlanificar() ? btn('+ Agregar pieza al kanban', `cir_kNuevo('${u}')`, 'pri') + btn('Plazo: ' + (C.cfg[plazoKey] || '—') + ' días', `cir_plazo('${u}')`) : `<span class="code">Plazo de reposición: ${C.cfg[plazoKey] || '—'} días</span>`}</div></div>
+        <div class="sub">${u === 'sector_z' ? 'Piezas procesadas que llevan mecanizado. Stock físico = lo que hay en la estantería. Stock virtual = estantería + en Terminación + en moldeo/fusión − aros planificados sin entregar.' : 'Producto terminado después de Mecanizado. Stock físico = lo que hay en la estantería. Stock virtual = estantería + planificado en Mecanizado − aros en notas de pedido.'}
+          Nivel según k: verde 2k o más · amarillo entre k y 2k (avisa reponer) · rojo menos de k.</div>
+        <div class="dia-tiles" style="margin:10px 0;"><div class="tile"><div class="n">${all.length}</div><div class="l">piezas con kanban</div></div><div class="tile ${cnt('rojo') ? 'rojo' : ''}"><div class="n">${cnt('rojo')}</div><div class="l">🔴 rojo</div></div><div class="tile ${cnt('amarillo') ? 'hoy' : ''}"><div class="n">${cnt('amarillo')}</div><div class="l">🟡 amarillo</div></div><div class="tile"><div class="n">${cnt('verde')}</div><div class="l">🟢 verde</div></div></div>
+        <div class="tabs">${fchip('todos', 'Todas (' + all.length + ')')}${fchip('rojo', '🔴 Rojo (' + cnt('rojo') + ')')}${fchip('amarillo', '🟡 Amarillo (' + cnt('amarillo') + ')')}${fchip('verde', '🟢 Verde (' + cnt('verde') + ')')}
+          <input id="kan-q" class="kq" placeholder="Buscar pieza…" value="${esc(C.kanQ)}" oninput="cirKanQ(this.value)"></div>
+        ${rows ? `<table><tr><th>Pieza</th><th class="num">Físico</th><th class="num">Virtual</th><th class="num">k</th><th>Físico ▮ · virtual ▯</th><th>Nivel físico</th><th>Nivel virtual</th><th class="num">Lote sugerido</th><th></th></tr>${rows}</table>`
+          : `<div class="empty">${all.length ? 'Ninguna pieza coincide con el filtro.' : 'Todavía no hay piezas con kanban acá. Tocá "+ Agregar pieza al kanban", elegí la pieza y definí su k.'}</div>`}</div>
+      ${sinK.length ? `<div class="panel"><h2>Piezas con stock pero sin kanban definido (${sinK.length})</h2><div class="sub">Tienen stock en esta estantería pero no tienen k, así que no se controlan.</div><table>${sinK.map(c => `<tr><td>${nameCell(c)}</td><td class="num">${stock(c, u)}</td><td>${puedePlanificar() ? btn('Definir k', `cir_k('${u}','${esc(c)}')`, 'pri') : ''}</td></tr>`).join('')}</table></div>` : ''}`;
+  }
+  window.cirKanTab = t => { C.kanTab = t; render(); };
+  window.cirKanFilter = f => { C.kanFilter = f; render(); };
+  window.cirKanQ = t => { C.kanQ = t; render(); const e = document.getElementById('kan-q'); if (e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); } };
+
   function vPlan() {
     const mon = mondayOf(TODAY()), cells = [];
     for (let w = 0; w < 4; w++) for (let d = 0; d < 5; d++) cells.push(addD(mon, w * 7 + d));
@@ -5608,6 +5677,8 @@ function showToast(message, kind) {
     { key: 'full', sec: 'circuito', label: '📅 Programación mecanizado', desc: 'Cronograma, planificación y kanban completos (jefe de planta / planificación)', title: '🔩 Programación mecanizado: Terminación → Sector Z → Mecanizado → Kanban' },
     { key: 'mec', sec: 'prog_mecanizado', label: '⚙️ Mecanizado — mi programa del día', desc: 'Solo lo que Mecanizado tiene que armar, resaltado por día', title: '⚙️ Mecanizado' },
     { key: 'term', sec: 'prog_terminacion', label: '🔧 Terminación — mis entregas del día', desc: 'Solo lo que Terminación tiene que entregar hoy', title: '🔧 Terminación' },
+    { key: 'mold', sec: 'kanban_moldeo', label: '🏭 Moldeo / Fusión — cargar piezas', desc: 'Cargar lo que se manda a moldear y fundir para kanban y ver lo que está en curso', title: '🏭 Moldeo / Fusión para kanban' },
+    { key: 'kan', sec: 'kanban', label: '🏬 Kanban — configuración y stock', desc: 'Piezas con kanban de Terminación y de Mecanizado: k, stock físico y virtual', title: '🏬 Kanban — configuración y stock' },
   ];
   const puede = sec => (typeof puedeVer === 'function') ? puedeVer(sec) : false;
   const misVistas = () => VIEWS.filter(v => puede(v.sec));
@@ -5645,6 +5716,8 @@ function showToast(message, kind) {
   #cir-root .dia-tiles { display:flex; gap:8px; flex-wrap:wrap; } #cir-root .tile { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 14px; text-align:center; min-width:110px; }
   #cir-root .tile .n { font-size:1.7rem; font-weight:800; color:#fff; } #cir-root .tile .l { font-size:.72rem; color:var(--dim); }
   #cir-root .tile.hoy { border-color:var(--warn); background:rgba(251,191,36,.1); } #cir-root .tile.hoy .n { color:var(--warn); } #cir-root .tile.rojo { border-color:var(--bad); background:rgba(248,113,113,.1); } #cir-root .tile.rojo .n { color:var(--bad); }
+  #cir-root .kbar { position:relative; height:12px; background:#0f172a; border:1px solid var(--line); border-radius:6px; overflow:hidden; } #cir-root .kbar i { position:absolute; left:0; top:0; height:50%; } #cir-root .kbar b { position:absolute; left:0; bottom:0; height:50%; border-right:3px solid; background:rgba(148,163,184,.35); } #cir-root .kbar s { position:absolute; top:0; bottom:0; width:1px; background:#e2e8f0; opacity:.7; }
+  #cir-root .kq { background:#0f172a; color:#fff; border:1px solid var(--line); border-radius:7px; padding:6px 9px; font-size:.85rem; margin-left:auto; min-width:160px; }
   #cir-root .sec-title { font-size:.8rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--dim); margin:14px 0 6px; }
   #cir-root .card { background:var(--card); border:2px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:10px; }
   #cir-root .card.c-hoy { border-color:var(--warn); background:linear-gradient(180deg, rgba(251,191,36,.12), var(--card)); } #cir-root .card.c-late { border-color:var(--bad); background:linear-gradient(180deg, rgba(248,113,113,.14), var(--card)); }
@@ -5672,7 +5745,7 @@ function showToast(message, kind) {
       document.getElementById('cir-flow').innerHTML = ''; document.getElementById('cir-tabs').innerHTML = '';
       if (C.error) { screen.innerHTML = `<div class="err">${esc(C.error)}</div>`; return; }
       if (!C.loaded) { screen.innerHTML = '<div class="empty">Cargando…</div>'; return; }
-      try { screen.innerHTML = (C.mode === 'mec' ? vDiaMec : vDiaTerm)(); } catch (e) { console.error('Programación mecanizado:', e); screen.innerHTML = '<div class="err">Error al mostrar esta pantalla: ' + esc(e.message) + '</div>'; }
+      try { screen.innerHTML = ({ mec: vDiaMec, term: vDiaTerm, mold: vMold, kan: vKan }[C.mode] || vDiaTerm)(); } catch (e) { console.error('Programación mecanizado:', e); screen.innerHTML = '<div class="err">Error al mostrar esta pantalla: ' + esc(e.message) + '</div>'; }
       return;
     }
     if (C.error) { document.getElementById('cir-flow').innerHTML = ''; document.getElementById('cir-tabs').innerHTML = ''; screen.innerHTML = `<div class="err">${esc(C.error)}</div>`; return; }
