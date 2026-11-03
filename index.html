@@ -5713,10 +5713,12 @@ function showToast(message, kind) {
   A.ajustar = (u, cod) => ask('Ajustar stock — ' + UBIC[u], 'Para cargar el stock inicial o corregir un conteo. Se registra en el libro de movimientos. Poné la diferencia: positivo suma, negativo resta.', [
     { type: 'pieza', id: 'c', label: 'Pieza', value: cod || '' }, { id: 'n', label: 'Diferencia (+/−)', value: 1, max: 99999, min: -99999 }, { type: 'text', id: 'x', label: 'Motivo', value: 'conteo inicial' }], 'Guardar',
     v => { if (!v.n) throw new Error('La diferencia no puede ser 0.'); return rpc('mec_ajustar', { p_codigo: v.c, p_ubic: u, p_delta: v.n, p_motivo: v.x || 'ajuste' }); });
-  A.nuevoPlan = def => {
+  A.nuevoPlan = (def, cod) => {
     if (!C.recetas.length) { alert('Primero cargá una receta (macho + hembra → aro armado) en la sección Recetas.'); return; }
+    const rDe = cod ? C.recetas.find(r => r.salida === cod) : null;
+    if (cod && !rDe) { alert('Esta pieza todavía no tiene receta (macho + hembra → aro armado). Cargala primero en Programación mecanizado → Recetas y después creá el plan.'); return; }
     ask('Nuevo plan de armado', 'Cuántos aros arma Mecanizado y para qué día. Terminación entrega el día hábil anterior.', [
-      { type: 'select', id: 'r', label: 'Aro a armar', options: C.recetas.map(r => [r.id, r.nombre]), value: C.recetas[0].id }, { id: 'n', label: 'Cantidad de aros', value: def || 10, max: 9999 }, { type: 'date', id: 'f', label: 'Fecha en que Mecanizado lo arma', value: bizN(4) }], 'Crear plan',
+      { type: 'select', id: 'r', label: 'Aro a armar', options: C.recetas.map(r => [r.id, r.nombre]), value: (rDe || C.recetas[0]).id }, { id: 'n', label: 'Cantidad de aros', value: def || 10, max: 9999 }, { type: 'date', id: 'f', label: 'Fecha en que Mecanizado lo arma', value: bizN(4) }], 'Crear plan',
       v => tbl(supabaseClient.from('mec_planes').insert({ receta: v.r, cantidad: v.n, fecha: v.f })));
   };
   A.cambiarFecha = pid => { const p = C.planes.find(x => x.id === pid);
@@ -5918,7 +5920,7 @@ function showToast(message, kind) {
         <td style="min-width:80px">${kanBar(x.k, x.f, x.v)}</td><td>${nivCell(x.nf)}</td><td>${nivCell(x.nv)}</td>
         <td class="num">${alerta ? (x.L > 0 ? `<b class="soon">${x.L}</b>` : '<span class="code">no hace falta</span>') : '—'}</td>
         <td class="num">${kgTxt(x.c)}${puedePlanificar() ? '<div>' + btn(kgDe(x.c) ? 'Kg/u' : 'Cargar Kg/u', `cir_kg('${esc(x.c)}')`) + '</div>' : ''}</td>
-        <td><div class="row-actions">${puedePlanificar() ? btn('Cambiar k', `cir_k('${u}','${esc(x.c)}')`) + btn('Ajustar stock', `cir_ajustar('${u}','${esc(x.c)}')`) : ''}${u === 'sector_z' && alerta && x.L > 0 && puedePlanificar() ? btn('Cargar moldeo de ' + x.L, `cir_moldeo(${x.L},'${esc(x.c)}')`, 'pri') : ''}</div></td></tr>`; }).join('');
+        <td><div class="row-actions">${puedePlanificar() ? btn('Cambiar k', `cir_k('${u}','${esc(x.c)}')`) + btn('Ajustar stock', `cir_ajustar('${u}','${esc(x.c)}')`) : ''}${u === 'sector_z' && alerta && x.L > 0 && puedePlanificar() ? btn('Cargar moldeo de ' + x.L, `cir_moldeo(${x.L},'${esc(x.c)}')`, 'pri') : ''}${u === 'kanban' && alerta && x.L > 0 && puedePlanificar() ? btn('Crear plan de ' + x.L, `cir_nuevoPlan(${x.L},'${esc(x.c)}')`, 'pri') : ''}</div></td></tr>`; }).join('');
     return `<div class="tabs">${tabBtn('sector_z', '🗄️ Kanban de Terminación')}${tabBtn('kanban', '🏬 Kanban de Mecanizado')}</div>
       <div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:center;"><h2>${nom}</h2>
         <div class="row-actions">${puedePlanificar() ? btn('+ Agregar pieza al kanban', `cir_kNuevo('${u}')`, 'pri') + btn('Plazo: ' + (C.cfg[plazoKey] || '—') + ' días', `cir_plazo('${u}')`) : `<span class="code">Plazo de reposición: ${C.cfg[plazoKey] || '—'} días</span>`}</div></div>
