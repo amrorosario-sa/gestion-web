@@ -3106,7 +3106,7 @@ function renderIndicadoresPanel() {
 
     <div class="ind-tiles">
       ${tile('Despachado', fmtN(A.desKg) + ' Kg', `${fmtN(A.desU)} u. · ${A.desN} despacho${A.desN === 1 ? '' : 's'}<br>${deltaHtml(A.desKg, B.desKg)}`, '#c084fc')}
-      ${tile('Fundido', hayFundidos ? fmtN(A.funKg) + ' Kg' : '—', hayFundidos ? `${fmtN(A.funU)} u. pasaron a Terminación<br>${deltaHtml(A.funKg, B.funKg)}` : 'Se empieza a registrar con la próxima actualización de SGA', '#34d399')}
+      ${tile('Fundido', hayFundidos ? fmtN(A.funKg) + ' Kg' : '—', hayFundidos ? `${fmtN(A.funU)} u. pasaron a Terminación o se moldearon para kanban<br>${deltaHtml(A.funKg, B.funKg)}` : 'Se empieza a registrar con la próxima actualización de SGA', '#34d399')}
       ${tile('Rechazo', fmtN(A.recKg) + ' Kg', `${fmtN(A.recU)} u. · ${A.recN} registro${A.recN === 1 ? '' : 's'}<br>${deltaHtml(A.recKg, B.recKg, true)}`, '#ef4444')}
       ${tile('% rechazo s/ fundido', pctRec == null ? '—' : fmtN(pctRec, 1) + ' %', pctRec == null ? 'Hace falta fundido registrado en el período' : `Rechazo ÷ fundido<br>${pctRecPrev == null ? '<span class="text-dim">período anterior sin datos</span>' : deltaHtml(pctRec, pctRecPrev, true)}`, '#fbbf24')}
       ${tile('Entregas en fecha', A.cumpl == null ? '—' : fmtN(A.cumpl * 100) + ' %', A.cumpl == null ? 'Se mide con los despachos que guardan su fecha de entrega (desde que se activó)' : `${A.cumplN} de ${A.cumplDesN} despachos con fecha · por Kg<br>${B.cumpl == null ? '<span class="text-dim">período anterior sin datos</span>' : deltaHtml(A.cumpl, B.cumpl)}`, A.cumpl == null ? '#94a3b8' : (A.cumpl >= 0.9 ? '#22c55e' : '#fbbf24'))}
@@ -3114,7 +3114,7 @@ function renderIndicadoresPanel() {
 
     <div class="ind-grid">
       ${card('🚚 Despachado por semana', `Kg · últimas 8 semanas · total ${tot8('desKg')} Kg`, semChart('desKg', 'Despachado', '#c084fc'))}
-      ${card('🔥 Fundido por semana', `Kg que pasaron a Terminación · total ${tot8('funKg')} Kg`, hayFundidos ? semChart('funKg', 'Fundido', '#34d399') : '<div class="text-dim" style="padding:30px 8px; text-align:center; font-size:0.8rem;">Se empieza a registrar con la próxima actualización diaria de SGA.</div>')}
+      ${card('🔥 Fundido por semana', `Kg que pasaron a Terminación (más lo moldeado para kanban) · total ${tot8('funKg')} Kg`, hayFundidos ? semChart('funKg', 'Fundido', '#34d399') : '<div class="text-dim" style="padding:30px 8px; text-align:center; font-size:0.8rem;">Se empieza a registrar con la próxima actualización diaria de SGA.</div>')}
       ${card('❌ Rechazo por semana', `Kg · total ${tot8('recKg')} Kg`, semChart('recKg', 'Rechazo', '#ef4444'))}
       ${card('📥 Ingresado vs despachado por mes', 'Kg · últimos 6 meses · <span style="color:#38bdf8;">■</span> ingresado <span style="color:#c084fc;">■</span> despachado', ingDes + (hayIngresos ? '<div class="text-dim" style="font-size:0.66rem; padding:2px 2px 6px;">Los meses anteriores a la activación solo incluyen lo que sigue pendiente en SGA, así que quedan incompletos.</div>' : '<div class="text-dim" style="font-size:0.66rem; padding:2px 2px 6px;">Falta correr el SQL 007 para cargar los ingresos.</div>'))}
       ${card('📉 Pareto de rechazos por motivo', `Total del período: ${fmtN(totalP, med === 'kg' ? 1 : 0)} ${med === 'kg' ? 'Kg' : 'u.'} · línea amarilla = % acumulado`, pareto, medBtns)}
@@ -4541,6 +4541,16 @@ function showToast(message, kind) {
       }
       showModal('🚚 Detalle del Despacho', html);
     }
+    // Prioridad con despacho parcial: queda anotado cuánto salió y cuánto falta.
+    function prioridadDespNota(r, nivel) {
+      if (!nivel) return '';
+      const b = baseRow(r.id);
+      const salio = despCant(r.id);
+      if (!b || !(salio > 0)) return '';
+      const falta = Math.max(0, (Number(b.pend) || 0) - salio);
+      if (!(falta > 0)) return '';
+      return `<div class="text-dim" style="margin-top:3px; font-size:0.7rem; line-height:1.3;">🚚 Salieron ${salio.toLocaleString()} u.<br>Quedan ${falta.toLocaleString()} u. pendientes</div>`;
+    }
     function buildPrioridadCellHtml(r) {
       const nivel = getPriority(r.id);
       if (canSetPriority) {
@@ -4549,9 +4559,9 @@ function showToast(message, kind) {
             <option value="" ${nivel===''?'selected':''}>— Normal</option>
             <option value="media" ${nivel==='media'?'selected':''}>🟡 Media</option>
             <option value="alta" ${nivel==='alta'?'selected':''}>🔴 Alta</option>
-          </select>`;
+          </select>${prioridadDespNota(r, nivel)}`;
       }
-      return nivel ? `<span class="pill pill-${nivel==='alta'?'danger':'warning'}">${PRIORIDAD_LABEL[nivel]}</span>` : '<span class="text-dim">—</span>';
+      return (nivel ? `<span class="pill pill-${nivel==='alta'?'danger':'warning'}">${PRIORIDAD_LABEL[nivel]}</span>` : '<span class="text-dim">—</span>') + prioridadDespNota(r, nivel);
     }
 
     function renderTable(rows) {
@@ -5652,7 +5662,7 @@ function showToast(message, kind) {
   A.pasoTerm = id => { const o = C.moldeos.find(x => x.id === id);
     ask('Pasó a Terminación', esc(nombre(o.codigo)) + ' — en moldeo/fusión: ' + o.cantidad, [{ id: 'n', label: 'Cantidad que pasó (máx. ' + o.cantidad + ')', value: o.cantidad, max: o.cantidad }], 'Pasar a Terminación',
       v => rpc('mec_moldeo_a_terminacion', { p_id: id, p_cant: v.n })); };
-  A.delMoldeo = async id => { if (!confirm('¿Borrar este moldeo cargado?')) return; try { await tbl(supabaseClient.from('mec_moldeos').delete().eq('id', id)); await reload(); } catch (e) { alert(e.message); } };
+  A.delMoldeo = async id => { if (!confirm('¿Borrar este moldeo cargado?')) return; try { { const r = await supabaseClient.rpc('mec_moldeo_borrar', { p_id: id }); if (r.error) { if (/Could not find the function|schema cache/i.test(r.error.message || '')) await tbl(supabaseClient.from('mec_moldeos').delete().eq('id', id)); else throw new Error(r.error.message); } } await reload(); } catch (e) { alert(e.message); } };
   A.k = (u, c) => { const cur = kOf(u, c); const plazo = C.cfg[u === 'sector_z' ? 'plazo_sector_z' : 'plazo_kanban'];
     ask('Cantidad k — ' + UBIC[u], esc(nombre(c)) + `<br>k es lo que se consume durante el plazo de reposición (${plazo} días). Verde: 2k o más · amarillo: entre 1k y 2k (avisa reponer) · rojo: menos de 1k. Poné 0 para quitarlo.`,
       [{ id: 'n', label: 'k (unidades)', value: cur == null ? 0 : cur, max: 99999, min: 0 }], 'Guardar',
