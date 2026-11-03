@@ -440,6 +440,8 @@
       <button class="hdr-btn" id="admin-btn" style="display:none;" onclick="openAdminDialog()">👥 Usuarios y permisos</button>
       <button class="hdr-btn" id="area-btn" style="display:none;" onclick="openAreaDialog()">🗂️ Áreas</button>
       <button class="hdr-btn" id="cir-btn" style="display:none;" onclick="window.cirMenu && window.cirMenu()">🔩 Programación mecanizado</button>
+      <button class="hdr-btn" id="mold-btn" style="display:none;" onclick="window.cirOpen && window.cirOpen('mold')">🏭 Moldeo / Fusión</button>
+      <button class="hdr-btn" id="kan-btn" style="display:none;" onclick="window.cirOpen && window.cirOpen('kan')">🏬 Kanban</button>
       <button class="hdr-btn" id="ven-btn" style="display:none;" onclick="window.venOpen && window.venOpen()">💰 Ventas</button>
       <button class="hdr-btn" id="mec-btn" style="display:none;" onclick="openMecDialog()">🔩 Mecanizado</button>
       <span class="badge-live" id="asof-badge">ACTUALIZADO</span>
@@ -1188,7 +1190,7 @@ let CURRENT_PROFILE = null; // { id, email, nombre, rol, es_inspector_final }
 
 // Tablas cuya clave primaria es item_id (no "id") — mismo patrón que usaba
 // la vieja colección Firestore .doc(itemId), ahora contra Postgres.
-const ITEM_KEYED_TABLES = new Set(['preparados', 'despachado', 'avance_manual', 'prioridades']);
+const ITEM_KEYED_TABLES = new Set(['preparados', 'despachado', 'avance_manual', 'prioridades', 'avance_etapas']);
 function pkColFor(table) { return ITEM_KEYED_TABLES.has(table) ? 'item_id' : 'id'; }
 
 // "prioridades.nivel" en la base tiene el check constraint ('Alta','Media')
@@ -1907,6 +1909,7 @@ async function bootApp() {
   }
 
   await loadEntregas();
+  await loadAvanceEtapas();
   rebuildData();
   renderKpis();
   initSelects();
@@ -2018,7 +2021,8 @@ function recomputeEffectiveStages() {
       return;
     }
     const man = manualRankFor(row.id);
-    const effRank = (man != null) ? Math.max(realRank, man) : realRank;
+    let effRank = (man != null) ? Math.max(realRank, man) : realRank;
+    if (row._stRank != null) effRank = Math.max(effRank, row._stRank);
     row.estado_general = effRank >= 5 ? 'Fundido / En Terminación' : 'En Fabricación';
     row.area_actual = STAGE_LABELS[effRank];
     row.alerta_entrega = computeAlerta(row.estado_general, row.fecha_entrega);
@@ -2065,10 +2069,85 @@ function buildAvanceManualHtml(r) {
   const badge = r._manualApplied
     ? '<div style="margin-top:4px;"><span class="pill" style="background:rgba(56,189,248,0.15); color:#38bdf8; border:1px solid rgba(56,189,248,0.35);">✋ Avance manual</span></div>'
     : '';
+  const stBtn = (puedeDividir() && realRank >= 2 && realRank < 5)
+    ? `<button type="button" style="margin-top:5px;background:transparent;border:1px solid var(--card-border);color:#94a3b8;border-radius:6px;padding:3px 9px;font-size:0.72rem;cursor:pointer;" onclick="event.stopPropagation(); if (window.closeDetailModal) closeDetailModal(); openAvanceParcial(${r.id})">↪ Pasar parcial…</button>`
+    : '';
   return `<div style="margin-top:6px;">
     <select class="avance-select" style="width:100%; background:#0f172a; border:1px solid var(--card-border); color:#fff; border-radius:6px; padding:4px 6px; font-size:0.72rem;" onchange="saveAvanceManual(${r.id}, this.value, this)">${opts}</select>
-    ${badge}
+    ${badge}${stBtn}
   </div>`;
+}
+
+// ---- Pasar un parcial de una etapa a otra (Ingeniería → Moldeo/Fusión → Terminación) ----
+let avanceParcialState = null;
+function avanceParcialDistribucion(id) {
+  const base = baseRow(id);
+  if (!base) return null;
+  const st = realStatusFromFlags(base);
+  if (st.cancelado || st.rank >= 5 || st.rank < 2) return null;
+  const rk = st.rank, P = Number(base.pend) || 0;
+  const av = avanceEtapasMap[String(id)] || { a_moldeo: 0, a_term: 0 };
+  const nt = rk >= 5 ? 0 : Math.min(av.a_term, P);
+  const nm = rk >= 4 ? 0 : Math.min(Math.max(av.a_moldeo, av.a_term), P);
+  const enTerm = nt;
+  const enMold = rk >= 4 ? P - nt : nm - nt;
+  const enOrig = rk >= 4 ? 0 : P - nm;
+  return { base, rk, P, enOrig, enMold, enTerm, origen: rk === 3 ? 'No Planificado' : 'Ingeniería' };
+}
+function openAvanceParcial(id) {
+  const d = avanceParcialDistribucion(id);
+  if (!d) { alert('Este pedido no se puede pasar por partes (está cancelado, todavía en Comercial/Administración, o ya está completo en Terminación).'); return; }
+  const opciones = [];
+  if (d.rk < 4 && d.enOrig > 0) opciones.push({ k: 'a_moldeo', max: d.enOrig, txt: `${d.origen} → Moldeo / Fusión (hay ${d.enOrig.toLocaleString()} en ${d.origen})` });
+  if (d.enMold > 0) opciones.push({ k: 'a_term', max: d.enMold, txt: `Moldeo / Fusión → Terminación (hay ${d.enMold.toLocaleString()} en Moldeo / Fusión)` });
+  if (d.enTerm > 0) opciones.push({ k: 'v_moldeo', max: d.enTerm, txt: `Terminación → volver a Moldeo / Fusión (hay ${d.enTerm.toLocaleString()} pasadas a mano)` });
+  if (d.rk < 4 && d.enMold > 0) opciones.push({ k: 'v_origen', max: d.enMold, txt: `Moldeo / Fusión → volver a ${d.origen} (hay ${d.enMold.toLocaleString()})` });
+  if (!opciones.length) { alert('No hay unidades para mover.'); return; }
+  avanceParcialState = { id, d, opciones };
+  const b = d.base;
+  showStockDialog(`
+    <h3>↪ Pasar un parcial</h3>
+    <div class="text-dim" style="margin-bottom:12px; line-height:1.5;">${escHtml(b.cliente)} — <span style="color:#fff;">${escHtml(b.descripcion)}</span> (NV ${escHtml(b.comprobante)})<br>
+      Pendiente: <b style="color:#fff;">${d.P.toLocaleString()} u.</b> ·
+      ${d.origen}: <b style="color:#fff;">${d.enOrig.toLocaleString()}</b> ·
+      Moldeo / Fusión: <b style="color:#fff;">${d.enMold.toLocaleString()}</b> ·
+      Terminación: <b style="color:#fff;">${d.enTerm.toLocaleString()}</b></div>
+    <div class="stock-field"><label>¿Qué querés mover?</label><select id="avp-accion" onchange="avanceParcialCambio()">${opciones.map((o, i) => `<option value="${i}">${escHtml(o.txt)}</option>`).join('')}</select></div>
+    <div class="stock-field"><label>Cantidad de unidades</label><input type="number" id="avp-cant" min="1" step="1" value="${Math.min(opciones[0].max, opciones[0].max)}" max="${opciones[0].max}"></div>
+    <div class="text-dim" style="font-size:0.75rem; margin-bottom:12px;">El pedido se separa en filas: las unidades que pasaste aparecen en la etapa nueva y el resto sigue donde estaba.</div>
+    <div class="stock-actions">
+      <button class="stock-btn-cancel" onclick="closeStockDialog()">Cancelar</button>
+      <button class="stock-btn-primary" id="avp-ok" onclick="confirmAvanceParcial()">Pasar</button>
+    </div>`);
+}
+function avanceParcialCambio() {
+  const st = avanceParcialState; if (!st) return;
+  const o = st.opciones[Number(document.getElementById('avp-accion').value)];
+  const inp = document.getElementById('avp-cant');
+  inp.max = o.max; inp.value = o.max;
+}
+async function confirmAvanceParcial() {
+  const st = avanceParcialState; if (!st) return;
+  const o = st.opciones[Number(document.getElementById('avp-accion').value)];
+  const n = Number(document.getElementById('avp-cant').value);
+  if (!(n > 0) || n !== Math.floor(n)) { alert('Poné una cantidad entera mayor a 0.'); return; }
+  if (n > o.max) { alert('No puede ser más de ' + o.max.toLocaleString() + '.'); return; }
+  const btn = document.getElementById('avp-ok');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+  try {
+    const { error } = await supabaseClient.rpc('avance_parcial', { p_item: st.id, p_accion: o.k, p_cant: n });
+    if (error) throw error;
+    await loadAvanceEtapas();
+    rebuildData(); renderKpis(); applyFilters();
+    closeStockDialog();
+    showToast('Parcial pasado: ' + n.toLocaleString() + ' u.', 'success');
+  } catch (e) {
+    console.error('No se pudo pasar el parcial:', e);
+    const m = (e && e.message) || '';
+    alert((e && (e.code === 'PGRST202' || /avance_parcial/.test(m) && /not find|does not exist/i.test(m)))
+      ? 'La base todavía no tiene esta función. Avisale a quien administra el tablero (falta correr el SQL 015).' : 'No se pudo pasar el parcial. ' + m);
+    if (btn) { btn.disabled = false; btn.textContent = 'Pasar'; }
+  }
 }
 
 function isVencidaTerminacion(row) {
@@ -2110,7 +2189,9 @@ let catalogoByCodigo = new Map();
 let BASE = [];
 let BASE_BY_ID = new Map();
 let entregasByItem = {};      // item_id -> [{id, cantidad, fecha_entrega}]
-let SPLIT_ROWS = {};          // item_id -> filas visibles (entregas pendientes) en orden de fecha
+let SPLIT_ROWS = {};          // item_id -> filas visibles (entregas pendientes + parciales por etapa) en orden de fecha
+let ENTREGA_ROWS = {};        // item_id -> filas por ENTREGA (sin separar por etapa): lo que edita "Dividir en entregas"
+let avanceEtapasMap = {};     // item_id -> { a_moldeo, a_term }: unidades que ya pasaron a Moldeo/Fusión / a Terminación (parcial a mano)
 let ROW_BY_KEY = new Map();
 function rowKey(r) { return r._pk || String(r.id); }
 function findRow(key) { return ROW_BY_KEY.get(String(key)); }
@@ -2122,6 +2203,50 @@ function setEntregas(rows) {
     (m[r.item_id] = m[r.item_id] || []).push({ id: r.id, cantidad: Number(r.cantidad), fecha_entrega: r.fecha_entrega });
   });
   entregasByItem = m;
+}
+function setAvanceEtapas(rows) {
+  const m = {};
+  (rows || []).forEach(r => { m[String(r.item_id)] = { a_moldeo: Number(r.a_moldeo) || 0, a_term: Number(r.a_term) || 0 }; });
+  avanceEtapasMap = m;
+}
+async function loadAvanceEtapas() {
+  try {
+    const { data, error } = await supabaseClient.from('avance_etapas').select('*').range(0, 4999);
+    if (error) throw error;
+    setAvanceEtapas(data || []);
+  } catch (e) {
+    console.warn('avance_etapas no disponible (falta el SQL 015):', e && e.message);
+    setAvanceEtapas([]);
+  }
+}
+// Separa las filas de un ítem según lo que ya se pasó a mano a Moldeo/Fusión y a Terminación.
+// Las unidades que avanzaron se toman de las entregas más próximas primero.
+function stageSplitRows(it, rows) {
+  const av = avanceEtapasMap[String(it.id)];
+  if (!av) return rows;
+  const st = realStatusFromFlags(it);
+  if (st.cancelado || st.rank >= 5 || st.rank < 2) return rows;
+  const P = rows.reduce((a, r) => a + (Number(r.pend) || 0), 0);
+  let T = Math.min(av.a_term, P);
+  let M = st.rank < 4 ? Math.max(0, Math.min(Math.max(av.a_moldeo, av.a_term), P) - T) : 0;
+  if (T <= 0.0001 && M <= 0.0001) return rows;
+  const out = [];
+  rows.forEach(r => {
+    let p = Number(r.pend) || 0;
+    const tot = p;
+    const t = Math.min(p, T); T -= t; p -= t;
+    const m = Math.min(p, M); M -= m; p -= m;
+    const piezas = [[t, 5], [m, 4], [p, null]].filter(x => x[0] > 0.0001);
+    if (piezas.length === 1 && piezas[0][1] == null) { out.push(r); return; }
+    const base = r._pk || String(r.id);
+    piezas.forEach(([q, rank]) => {
+      out.push({
+        ...r, _pk: base + '@' + (rank == null ? 'r' : rank), _stRank: rank, _stQ: q,
+        pend: q, cant: q, kilos: tot > 0 ? r.kilos * q / tot : 0,
+      });
+    });
+  });
+  return out;
 }
 async function loadEntregas() {
   try {
@@ -2140,32 +2265,40 @@ async function loadEntregas() {
 }
 function expandItems(items) {
   SPLIT_ROWS = {};
+  ENTREGA_ROWS = {};
   const out = [];
   items.forEach(it => {
     const parts = (entregasByItem[it.id] || []).slice()
       .sort((a, b) => (a.fecha_entrega || '').localeCompare(b.fecha_entrega || '') || a.id - b.id);
-    if (!parts.length) { out.push(it); return; }
-    const S = parts.reduce((sum, p) => sum + p.cantidad, 0);
-    const pend = Number(it.pend) || 0;
-    let entregado = Math.max(0, S - pend);   // lo que SGA ya dio por entregado se descuenta de las primeras
-    const vivos = [];
-    parts.forEach((p, idx) => {
-      const usado = Math.min(p.cantidad, entregado);
-      entregado -= usado;
-      const rem = p.cantidad - usado;
-      if (rem > 0.0001) vivos.push({ p, idx, rem });
-    });
-    if (!vivos.length) { out.push(it); return; }
-    if (pend > S) vivos[vivos.length - 1].rem += (pend - S);   // SGA subió el pedido: lo que sobra va a la última
-    const filas = vivos.map(v => ({
-      ...it,
-      _pk: it.id + '#' + v.p.id, _partId: v.p.id, _parte: v.idx + 1, _partes: parts.length,
-      cant: v.p.cantidad, pend: v.rem,
-      kilos: it.kxu > 0 ? it.kxu * v.p.cantidad : (it.cant > 0 ? it.kilos * v.p.cantidad / it.cant : it.kilos),
-      fecha_entrega: v.p.fecha_entrega,
-    }));
-    SPLIT_ROWS[it.id] = filas;
-    out.push(...filas);
+    let filas = null;
+    if (parts.length) {
+      const S = parts.reduce((sum, p) => sum + p.cantidad, 0);
+      const pend = Number(it.pend) || 0;
+      let entregado = Math.max(0, S - pend);   // lo que SGA ya dio por entregado se descuenta de las primeras
+      const vivos = [];
+      parts.forEach((p, idx) => {
+        const usado = Math.min(p.cantidad, entregado);
+        entregado -= usado;
+        const rem = p.cantidad - usado;
+        if (rem > 0.0001) vivos.push({ p, idx, rem });
+      });
+      if (vivos.length) {
+        if (pend > S) vivos[vivos.length - 1].rem += (pend - S);   // SGA subió el pedido: lo que sobra va a la última
+        filas = vivos.map(v => ({
+          ...it,
+          _pk: it.id + '#' + v.p.id, _partId: v.p.id, _parte: v.idx + 1, _partes: parts.length,
+          cant: v.p.cantidad, pend: v.rem,
+          kilos: it.kxu > 0 ? it.kxu * v.p.cantidad : (it.cant > 0 ? it.kilos * v.p.cantidad / it.cant : it.kilos),
+          fecha_entrega: v.p.fecha_entrega,
+        }));
+        ENTREGA_ROWS[it.id] = filas;
+      }
+    }
+    const base = filas || [it];
+    const fin = stageSplitRows(it, base);
+    if (fin === base && !filas) { out.push(it); return; }
+    SPLIT_ROWS[it.id] = fin;
+    out.push(...fin);
   });
   return out;
 }
@@ -2182,8 +2315,11 @@ function splitShares(id) {
   let P = Math.max(0, prepCant(id));
   let D = Math.max(0, despCant(id));
   const sh = {};
-  rows.forEach((r, i) => {
-    const prep = (i === rows.length - 1) ? P : Math.min(r.pend, P);
+  // si hay parciales por etapa, lo preparado/despachado solo puede estar en las filas que ya están en Terminación
+  const elegibles = rows.some(r => r._stRank !== undefined) ? rows.filter(r => r._stRank === 5) : rows;
+  rows.forEach(r => { sh[r._pk] = { prep: 0, desp: 0 }; });
+  elegibles.forEach((r, i) => {
+    const prep = (i === elegibles.length - 1) ? P : Math.min(r.pend, P);
     P -= prep;
     sh[r._pk] = { prep, desp: 0 };
   });
@@ -2326,7 +2462,7 @@ const SECCIONES_DEF = [
   ['prog_mecanizado', '⚙️ Mecanizado: mi programa del día'],
   ['prog_terminacion', '🔧 Terminación: mis entregas del día'],
   ['ventas', '💰 Ventas (montos: indicador de ventas)'],
-  ['kanban_moldeo', '🏭 Moldeo / Fusión: cargar piezas para kanban'],
+  ['kanban_moldeo', '🏭 Moldeo / Fusión: cargar piezas para kanban (menú propio)'],
   ['kanban', '🏬 Kanban: configuración y stock (Terminación y Mecanizado)'],
 ];
 const SECCION_ELEMS = {
@@ -2463,6 +2599,14 @@ async function initDb() {
       applyFilters();
     }, err => {
       console.warn('entregas_parciales onSnapshot:', err && err.code, err && err.message);
+    });
+    db.collection('avance_etapas').onSnapshot(qs => {
+      setAvanceEtapas(qs.docs.filter(d => d.exists).map(d => d.data()));
+      rebuildData();
+      renderKpis();
+      applyFilters();
+    }, err => {
+      console.warn('avance_etapas onSnapshot:', err && err.code, err && err.message);
     });
     db.collection('prioridades').onSnapshot(qs => {
       const map = {};
@@ -2620,7 +2764,7 @@ function puedeDividir() {
 }
 function buildDividirBtnHtml(r, enModal) {
   if (!puedeDividir() || r.estado_general === 'Cancelado') return '';
-  const label = r._pk ? '✂️ Editar entregas' : '✂️ Dividir en entregas';
+  const label = r._partes ? '✂️ Editar entregas' : '✂️ Dividir en entregas';
   const st = 'background:transparent;border:1px solid var(--card-border);color:#94a3b8;border-radius:6px;padding:3px 9px;font-size:0.72rem;cursor:pointer;';
   return `<div style="${enModal ? '' : 'margin-top:5px;'}"><button type="button" style="${st}" onclick="event.stopPropagation(); ${enModal ? 'closeDetailModal(); ' : ''}openSplitDialog(${r.id})">${label}</button></div>`;
 }
@@ -2633,7 +2777,7 @@ function openSplitDialog(id) {
   const base = baseRow(id);
   if (!base) return;
   const pend = Number(base.pend) || 0;
-  const vivas = SPLIT_ROWS[id];
+  const vivas = ENTREGA_ROWS[id];
   const partes = (vivas && vivas.length)
     ? vivas.map(r => ({ cantidad: r.pend, fecha: r.fecha_entrega || '' }))
     : [{ cantidad: pend, fecha: base.fecha_entrega || '' }];
@@ -3480,7 +3624,7 @@ function openAssignStockDialog(key) {
   }
   html += `<div class="stock-field"><label>Pedido</label><select id="stock-assign-pedido">`;
   candidatos.forEach(r => {
-    html += `<option value="${rowKey(r)}">${escHtml(r.cliente)} — ${escHtml(r.comprobante)}${r._pk ? ' · entrega ' + r._parte + '/' + r._partes : ''} (pend: ${remainingPend(r).toLocaleString()}, entrega: ${formatDate(r.fecha_entrega)})</option>`;
+    html += `<option value="${rowKey(r)}">${escHtml(r.cliente)} — ${escHtml(r.comprobante)}${r._partes ? ' · entrega ' + r._parte + '/' + r._partes : ''}${r._stRank != null ? ' · ' + STAGE_LABELS[r._stRank] : ''} (pend: ${remainingPend(r).toLocaleString()}, entrega: ${formatDate(r.fecha_entrega)})</option>`;
   });
   html += `</select></div>
     <div class="stock-field"><label>Cantidad a asignar</label><input type="number" id="stock-assign-cant" min="1" step="1" value="1"></div>
@@ -3920,7 +4064,8 @@ function buildPrepCellHtml(r) {
     : '';
   const disponibleDespacho = prepPendienteDespacho(r);
   const despBtnHtml = disponibleDespacho > 0
-    ? `<div style="margin-top:6px;"><button class="desp-btn" onclick="openDespachoDialog('${key}')">🚚 Despachar (${disponibleDespacho.toLocaleString()})</button></div>`
+    ? `<div style="margin-top:6px;"><button class="desp-btn" onclick="openDespachoDialog('${key}')">🚚 Despachar (${disponibleDespacho.toLocaleString()})</button></div>
+       <label style="display:flex; gap:5px; align-items:center; margin-top:5px; font-size:0.7rem; color:#c4b5fd; cursor:pointer;" onclick="event.stopPropagation()"><input type="checkbox" ${despSel.has(String(key)) ? 'checked' : ''} onchange="toggleDespSel('${key}', this.checked)"> Despachar junto con otros</label>`
     : '';
   return `
     <div>
@@ -4019,7 +4164,7 @@ function showToast(message, kind) {
       ` : '';
       document.getElementById('despacho-dialog-content').innerHTML = `
         <h3>🚚 Marcar como Despachado</h3>
-        <div class="text-dim" style="margin-bottom:10px;">${escHtml(row.cliente)} — <span style="color:#fff;">${escHtml(row.descripcion)}</span> (NV ${escHtml(row.comprobante)})${row._pk ? ` · entrega ${row._parte}/${row._partes} (${formatDate(row.fecha_entrega)})` : ''}</div>
+        <div class="text-dim" style="margin-bottom:10px;">${escHtml(row.cliente)} — <span style="color:#fff;">${escHtml(row.descripcion)}</span> (NV ${escHtml(row.comprobante)})${row._partes ? ` · entrega ${row._parte}/${row._partes} (${formatDate(row.fecha_entrega)})` : ''}</div>
         ${lotesHtml}${sinDetalleHtml}
         <div class="hoja-renglon-total" id="desp-total-ref">Total a despachar: <b>${despachoTotalACargar().toLocaleString()}</b> u.</div>
         <div class="stock-actions">
@@ -4056,13 +4201,11 @@ function showToast(message, kind) {
       if (e.target.id === 'despacho-overlay') closeDespachoDialog();
     }
 
-    async function confirmDespacho() {
-      const s = despachoFormState;
-      if (!s) return;
+    // Arma las líneas (probetas) de UN ítem a partir de su formulario; tira Error si algo no cierra.
+    function armarLineasDespacho(s) {
       const row = findRow(s.key);
-      if (!row) return;
+      if (!row) throw new Error('No se encontró el ítem.');
       const disp = prepPendienteDespacho(row);
-      if (disp <= 0) { closeDespachoDialog(); applyFilters(); return; }
       const lineas = [];
       s.lotes.forEach(l => {
         const v = Math.min(l.cantidadDespachar || 0, l.disponible);
@@ -4076,6 +4219,40 @@ function showToast(message, kind) {
         lineas.push({ probeta: '-', cantidad: vSinDetalle, pesoReal: null, hojaNumero: null, loteId: null });
       }
       const val = lineas.reduce((sum, l) => sum + l.cantidad, 0);
+      return { row, disp, lineas, val };
+    }
+    // Escribe el despacho en la base (despachado + historial). Si despachás todo lo pendiente de una pieza que era
+    // prioridad, la base la saca sola de las prioridades (parche 015).
+    async function registrarDespachoDb(row, lineas, val) {
+      const yaDespachado = despCant(row.id);
+      const nuevoCant = Math.min(Math.max(0, prepCant(row.id)), yaDespachado + val);
+      await dbRef.collection('despachado').doc(String(row.id)).set({ cant: nuevoCant, ts: new Date().toISOString() });
+      despachadoMap[String(row.id)] = { ...(despachadoMap[String(row.id)] || {}), cant: nuevoCant };
+      const kg = row.pend > 0 ? row.kilos * (val / row.pend) : 0;
+      await dbRef.collection('despachos_log').add({
+        itemId: row.id, cliente: row.cliente, comprobante: row.comprobante, codigo: row.codigo,
+        descripcion: row.descripcion, material: row.material, oc: row.oc,
+        cantidad: val, kg: Math.round(kg * 10) / 10,
+        dia: diaLocalStr(), ts: new Date().toISOString(),
+        fecha_entrega: row.fecha_entrega || null,
+        probetas: lineas,
+      });
+    }
+    function errorDespachoMsg(e) {
+      console.error('No se pudo registrar el despacho:', e && e.code, e && e.message);
+      if (canWritePrep === false || (e && e.code === 'invalid_argument')) {
+        return 'No se pudo guardar: tu acceso a este tablero es de solo lectura (Visualizador). Pedile a quien administra el link que te dé acceso de Colaborador.';
+      }
+      return 'No se pudo guardar el despacho. Probá de nuevo.';
+    }
+
+    async function confirmDespacho() {
+      const s = despachoFormState;
+      if (!s) return;
+      let p;
+      try { p = armarLineasDespacho(s); } catch (e) { return; }
+      const { row, disp, lineas, val } = p;
+      if (disp <= 0) { closeDespachoDialog(); applyFilters(); return; }
       if (val <= 0) { alert('Cargá al menos una cantidad a despachar.'); return; }
       if (val > disp) { alert(`La cantidad total a despachar (${val}) supera lo disponible (${disp}).`); return; }
       if (!dbRef) {
@@ -4085,30 +4262,162 @@ function showToast(message, kind) {
       const btn = document.getElementById('desp-confirm-btn');
       if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
       try {
-        const yaDespachado = despCant(row.id);
-        const nuevoCant = Math.min(Math.max(0, prepCant(row.id)), yaDespachado + val);
-        await dbRef.collection('despachado').doc(String(row.id)).set({ cant: nuevoCant, ts: new Date().toISOString() });
-        despachadoMap[String(row.id)] = { ...(despachadoMap[String(row.id)] || {}), cant: nuevoCant };
-        const kg = row.pend > 0 ? row.kilos * (val / row.pend) : 0;
-        await dbRef.collection('despachos_log').add({
-          itemId: row.id, cliente: row.cliente, comprobante: row.comprobante, codigo: row.codigo,
-          descripcion: row.descripcion, material: row.material, oc: row.oc,
-          cantidad: val, kg: Math.round(kg * 10) / 10,
-          dia: diaLocalStr(), ts: new Date().toISOString(),
-          fecha_entrega: row.fecha_entrega || null,
-          probetas: lineas,
-        });
+        await registrarDespachoDb(row, lineas, val);
+        despSel.delete(String(s.key));
         closeDespachoDialog();
+        renderDespMultiBar();
       } catch (e) {
-        console.error('No se pudo registrar el despacho:', e && e.code, e && e.message);
-        if (canWritePrep === false || (e && e.code === 'invalid_argument')) {
-          alert('No se pudo guardar: tu acceso a este tablero es de solo lectura (Visualizador). Pedile a quien administra el link que te dé acceso de Colaborador.');
-        } else {
-          alert('No se pudo guardar el despacho. Probá de nuevo.');
-        }
+        alert(errorDespachoMsg(e));
       } finally {
         if (btn) { btn.disabled = false; btn.textContent = '✅ Confirmar Despacho'; }
       }
+    }
+
+    // ---- Despacho de varios ítems juntos ----
+    let despSel = new Set();            // claves de fila tildadas ("Despachar junto con otros")
+    let despachoMulti = null;
+    function buildDespachoState(key) {
+      const row = findRow(key);
+      if (!row) return null;
+      const disp = prepPendienteDespacho(row);
+      if (disp <= 0) return null;
+      const lotes = lotesDisponibles(row.id);
+      const sinDetalle = prepSinDetalleDisponible(row);
+      let falta = disp;
+      const lotesForm = lotes.map(l => { const c = Math.min(l.disponible, falta); falta -= c; return { ...l, cantidadDespachar: c }; });
+      return { itemId: row.id, key: String(key), lotes: lotesForm, sinDetalleDisponible: sinDetalle, sinDetalleCantidad: Math.min(sinDetalle, falta) };
+    }
+    function toggleDespSel(key, on) {
+      if (on) despSel.add(String(key)); else despSel.delete(String(key));
+      renderDespMultiBar();
+    }
+    function clearDespSel() { despSel.clear(); renderDespMultiBar(); applyFilters(); }
+    function renderDespMultiBar() {
+      const keys = [...despSel].filter(k => { const r = findRow(k); return r && prepPendienteDespacho(r) > 0; });
+      despSel = new Set(keys);
+      let bar = document.getElementById('desp-multi-bar');
+      if (!keys.length) { if (bar) bar.style.display = 'none'; return; }
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'desp-multi-bar';
+        bar.style.cssText = 'position:fixed; left:50%; bottom:18px; transform:translateX(-50%); z-index:90; background:#1e1b4b; border:1px solid #a855f7; color:#fff; border-radius:12px; padding:10px 14px; display:flex; gap:12px; align-items:center; box-shadow:0 8px 30px rgba(0,0,0,.5); font-size:0.85rem; max-width:94vw; flex-wrap:wrap; justify-content:center;';
+        document.body.appendChild(bar);
+      }
+      const u = keys.reduce((a, k) => a + prepPendienteDespacho(findRow(k)), 0);
+      bar.innerHTML = `<span><b>${keys.length}</b> ítem${keys.length === 1 ? '' : 's'} elegido${keys.length === 1 ? '' : 's'} · ${u.toLocaleString()} u. para despachar</span>
+        <button class="desp-btn" onclick="openDespachoMulti()">🚚 Despachar juntos</button>
+        <button class="desp-btn" style="background:#475569;" onclick="clearDespSel()" title="Quitar la selección">✕</button>`;
+      bar.style.display = 'flex';
+    }
+    function openDespachoMulti() {
+      const items = [...despSel].map(buildDespachoState).filter(Boolean);
+      if (!items.length) { alert('No hay ítems con piezas preparadas para despachar en la selección.'); renderDespMultiBar(); return; }
+      despachoMulti = { items };
+      renderDespachoMulti();
+      document.getElementById('despacho-overlay').classList.add('open');
+    }
+    function despachoMultiTotal(s) { return s.lotes.reduce((a, l) => a + (l.cantidadDespachar || 0), 0) + (s.sinDetalleCantidad || 0); }
+    function despachoMultiTotalesHtml() {
+      const M = despachoMulti;
+      const t = M.items.reduce((a, s) => a + despachoMultiTotal(s), 0);
+      return `Total a despachar: <b>${t.toLocaleString()}</b> u. en ${M.items.filter(s => despachoMultiTotal(s) > 0).length} ítem${M.items.length === 1 ? '' : 's'}`;
+    }
+    function renderDespachoMulti() {
+      const M = despachoMulti;
+      if (!M) return;
+      const bloques = M.items.map((s, i) => {
+        const row = findRow(s.key);
+        if (!row) return '';
+        const lotes = s.lotes.map((l, idx) => `
+          <div class="hoja-renglon">
+            <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:6px; flex-wrap:wrap;">
+              <span class="font-bold" style="color:#fff; font-size:0.85rem;">Probeta ${escHtml(l.probeta || '-')}</span>
+              <span class="text-dim" style="font-size:0.72rem;">${l.hojaNumero ? 'Hoja Nº ' + escHtml(l.hojaNumero) : 'Sin Nº de hoja'} · disponible: ${l.disponible.toLocaleString()} u.${l.pesoReal ? ' · ' + fmt1(l.pesoReal) + ' Kg pesados' : ''}</span>
+            </div>
+            <div class="hoja-field-mini"><label>Cantidad a despachar de esta probeta</label>
+              <input type="number" min="0" max="${l.disponible}" step="1" value="${l.cantidadDespachar}" oninput="updateMultiLote(${i}, ${idx}, this.value)"></div>
+          </div>`).join('');
+        const sd = s.sinDetalleDisponible > 0 ? `
+          <div class="hoja-renglon">
+            <div style="margin-bottom:6px;"><span class="font-bold" style="color:#fff; font-size:0.85rem;">Sin detalle de probeta</span> <span class="text-dim" style="font-size:0.72rem;">(cargado a mano, sin Hoja de Pesada)</span></div>
+            <div class="hoja-field-mini"><label>Cantidad a despachar sin detalle (disponible: ${s.sinDetalleDisponible.toLocaleString()} u.)</label>
+              <input type="number" min="0" max="${s.sinDetalleDisponible}" step="1" value="${s.sinDetalleCantidad}" oninput="updateMultiSinDetalle(${i}, this.value)"></div>
+          </div>` : '';
+        return `<div class="hoja-item-block" style="margin-bottom:12px;">
+          <div class="hoja-item-head"><span class="nom">${escHtml(row.descripcion)}</span><span class="cod">${escHtml(row.cliente)} · NV ${escHtml(row.comprobante)}</span></div>
+          ${lotes}${sd}
+          <div class="hoja-renglon-total" id="dm-tot-${i}">Este ítem: <b>${despachoMultiTotal(s).toLocaleString()}</b> u.</div>
+        </div>`;
+      }).join('');
+      document.getElementById('despacho-dialog-content').innerHTML = `
+        <h3>🚚 Despachar ${M.items.length} ítem${M.items.length === 1 ? '' : 's'} juntos</h3>
+        <div class="text-dim" style="margin-bottom:10px;">Elegí por cada ítem cuánto sale ahora, con su probeta. Se registra todo de una vez.</div>
+        ${bloques}
+        <div class="hoja-renglon-total" id="dm-total">${despachoMultiTotalesHtml()}</div>
+        <div class="stock-actions">
+          <button class="stock-btn-cancel" onclick="closeDespachoDialog()">Cancelar</button>
+          <button class="stock-btn-primary" id="desp-confirm-btn" onclick="confirmDespachoMulti()">✅ Confirmar despacho de todo</button>
+        </div>`;
+    }
+    function refreshMultiTotales(i) {
+      const s = despachoMulti.items[i];
+      const a = document.getElementById('dm-tot-' + i); if (a) a.innerHTML = `Este ítem: <b>${despachoMultiTotal(s).toLocaleString()}</b> u.`;
+      const b = document.getElementById('dm-total'); if (b) b.innerHTML = despachoMultiTotalesHtml();
+    }
+    function updateMultiLote(i, idx, value) {
+      const s = despachoMulti && despachoMulti.items[i];
+      if (!s || !s.lotes[idx]) return;
+      let v = parseInt(value, 10);
+      if (isNaN(v) || v < 0) v = 0;
+      if (v > s.lotes[idx].disponible) v = s.lotes[idx].disponible;
+      s.lotes[idx].cantidadDespachar = v;
+      refreshMultiTotales(i);
+    }
+    function updateMultiSinDetalle(i, value) {
+      const s = despachoMulti && despachoMulti.items[i];
+      if (!s) return;
+      let v = parseInt(value, 10);
+      if (isNaN(v) || v < 0) v = 0;
+      if (v > s.sinDetalleDisponible) v = s.sinDetalleDisponible;
+      s.sinDetalleCantidad = v;
+      refreshMultiTotales(i);
+    }
+    async function confirmDespachoMulti() {
+      const M = despachoMulti;
+      if (!M) return;
+      const plan = [];
+      for (const s of M.items) {
+        let p;
+        try { p = armarLineasDespacho(s); } catch (e) { continue; }
+        if (p.val <= 0) continue;
+        if (p.val > p.disp) { alert(`"${p.row.descripcion}": la cantidad a despachar (${p.val}) supera lo disponible (${p.disp}).`); return; }
+        plan.push(p);
+      }
+      if (!plan.length) { alert('Cargá al menos una cantidad a despachar.'); return; }
+      if (!dbRef) { alert('No se pudo conectar al almacenamiento compartido. Este despacho no se va a guardar.'); return; }
+      const btn = document.getElementById('desp-confirm-btn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+      let hechos = 0;
+      try {
+        for (const p of plan) {
+          await registrarDespachoDb(p.row, p.lineas, p.val);
+          despSel.delete(rowKey(p.row));
+          hechos++;
+        }
+        closeDespachoDialog();
+        showToast(`Despachados ${hechos} ítem${hechos === 1 ? '' : 's'}`, 'success');
+      } catch (e) {
+        alert(`${errorDespachoMsg(e)}\n\nSe despacharon ${hechos} de ${plan.length} ítems. Los que faltan siguen tildados: revisá y volvé a intentar.`);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '✅ Confirmar despacho de todo'; }
+        renderDespMultiBar();
+      }
+    }
+    // la barra de selección se actualiza sola cada vez que se redibuja la tabla
+    if (typeof applyFilters === 'function' && !window.__despWrap) {
+      window.__despWrap = true;
+      const _af = applyFilters;
+      applyFilters = function () { const r = _af.apply(this, arguments); try { renderDespMultiBar(); } catch (e) {} return r; };
     }
 
     function renderDespachadoSemanas() {
@@ -4281,7 +4590,7 @@ function showToast(message, kind) {
         const prioridadCellHtml = buildPrioridadCellHtml(r);
         const nivel = getPriority(r.id);
         const rKey = rowKey(r);
-        const parteBadge = r._pk ? `<div style="margin-top:3px;"><span class="pill pill-info">📦 Entrega ${r._parte}/${r._partes}</span></div>` : '';
+        const parteBadge = (r._partes ? `<div style="margin-top:3px;"><span class="pill pill-info">📦 Entrega ${r._parte}/${r._partes}</span></div>` : '') + (r._stRank != null ? `<div style="margin-top:3px;"><span class="pill pill-info">↪ Parcial: ${r._stQ.toLocaleString()} u.</span></div>` : '');
         const dividirBtn = buildDividirBtnHtml(r);
 
         const tr = document.createElement('tr');
@@ -4409,7 +4718,7 @@ function showToast(message, kind) {
     function hojaTotalesHtml() {
       const t = hojaTotalesPorMoneda();
       const parts = Object.keys(t).map(m => `<b>${monedaSym(m)} ${fmtPlata(t[m])}</b>`);
-      return `<div id="hoja-importes-total" class="hoja-kg-ref" style="margin:10px 0; font-size:0.85rem;">${hojaPreciosOk && parts.length ? '💲 Total de la hoja (sin IVA): ' + parts.join(' &nbsp;+&nbsp; ') : ''}</div>`;
+      return `<div id="hoja-importes-total"></div>`;
     }
     function refreshHojaImportes() {
       if (!hojaFormState) return;
@@ -4752,7 +5061,7 @@ function showToast(message, kind) {
         const blob = MiniPdf.buildHojaPesadaPdfBlob({
           numero: numeroStr, fechaStr, cliente: s.cliente, transporte: s.transporte, condPago: s.condPago,
           items, pesoTotal, comprobantes, logoPixels,
-          totales: hojaPreciosOk ? Object.entries(hojaTotalesPorMoneda()).map(([m, v]) => ({ moneda: m, texto: 'TOTAL ' + (m === 'ARS' ? '$' : 'USD') + ' ' + fmtPlata(v) + '  (sin IVA)' })) : [],
+          totales: [],
         });
 
         const filename = `HojaPesada_${sanitizeFilenamePart(s.cliente)}_${fechaFile}_${numeroStr}.pdf`;
@@ -4912,7 +5221,7 @@ function showToast(message, kind) {
         <div class="modal-row"><div class="k">Prioridad</div><div class="v">${buildPrioridadCellHtml(r)}</div></div>
         <div class="modal-row"><div class="k">Comprobante</div><div class="v">${escHtml(r.comprobante)} <span class="text-dim">(OC: ${escHtml(r.oc)})</span></div></div>
         <div class="modal-row"><div class="k">Fecha NV</div><div class="v">${formatDate(r.fecha_nv)}</div></div>
-        <div class="modal-row"><div class="k">Fecha Entrega</div><div class="v">${formatDate(r.fecha_entrega)}${r._pk ? ` <span class="pill pill-info">📦 Entrega ${r._parte}/${r._partes}</span>` : ''}</div></div>
+        <div class="modal-row"><div class="k">Fecha Entrega</div><div class="v">${formatDate(r.fecha_entrega)}${r._partes ? ` <span class="pill pill-info">📦 Entrega ${r._parte}/${r._partes}</span>` : ''}${r._stRank != null ? ` <span class="pill pill-info">↪ Parcial: ${r._stQ.toLocaleString()} u.</span>` : ''}</div></div>
         ${buildDividirBtnHtml(r) ? `<div class="modal-row"><div class="k">Entregas</div><div class="v">${buildDividirBtnHtml(r, true)}</div></div>` : ''}
         <div class="modal-row"><div class="k">Alerta</div><div class="v">${buildAlertPill(r)}</div></div>
         <div class="modal-row"><div class="k">Material</div><div class="v">${escHtml(r.material)} · ${r.kxu} Kg/u</div></div>
@@ -5681,9 +5990,12 @@ function showToast(message, kind) {
     { key: 'kan', sec: 'kanban', label: '🏬 Kanban — configuración y stock', desc: 'Piezas con kanban de Terminación y de Mecanizado: k, stock físico y virtual', title: '🏬 Kanban — configuración y stock' },
   ];
   const puede = sec => (typeof puedeVer === 'function') ? puedeVer(sec) : false;
-  const misVistas = () => VIEWS.filter(v => puede(v.sec));
-  window.cirRefreshBtn = () => { const b = document.getElementById('cir-btn'); if (!b) return; const v = misVistas();
-    b.style.display = v.length ? '' : 'none'; b.textContent = v.length === 1 ? v[0].label : '🔩 Programación mecanizado ▾'; };
+  const misVistas = () => VIEWS.filter(v => v.key !== 'mold' && v.key !== 'kan' && puede(v.sec));   // menú de Programación mecanizado
+  window.cirRefreshBtn = () => {
+    const b = document.getElementById('cir-btn');
+    if (b) { const v = misVistas(); b.style.display = v.length ? '' : 'none'; b.textContent = v.length === 1 ? v[0].label : '🔩 Programación mecanizado ▾'; }
+    [['mold-btn', 'kanban_moldeo'], ['kan-btn', 'kanban']].forEach(([id, sec]) => { const x = document.getElementById(id); if (x) x.style.display = puede(sec) ? '' : 'none'; });
+  };
   window.cirMenu = () => { const v = misVistas(); if (!v.length) return; if (v.length === 1) { window.cirOpen(v[0].key); return; }
     ensureDom(); const m = document.getElementById('cir-modal');
     m.innerHTML = '<h3>¿Qué querés ver?</h3><div class="d">Elegí tu vista.</div>' + v.map(x => `<button class="menu-it" onclick="cirCloseAsk(); cirOpen('${x.key}')"><b>${x.label}</b><span>${x.desc}</span></button>`).join('') + '<div class="btns"><button onclick="cirCloseAsk()">Cancelar</button></div>';
