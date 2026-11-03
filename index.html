@@ -5551,7 +5551,7 @@ function showToast(message, kind) {
       C.planes = planes; C.moldeos = moldeos; C.k = k; C.exc = exc; C.recetas = recetas; C.movs = movs;
       C.cfg = {}; cfg.forEach(r => { C.cfg[r.clave] = r.valor; });
       try { const rr = await supabaseClient.from('mec_rechazos').select('*').order('id', { ascending: false }).limit(30); C.rechazos = rr.error ? [] : (rr.data || []); } catch (e) { C.rechazos = []; }
-      C.error = null; C.loaded = true; await resolveNames(); await loadKg();
+      C.error = null; C.loaded = true; await resolveNames(); await loadKg(); await loadPasos();
     } catch (e) {
       C.error = /relation .*mec_|schema cache|does not exist|Could not find/i.test(e.message || '') ? 'Falta correr el parche 011 en Supabase (ver instrucciones).' : 'No se pudo cargar: ' + (e.message || e);
     }
@@ -5582,6 +5582,11 @@ function showToast(message, kind) {
   async function loadKg() {
     try { const { data, error } = await supabaseClient.from('catalogo_articulos').select('codigo,kg_unitario').not('kg_unitario', 'is', null).range(0, 4999);
       if (error) throw error; Object.keys(KG).forEach(k => delete KG[k]); (data || []).forEach(r => { KG[r.codigo] = Number(r.kg_unitario); }); KG_OK = true; } catch (e) { KG_OK = false; }
+  }
+  // Pases recientes de moldeo/fusión a Terminación (para poder deshacer uno cargado por error).
+  async function loadPasos() {
+    try { const { data, error } = await supabaseClient.from('mec_movimientos').select('*').eq('motivo', 'llegó de moldeo/fusión').order('id', { ascending: false }).limit(30);
+      if (error) throw error; C.pasos = (data || []).filter(m => !m.deshecho); } catch (e) { C.pasos = []; }
   }
   const kgSga = c => { try { const r = (typeof BASE !== 'undefined' ? BASE : []).find(x => x.codigo === c && Number(x.kxu) > 0); return r ? Number(r.kxu) : null; } catch (e) { return null; } };
   const kgDe = c => KG[c] > 0 ? KG[c] : kgSga(c);
@@ -5687,6 +5692,9 @@ function showToast(message, kind) {
   A.moldeo = (def, cod) => ask('Cargar moldeo / fusión para kanban', 'Piezas que se mandan a moldear y fundir para reponer kanban (pedidos internos que no vienen de SGA).', [
     { type: 'pieza', id: 'c', label: 'Pieza', value: cod || '' }, { id: 'n', label: 'Cantidad', value: def || 10, max: 99999 }, { type: 'dec', id: 'kg', label: 'Kg por unidad (solo si la pieza todavía no lo tiene cargado)', ph: 'Ej: 12,5 — para que sume Kg al indicador de Fundido' }, { type: 'text', id: 'x', label: 'Nota (opcional)', ph: 'Ej: colada del viernes' }], 'Cargar',
     async v => { if (v.kg > 0) await rpc('mec_set_kg', { p_codigo: v.c, p_kg: v.kg }); await tbl(supabaseClient.from('mec_moldeos').insert({ codigo: v.c, cantidad: v.n, nota: v.x || null })); });
+  A.deshacerPase = id => { const m = (C.pasos || []).find(x => x.id === id); if (!m) return;
+    ask('Deshacer pase a Terminación', esc(nombre(m.codigo)) + ` — ${m.cantidad} u.<br>Se sacan de Terminación y vuelven a Moldeo / Fusión. Desde ahí las podés borrar con 🗑 si fue un error de carga.`, [], 'Deshacer pase',
+      () => rpc('mec_moldeo_deshacer', { p_mov: id })); };
   A.kg = c => ask('Kg por unidad', esc(nombre(c)) + '<br>Se usa para que lo moldeado/fundido para kanban sume Kg al indicador de Fundido. Lo ya cargado sin Kg se recalcula.',
     [{ type: 'dec', id: 'kg', label: 'Kg por unidad', value: kgDe(c) || '', required: true }], 'Guardar', v => rpc('mec_set_kg', { p_codigo: c, p_kg: v.kg }));
   A.pasoTerm = id => { const o = C.moldeos.find(x => x.id === id);
@@ -5882,6 +5890,8 @@ function showToast(message, kind) {
         <div>${puedePlanificar() ? btn('+ Cargar moldeo / fusión', 'cir_moldeo()', 'pri') : '<span class="code">Para cargar moldeo hace falta rol Editor.</span>'}</div></div>
       <div class="panel"><h2>📌 El kanban pide reponer</h2><div class="sub">Piezas del kanban de Terminación (Sector Z) en amarillo o rojo. El lote sugerido ya descuenta lo que está en proceso (stock virtual). Plazo de reposición: ${plazo} días.</div>
         ${sugRows ? `<table><tr><th>Pieza</th><th class="num">Estantería</th><th class="num">k</th><th class="num">Stock virtual</th><th>Nivel</th><th class="num">Lote sugerido</th><th></th></tr>${sugRows}</table>` : '<div class="empty">Ninguna pieza necesita reposición ahora.</div>'}</div>
+      ${(C.pasos || []).length ? `<div class="panel"><h2>↩ Pasaron a Terminación hace poco</h2><div class="sub">Si pasaste algo por error, tocá <b>Deshacer</b>: vuelve a Moldeo / Fusión y desde ahí lo podés borrar. Solo se puede si esa cantidad sigue en Terminación.</div>
+        <table><tr><th>Pieza</th><th class="num">Cantidad</th><th>Cuándo</th><th></th></tr>${C.pasos.map(m => `<tr><td>${nameCell(m.codigo)}</td><td class="num"><b>${m.cantidad}</b></td><td>${esc(String(m.ts || '').slice(0, 10).split('-').reverse().join('/'))}<div class="code">${esc(String(m.ts || '').slice(11, 16))}</div></td><td>${puedeOperar() ? btn('↩ Deshacer', `cir_deshacerPase(${m.id})`) : ''}</td></tr>`).join('')}</table></div>` : ''}
       <div class="panel"><h2>🏭 En moldeo / fusión ahora</h2><div class="sub">Cuentan en el stock virtual del kanban de Terminación. Cuando la pieza llega a Terminación, tocá <b>Pasó a Terminación</b> (total o parcial).</div>
         ${rows ? `<table><tr><th>Pieza</th><th class="num">Cantidad</th><th>Cargado</th><th></th></tr>${rows}</table>` : '<div class="empty">No hay nada cargado en moldeo / fusión.</div>'}</div>`;
   }
