@@ -5039,7 +5039,7 @@ function showToast(message, kind) {
     '2027-01-01': 'Año Nuevo',
     '2026-03-23': 'Puente turístico (no laborable)', '2026-07-10': 'Puente turístico (no laborable)', '2026-12-07': 'Puente turístico (no laborable)',
   };
-  const C = { mode: 'full', tab: 'plan', loaded: false, error: null, stock: {}, planes: [], moldeos: [], k: [], exc: [], recetas: [], cfg: {}, movs: [] };
+  const C = { rechazos: [], motivos: null, mode: 'full', tab: 'plan', loaded: false, error: null, stock: {}, planes: [], moldeos: [], k: [], exc: [], recetas: [], cfg: {}, movs: [] };
 
   // ---------- utilidades ----------
   const esc = s => (typeof escHtml === 'function' ? escHtml(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
@@ -5125,12 +5125,13 @@ function showToast(message, kind) {
       C.stock = {}; st.forEach(r => { (C.stock[r.ubicacion] = C.stock[r.ubicacion] || {})[r.codigo] = Number(r.cantidad); });
       C.planes = planes; C.moldeos = moldeos; C.k = k; C.exc = exc; C.recetas = recetas; C.movs = movs;
       C.cfg = {}; cfg.forEach(r => { C.cfg[r.clave] = r.valor; });
+      try { const rr = await supabaseClient.from('mec_rechazos').select('*').order('id', { ascending: false }).limit(30); C.rechazos = rr.error ? [] : (rr.data || []); } catch (e) { C.rechazos = []; }
       C.error = null; C.loaded = true; await resolveNames();
     } catch (e) {
       C.error = /relation .*mec_|schema cache|does not exist|Could not find/i.test(e.message || '') ? 'Falta correr el parche 011 en Supabase (ver instrucciones).' : 'No se pudo cargar: ' + (e.message || e);
     }
   }
-  const rpc = async (fn, args) => { const { data, error } = await supabaseClient.rpc(fn, args); if (error) throw new Error(error.message); return data; };
+  const rpc = async (fn, args) => { const { data, error } = await supabaseClient.rpc(fn, args); if (error) throw new Error(/Could not find the function|schema cache/i.test(error.message || '') ? 'Falta correr un parche de Supabase para esta función (' + fn + '). Avisale a quien administra el tablero.' : error.message); return data; };
   const tbl = async (op) => { const { error } = await op; if (error) throw new Error(error.message); };
 
   // El catálogo en memoria del tablero puede venir incompleto: los nombres que faltan y las búsquedas se piden directo a la base.
@@ -5155,7 +5156,7 @@ function showToast(message, kind) {
     const need = new Set();
     const add = c => { if (c && !NAMES[c] && !(typeof catalogoByCodigo !== 'undefined' && catalogoByCodigo && catalogoByCodigo.get(c))) need.add(c); };
     Object.values(C.stock).forEach(o => Object.keys(o).forEach(add)); C.k.forEach(r => add(r.codigo)); C.moldeos.forEach(r => add(r.codigo)); C.movs.forEach(r => add(r.codigo));
-    C.recetas.forEach(r => { add(r.macho); add(r.hembra); add(r.salida); });
+    C.recetas.forEach(r => { add(r.macho); add(r.hembra); add(r.salida); }); C.rechazos.forEach(r => add(r.codigo));
     const list = [...need]; if (!list.length) return;
     try { for (let i = 0; i < list.length; i += 100) { const { data } = await supabaseClient.from('catalogo_articulos').select('codigo,descripcion').in('codigo', list.slice(i, i + 100)); (data || []).forEach(r => { NAMES[r.codigo] = r.descripcion; }); } } catch (e) { /* los códigos se muestran tal cual */ }
   }
@@ -5340,18 +5341,35 @@ function showToast(message, kind) {
       v => rpc('mec_salida_libre', { p_codigo: c, p_cant: v.n, p_salida: v.s === c ? null : v.s, p_destino: 'kanban', p_pedido: null }));
   };
   const DEST_RECH = [['terminacion', '🔧 Vuelve a Terminación para repararse'], ['descarte', '🗑️ Se descarta (se pierde)']];
-  const rechazarFields = mx => [{ id: 'n', label: 'Cantidad rechazada (máx. ' + mx + ')', value: 1, max: mx },
-    { type: 'select', id: 'd', label: '¿Qué pasa con las piezas?', options: DEST_RECH, value: 'terminacion' }, { type: 'text', id: 'x', label: 'Motivo (opcional)', ph: 'Ej: rajadura, medida fuera de tolerancia' }];
+  const MOTIVOS_BASE = ['Porosidad', 'Rajadura', 'Medida fuera de tolerancia', 'Defecto de mecanizado'];
+  async function motivosLista() {
+    if (C.motivos) return C.motivos;
+    let lista = [];
+    try { const r = await supabaseClient.from('rechazo_motivos').select('nombre,activo,orden').order('orden').order('nombre'); lista = (r.data || []).filter(m => m.activo !== false).map(m => m.nombre); } catch (e) { /* se usa la lista base */ }
+    C.motivos = lista.length ? lista : MOTIVOS_BASE; return C.motivos;
+  }
+  // campos comunes: cantidad, destino, motivo, detalle y trazabilidad (Nº de probeta, obligatorio si la pieza lleva)
+  const rechazarFields = (mx, cod, motivos) => { const ult = C.rechazos.find(r => r.codigo === cod);
+    return [{ id: 'n', label: 'Cantidad rechazada (máx. ' + mx + ')', value: 1, max: mx },
+      { type: 'select', id: 'd', label: '¿Qué pasa con las piezas?', options: DEST_RECH, value: 'terminacion' },
+      { type: 'select', id: 'm', label: 'Motivo del rechazo', options: motivos.map(m => [m, m]).concat([['Otro', 'Otro (explicalo en el detalle)']]), value: motivos[0] },
+      { type: 'text', id: 'x', label: 'Detalle (obligatorio si el motivo es "Otro")', ph: 'Ej: poro en la zona de la rosca' },
+      { type: 'select', id: 'z', label: '¿La pieza lleva trazabilidad?', options: [['si', 'Sí, lleva Nº de probeta'], ['no', 'No lleva']], value: ult && !ult.lleva_trazabilidad ? 'no' : 'si' },
+      { type: 'text', id: 'p', label: 'Nº de probeta (trazabilidad)', ph: 'Ej: AM6050 — obligatorio si la pieza lleva' }]; };
+  const rechazarRpc = (c, plan, v) => {
+    if (v.m === 'Otro' && !String(v.x || '').trim()) throw new Error('Si el motivo es "Otro", explicalo en el detalle.');
+    if (v.z === 'si' && !String(v.p || '').trim()) throw new Error('Esta pieza lleva trazabilidad: falta el Nº de probeta. Si no lleva, elegí "No lleva".');
+    return rpc('mec_rechazar', { p_codigo: c, p_cant: v.n, p_destino: v.d, p_plan: plan, p_causa: String(v.x || '').trim() || null, p_motivo: v.m, p_lleva_traza: v.z === 'si', p_probeta: v.z === 'si' ? String(v.p).trim() : null });
+  };
   // piezas sueltas (sin plan)
-  A.rechazar = c => { const mx = libre(c);
-    ask('Rechazar piezas en Mecanizado', esc(nombre(c)) + ` — sueltas en Mecanizado: ${mx}.`, rechazarFields(mx),
-      'Registrar rechazo', v => rpc('mec_rechazar', { p_codigo: c, p_cant: v.n, p_destino: v.d, p_plan: null, p_causa: v.x || null })); };
+  A.rechazar = async c => { const mx = libre(c), mot = await motivosLista();
+    ask('Rechazar piezas en Mecanizado', esc(nombre(c)) + ` — sueltas en Mecanizado: ${mx}.`, rechazarFields(mx, c, mot), 'Registrar rechazo', v => rechazarRpc(c, null, v)); };
   // piezas reservadas por un plan (aunque sea de un día anterior): el plan vuelve a pedir la reposición
-  A.rechazarPlan = pid => { const p = C.planes.find(x => x.id === pid), r = p && rec(p.receta); if (!r) return;
+  A.rechazarPlan = async pid => { const p = C.planes.find(x => x.id === pid), r = p && rec(p.receta); if (!r) return; const mot = await motivosLista();
     const opts = [[r.macho, `Macho — ${nombre(r.macho)} (en Mecanizado para este plan: ${p.hold_macho})`], [r.hembra, `Hembra — ${nombre(r.hembra)} (en Mecanizado para este plan: ${p.hold_hembra})`]];
     ask('Rechazar piezas del plan #' + pid, `${esc(r.nombre)} · plan del ${fmt(p.fecha)}.<br>Lo rechazado se descuenta de lo entregado a este plan: Terminación tiene que volver a entregarlo.`,
-      [{ type: 'select', id: 'c', label: 'Pieza', options: opts, value: r.macho }].concat(rechazarFields(Math.max(p.hold_macho, p.hold_hembra, 1))),
-      'Registrar rechazo', v => rpc('mec_rechazar', { p_codigo: v.c, p_cant: v.n, p_destino: v.d, p_plan: pid, p_causa: v.x || null })); };
+      [{ type: 'select', id: 'c', label: 'Pieza', options: opts, value: r.macho }].concat(rechazarFields(Math.max(p.hold_macho, p.hold_hembra, 1), r.macho, mot)),
+      'Registrar rechazo', v => rechazarRpc(v.c, pid, v)); };
   A.cerrarPlan = pid => { const p = C.planes.find(x => x.id === pid); if (!p) return;
     if (!confirm(`¿Cerrar el plan #${pid}? Quedan ${p.armados} aros armados y se deja de pedir lo que falta (${pendPlan(p)}). Lo ya entregado y no armado queda como piezas sueltas en Mecanizado.`)) return;
     rpc('mec_cerrar_plan', { p_plan: pid }).then(reload).catch(e => alert(e.message)); };
@@ -5436,13 +5454,17 @@ function showToast(message, kind) {
       return `<tr><td><b>${p.fecha === TODAY() ? '<span class="soon">HOY</span> · ' : ''}${fmt(p.fecha)}</b>${p.fecha < TODAY() ? '<div class="late">de días anteriores</div>' : ''}</td><td>Plan #${p.id} · ${esc(r.nombre)}</td><td class="num">${pendPlan(p)}</td><td class="num">${p.hold_macho}</td><td class="num">${p.hold_hembra}</td>
         <td><div class="row-actions">${puedeOperar() ? btn('Armar' + (max ? ' hasta ' + max : ''), `cir_armar(${p.id})`, 'pri', !max) + btn('Rechazar…', `cir_rechazarPlan(${p.id})`, '', !(p.hold_macho || p.hold_hembra)) : ''}</div>${(fm > 0 || fh > 0) ? `<div class="code">falta que Terminación entregue ${Math.max(fm, 0)} machos / ${Math.max(fh, 0)} hembras (el ${fmt(dueOf(p))})</div>` : ''}</td></tr>`; }).join('');
     return alertPanel('kanban', 'Hay que armar aros para reponerla.', false) + `<div class="panel"><h2>⚙️ Armado de aros — por fecha</h2><div class="sub">Lo planificado para cada día. Cuando Terminación entrega los machos y hembras, se arma. El aro sale a la estantería kanban o directo a un pedido (venta en caliente).</div>
-      ${planes ? `<table><tr><th>Armar el</th><th>Plan</th><th class="num">Faltan armar</th><th class="num">Machos acá</th><th class="num">Hembras acá</th><th></th></tr>${planes}</table>` : '<div class="empty">No hay planes pendientes.</div>'}</div>` + sueltasPanel();
+      ${planes ? `<table><tr><th>Armar el</th><th>Plan</th><th class="num">Faltan armar</th><th class="num">Machos acá</th><th class="num">Hembras acá</th><th></th></tr>${planes}</table>` : '<div class="empty">No hay planes pendientes.</div>'}</div>` + sueltasPanel() + rechazosPanel();
   }
 
   // ---------- vistas simples del día (supervisor de Mecanizado / Terminación) ----------
   const hoyTxt = () => parse(TODAY()).toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: 'long' });
   const diaHeader = (titulo, tiles) => `<div class="dia-head"><div><h2 style="font-size:1.1rem;margin:0;">${titulo}</h2><div class="code">Hoy es ${hoyTxt()}${isBiz(TODAY()) ? '' : ' · día no hábil (' + esc(whyOff(TODAY())) + ')'}</div></div><div class="dia-tiles">${tiles.map(t => `<div class="tile ${t[2] || ''}"><div class="n">${t[0]}</div><div class="l">${t[1]}</div></div>`).join('')}</div></div>`;
 
+  function rechazosPanel() {
+    const rows = C.rechazos.slice(0, 8).map(r => `<tr><td>${fmt(r.dia)}</td><td>${nameCell(r.codigo)}</td><td class="num"><b>${r.cantidad}</b></td><td>${r.destino === 'descarte' ? '🗑️ descarte' : '🔧 a Terminación'}</td><td>${esc(r.motivo || '—')}${r.detalle ? `<div class="code">${esc(r.detalle)}</div>` : ''}</td><td>${r.probeta ? esc(r.probeta) : (r.lleva_trazabilidad ? '—' : '<span class="code">no lleva</span>')}</td></tr>`).join('');
+    return `<div class="panel"><h2>❌ Últimos rechazos en Mecanizado</h2><div class="sub">Quedan registrados con motivo y Nº de probeta (trazabilidad) cuando la pieza lleva.</div>${rows ? `<table><tr><th>Día</th><th>Pieza</th><th class="num">Cant.</th><th>Destino</th><th>Motivo</th><th>Probeta</th></tr>${rows}</table>` : '<div class="empty">Todavía no hay rechazos registrados.</div>'}</div>`;
+  }
   function sueltasPanel() {
     const sueltas = Object.keys(C.stock.mecanizado || {}).filter(c => libre(c) > 0).map(c => { const rs = C.recetas.filter(r => r.macho === c || r.hembra === c);
       return `<tr><td>${nameCell(c)}${rs.length ? `<div class="code">${rs.map(r => (r.macho === c ? 'macho' : 'hembra') + ' de ' + esc(r.nombre)).join(' · ')}</div>` : ''}</td><td class="num"><b>${libre(c)}</b></td><td>${puedeOperar() ? btn('Sale procesada…', `cir_salidaLibre('${esc(c)}')`) + btn('Rechazar…', `cir_rechazar('${esc(c)}')`) : ''}</td></tr>`; }).join('');
@@ -5468,7 +5490,7 @@ function showToast(message, kind) {
     return diaHeader('⚙️ Mecanizado — mi programa del día', [[sum(delDia), 'aros para HOY', delDia.length ? 'hoy' : ''], [sum(atras), 'atrasados', atras.length ? 'rojo' : ''], [listos, 'listos para armar ahora']]) +
       alertPanel('kanban', 'Hay que armar aros para reponerla.', false) +
       (hoyP.length ? `<div class="sec-title">Lo que tenés que armar</div>${hoyP.map(card).join('')}` : '<div class="panel"><div class="empty" style="font-size:.9rem;">✔ No tenés aros planificados para hoy ni atrasados.</div></div>') +
-      `<div class="panel"><h2>📅 Próximos días</h2><div class="sub">Lo que viene en tu programa.</div>${proxRows ? `<table><tr><th>Armar el</th><th>Aro</th><th class="num">Cantidad</th></tr>${proxRows}</table>` : '<div class="empty">No hay nada más planificado.</div>'}</div>` + sueltasPanel();
+      `<div class="panel"><h2>📅 Próximos días</h2><div class="sub">Lo que viene en tu programa.</div>${proxRows ? `<table><tr><th>Armar el</th><th>Aro</th><th class="num">Cantidad</th></tr>${proxRows}</table>` : '<div class="empty">No hay nada más planificado.</div>'}</div>` + sueltasPanel() + rechazosPanel();
   }
 
   function vDiaTerm() {
