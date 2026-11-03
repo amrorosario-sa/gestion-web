@@ -5551,7 +5551,7 @@ function showToast(message, kind) {
       C.planes = planes; C.moldeos = moldeos; C.k = k; C.exc = exc; C.recetas = recetas; C.movs = movs;
       C.cfg = {}; cfg.forEach(r => { C.cfg[r.clave] = r.valor; });
       try { const rr = await supabaseClient.from('mec_rechazos').select('*').order('id', { ascending: false }).limit(30); C.rechazos = rr.error ? [] : (rr.data || []); } catch (e) { C.rechazos = []; }
-      C.error = null; C.loaded = true; await resolveNames();
+      C.error = null; C.loaded = true; await resolveNames(); await loadKg();
     } catch (e) {
       C.error = /relation .*mec_|schema cache|does not exist|Could not find/i.test(e.message || '') ? 'Falta correr el parche 011 en Supabase (ver instrucciones).' : 'No se pudo cargar: ' + (e.message || e);
     }
@@ -5577,6 +5577,15 @@ function showToast(message, kind) {
     rows.forEach(r => { NAMES[r.codigo] = r.descripcion; });
     return rows;
   }
+  // Kg por unidad cargado en el tablero (catálogo). Si el parche 018 no está corrido, queda vacío y se usa solo el de SGA.
+  const KG = {}; let KG_OK = false;
+  async function loadKg() {
+    try { const { data, error } = await supabaseClient.from('catalogo_articulos').select('codigo,kg_unitario').not('kg_unitario', 'is', null).range(0, 4999);
+      if (error) throw error; Object.keys(KG).forEach(k => delete KG[k]); (data || []).forEach(r => { KG[r.codigo] = Number(r.kg_unitario); }); KG_OK = true; } catch (e) { KG_OK = false; }
+  }
+  const kgSga = c => { try { const r = (typeof BASE !== 'undefined' ? BASE : []).find(x => x.codigo === c && Number(x.kxu) > 0); return r ? Number(r.kxu) : null; } catch (e) { return null; } };
+  const kgDe = c => KG[c] > 0 ? KG[c] : kgSga(c);
+  const kgTxt = c => { const k = kgDe(c); return k ? `<span class="code">${k.toLocaleString('es-AR', { maximumFractionDigits: 3 })} kg/u${KG[c] > 0 ? '' : ' (SGA)'}</span>` : '<span class="rep">sin Kg/u</span>'; };
   async function resolveNames() {
     const need = new Set();
     const add = c => { if (c && !NAMES[c] && !(typeof catalogoByCodigo !== 'undefined' && catalogoByCodigo && catalogoByCodigo.get(c))) need.add(c); };
@@ -5602,6 +5611,7 @@ function showToast(message, kind) {
       if (f.type === 'date') return `<label>${f.label}</label><input id="cf_${f.id}" type="date" value="${f.value}" oninput="cirDateHint()"><div class="d" id="cir-datehint" style="margin:4px 0 0;"></div>`;
       if (f.type === 'text') return `<label>${f.label}</label><input id="cf_${f.id}" type="text" value="${esc(f.value || '')}" placeholder="${esc(f.ph || '')}">`;
       if (f.type === 'pieza') return `<label>${f.label}</label><input id="cf_${f.id}" type="text" data-kind="${f.kind || ''}" data-cod="${esc(f.value || '')}" value="${esc(f.value ? f.value + ' — ' + nombre(f.value) : '')}" placeholder="${f.kind ? 'Tocá para ver la lista, o escribí para filtrar' : 'Escribí nombre o código y elegí'}" autocomplete="off" oninput="cirPiezaSearch('${f.id}')" onfocus="cirPiezaSearch('${f.id}', true)"><div class="cir-res" id="cr_${f.id}"></div>`;
+      if (f.type === 'dec') return `<label>${f.label}</label><input id="cf_${f.id}" type="text" inputmode="decimal" value="${f.value == null ? '' : f.value}" placeholder="${esc(f.ph || '')}">`;
       return `<label>${f.label}</label><input id="cf_${f.id}" type="number" min="${f.min == null ? 1 : f.min}" max="${f.max}" value="${f.value}">`;
     }).join('') + `<div class="cir-err" id="cir-err"></div><div class="btns"><button onclick="cirCloseAsk()">Cancelar</button><button class="pri" id="cir-ok">${okText}</button></div>`;
     document.getElementById('cir-ov').classList.add('on');
@@ -5611,6 +5621,7 @@ function showToast(message, kind) {
       for (const f of fields) {
         const e = document.getElementById('cf_' + f.id);
         if (f.type === 'select' || f.type === 'text') v[f.id] = e.value;
+        else if (f.type === 'dec') { v[f.id] = e.value === '' ? null : Number(String(e.value).replace(',', '.')); if (v[f.id] != null && !(v[f.id] > 0)) { err.textContent = 'Los Kg por unidad tienen que ser mayores a 0.'; return; } if (f.required && v[f.id] == null) { err.textContent = 'Poné los Kg por unidad.'; return; } }
         else if (f.type === 'date') { if (!e.value) { err.textContent = 'Elegí una fecha.'; return; } v[f.id] = e.value; }
         else if (f.type === 'pieza') { if (!e.dataset.cod) { err.textContent = 'Elegí una pieza de la lista.'; return; } v[f.id] = e.dataset.cod; }
         else { const mn = f.min == null ? 1 : f.min; v[f.id] = Math.floor(Number(e.value)); if (!(v[f.id] >= mn) || v[f.id] > f.max) { err.textContent = 'La cantidad tiene que estar entre ' + mn + ' y ' + f.max + '.'; return; } }
@@ -5674,8 +5685,10 @@ function showToast(message, kind) {
   A.zaM = c => ask('Entregar a Mecanizado', esc(nombre(c)) + '<br>Entrega suelta, sin plan.', [{ id: 'n', label: 'Cantidad (máx. ' + stock(c, 'sector_z') + ')', value: Math.min(stock(c, 'sector_z'), 5), max: stock(c, 'sector_z') }], 'Entregar',
     v => rpc('mec_mover', { p_codigo: c, p_desde: 'sector_z', p_hasta: 'mecanizado', p_cant: v.n, p_motivo: 'entrega suelta a Mecanizado' }));
   A.moldeo = (def, cod) => ask('Cargar moldeo / fusión para kanban', 'Piezas que se mandan a moldear y fundir para reponer kanban (pedidos internos que no vienen de SGA).', [
-    { type: 'pieza', id: 'c', label: 'Pieza', value: cod || '' }, { id: 'n', label: 'Cantidad', value: def || 10, max: 99999 }, { type: 'text', id: 'x', label: 'Nota (opcional)', ph: 'Ej: colada del viernes' }], 'Cargar',
-    v => tbl(supabaseClient.from('mec_moldeos').insert({ codigo: v.c, cantidad: v.n, nota: v.x || null })));
+    { type: 'pieza', id: 'c', label: 'Pieza', value: cod || '' }, { id: 'n', label: 'Cantidad', value: def || 10, max: 99999 }, { type: 'dec', id: 'kg', label: 'Kg por unidad (solo si la pieza todavía no lo tiene cargado)', ph: 'Ej: 12,5 — para que sume Kg al indicador de Fundido' }, { type: 'text', id: 'x', label: 'Nota (opcional)', ph: 'Ej: colada del viernes' }], 'Cargar',
+    async v => { if (v.kg > 0) await rpc('mec_set_kg', { p_codigo: v.c, p_kg: v.kg }); await tbl(supabaseClient.from('mec_moldeos').insert({ codigo: v.c, cantidad: v.n, nota: v.x || null })); });
+  A.kg = c => ask('Kg por unidad', esc(nombre(c)) + '<br>Se usa para que lo moldeado/fundido para kanban sume Kg al indicador de Fundido. Lo ya cargado sin Kg se recalcula.',
+    [{ type: 'dec', id: 'kg', label: 'Kg por unidad', value: kgDe(c) || '', required: true }], 'Guardar', v => rpc('mec_set_kg', { p_codigo: c, p_kg: v.kg }));
   A.pasoTerm = id => { const o = C.moldeos.find(x => x.id === id);
     ask('Pasó a Terminación', esc(nombre(o.codigo)) + ' — en moldeo/fusión: ' + o.cantidad, [{ id: 'n', label: 'Cantidad que pasó (máx. ' + o.cantidad + ')', value: o.cantidad, max: o.cantidad }], 'Pasar a Terminación',
       v => rpc('mec_moldeo_a_terminacion', { p_id: id, p_cant: v.n })); };
@@ -5817,7 +5830,7 @@ function showToast(message, kind) {
       return `<tr><td>${nameCell(c)}</td><td class="num"><b>${stock(c, u)}</b></td><td class="num">${hk ? kOf(u, c) : '—'}</td><td>${hk ? `<span class="${n === 'verde' ? 'ok' : n === 'rojo' ? 'rep' : 'soon'}">${NIV[n]}</span>` : '<span class="code">sin k</span>'}</td>
         <td class="num">${hk ? `<b>${sv(u, c)}</b><div class="code">${svTxt(u, c)}</div>` : '—'}</td><td class="num">${hk && alertas(u).includes(c) ? (lote(u, c) > 0 ? `<b class="soon">${lote(u, c)}</b>` : '<span class="code">no hace falta</span>') : '—'}</td>
         <td><div class="row-actions">${actions(c)}${puedePlanificar() ? btn('k…', `cir_k('${u}','${esc(c)}')`) : ''}</div></td></tr>`; }).join('');
-    return rows ? `<table><tr><th>Pieza</th><th class="num">En estantería</th><th class="num">k</th><th>Nivel</th><th class="num">Stock virtual</th><th class="num">Lote sugerido</th><th></th></tr>${rows}</table>` : '<div class="empty">Todavía no hay piezas ni k definidos. Cargá el stock inicial con "Ajustar stock" y definí el k de cada pieza.</div>';
+    return rows ? `<table><tr><th>Pieza</th><th class="num">En estantería</th><th class="num">k</th><th>Nivel</th><th class="num">Stock virtual</th><th class="num">Lote sugerido</th><th class="num">Kg/u</th><th></th></tr>${rows}</table>` : '<div class="empty">Todavía no hay piezas ni k definidos. Cargá el stock inicial con "Ajustar stock" y definí el k de cada pieza.</div>';
   }
   const shelfHead = (u, titulo) => `<div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>${titulo}</h2><div class="row-actions">${puedePlanificar() ? btn('+ Definir k', `cir_kNuevo('${u}')`) + btn('Ajustar stock', `cir_ajustar('${u}')`) : ''}</div></div>`;
 
@@ -5857,9 +5870,9 @@ function showToast(message, kind) {
     const dias = o => Math.max(0, Math.round((parse(hoy) - parse(o.fecha)) / 86400000));
     const plazo = C.cfg.plazo_sector_z || 21;
     const rows = C.moldeos.slice().sort((a, b) => a.fecha.localeCompare(b.fecha) || a.id - b.id).map(o => { const d = dias(o);
-      return `<tr><td>${nameCell(o.codigo)}${o.nota ? `<div class="code">${esc(o.nota)}</div>` : ''}${C.k.some(r => r.codigo === o.codigo && r.ubicacion === 'sector_z') ? '' : '<div class="code">sin kanban definido</div>'}</td><td class="num"><b>${o.cantidad}</b></td>
+      return `<tr><td>${nameCell(o.codigo)}${o.nota ? `<div class="code">${esc(o.nota)}</div>` : ''}${C.k.some(r => r.codigo === o.codigo && r.ubicacion === 'sector_z') ? '' : '<div class="code">sin kanban definido</div>'}<div>${kgTxt(o.codigo)}</div></td><td class="num"><b>${o.cantidad}</b></td>
         <td>${fmt(o.fecha)}<div class="code">${d === 0 ? 'cargado hoy' : 'hace ' + d + (d === 1 ? ' día' : ' días')}</div></td>
-        <td><div class="row-actions">${puedeOperar() ? btn('Pasó a Terminación…', `cir_pasoTerm(${o.id})`, 'pri') : ''}${puedePlanificar() ? btn('🗑', `cir_delMoldeo(${o.id})`) : ''}</div></td></tr>`; }).join('');
+        <td><div class="row-actions">${puedeOperar() ? btn('Pasó a Terminación…', `cir_pasoTerm(${o.id})`, 'pri') : ''}${puedePlanificar() && !kgDe(o.codigo) ? btn('Cargar Kg/u', `cir_kg('${esc(o.codigo)}')`, 'pri') : ''}${puedePlanificar() ? btn('🗑', `cir_delMoldeo(${o.id})`) : ''}</div></td></tr>`; }).join('');
     const sugRows = sug.map(x => `<tr><td>${nameCell(x.c)}</td><td class="num">${stock(x.c, 'sector_z')}</td><td class="num">${kOf('sector_z', x.c)}</td><td class="num">${sv('sector_z', x.c)}<div class="code">${svTxt('sector_z', x.c)}</div></td>
       <td><span class="${x.n === 'rojo' ? 'rep' : 'soon'}">${NIV[x.n]}</span></td><td class="num"><b class="soon">${x.L}</b></td><td>${puedePlanificar() ? btn('Cargar moldeo de ' + x.L, `cir_moldeo(${x.L},'${esc(x.c)}')`, 'pri') : ''}</td></tr>`).join('');
     return `<div class="dia-head"><div class="dia-tiles">
@@ -5897,6 +5910,7 @@ function showToast(message, kind) {
       return `<tr><td>${nameCell(x.c)}</td><td class="num"><b>${x.f}</b></td><td class="num"><b>${x.v}</b><div class="code">${esc(svTxt(u, x.c))}</div></td><td class="num">${x.k}<div class="code">2k = ${2 * x.k}</div></td>
         <td style="min-width:120px">${kanBar(x.k, x.f, x.v)}</td><td>${nivCell(x.nf)}</td><td>${nivCell(x.nv)}</td>
         <td class="num">${alerta ? (x.L > 0 ? `<b class="soon">${x.L}</b>` : '<span class="code">no hace falta</span>') : '—'}</td>
+        <td class="num">${kgTxt(x.c)}${puedePlanificar() ? '<div>' + btn(kgDe(x.c) ? 'Kg/u' : 'Cargar Kg/u', `cir_kg('${esc(x.c)}')`) + '</div>' : ''}</td>
         <td><div class="row-actions">${puedePlanificar() ? btn('Cambiar k', `cir_k('${u}','${esc(x.c)}')`) + btn('Ajustar stock', `cir_ajustar('${u}','${esc(x.c)}')`) : ''}${u === 'sector_z' && alerta && x.L > 0 && puedePlanificar() ? btn('Cargar moldeo de ' + x.L, `cir_moldeo(${x.L},'${esc(x.c)}')`, 'pri') : ''}</div></td></tr>`; }).join('');
     return `<div class="tabs">${tabBtn('sector_z', '🗄️ Kanban de Terminación')}${tabBtn('kanban', '🏬 Kanban de Mecanizado')}</div>
       <div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:center;"><h2>${nom}</h2>
