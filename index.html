@@ -559,7 +559,6 @@
           <option value="Pendiente Ingeniería">En Ingeniería / Producto</option>
           <option value="No Planificado (Moldeo)">No Planificado (Moldeo)</option>
           <option value="Pendiente Adm/Finanzas">En Adm. y Finanzas</option>
-          <option value="Cancelado">Cancelados (NO)</option>
         </select>
       </div>
       <div class="filter-group">
@@ -2304,7 +2303,8 @@ function expandItems(items) {
 }
 function rebuildData() {
   BASE_BY_ID = new Map(BASE.map(r => [r.id, r]));
-  DATA = expandItems(BASE);
+  // Los ítems cancelados no aparecen en ningún listado ni cuenta.
+  DATA = expandItems(BASE.filter(it => it.estado_general !== 'Cancelado' && !realStatusFromFlags(it).cancelado));
   ROW_BY_KEY = new Map(DATA.map(r => [rowKey(r), r]));
   recomputeEffectiveStages();
 }
@@ -2418,9 +2418,29 @@ let canSetPriority = false;
 let canWritePrep = null;
 const PRIORIDAD_LABEL = { alta: '🔴 Alta', media: '🟡 Media' };
 
+// Quien es de un sector (Terminación, Despacho, Inspección Final, Moldeo…) solo ve como prioridad
+// las piezas que están en SU sector; el resto (Planeamiento, Gerencia, Comercial, admin) ve todo.
+function etapasDeMiSector() {
+  const p = CURRENT_PROFILE;
+  if (!p || p.es_admin) return null;
+  const a = String(p.area || '');
+  if (a === 'Terminación' || a === 'Despacho' || a === 'Inspección Final') return ['En Terminación'];
+  if (/moldeo|fusi/i.test(a)) return ['Moldeo / Fusión'];
+  return null;
+}
+function getPriorityRow(row) {
+  const nivel = getPriority(row.id);
+  if (!nivel) return '';
+  const et = etapasDeMiSector();
+  return (!et || et.includes(row.area_actual)) ? nivel : '';
+}
 function getPriority(id) {
   const r = prioridadMap[String(id)];
-  return (r && r.nivel) ? r.nivel : '';
+  if (!(r && r.nivel)) return '';
+  // un ítem totalmente despachado ya no es prioridad (aunque la base todavía no la haya sacado)
+  const b = BASE_BY_ID.get(Number(id)), d = despCant(id);
+  if (b && d > 0 && Number(b.pend) > 0 && d >= Number(b.pend)) return '';
+  return r.nivel;
 }
 
 function renderAccessBanner() {
@@ -2566,13 +2586,18 @@ async function initDb() {
     const db = await claude.use('db');
     if (!db) { dbReady = true; return; }
     dbRef = db;
+    // Varias tablas llegan casi juntas al abrir: se juntan en UN solo redibujado (en tablets lentas cada uno tarda segundos).
+    let _refrescoTimer = null;
+    const refrescarDiferido = () => {
+      if (_refrescoTimer) clearTimeout(_refrescoTimer);
+      _refrescoTimer = setTimeout(() => { _refrescoTimer = null; renderKpis(); applyFilters(); }, 400);
+    };
     db.collection('preparados').onSnapshot(qs => {
       const map = {};
       qs.docs.forEach(d => { if (d.exists) map[d.id] = d.data(); });
       preparadosMap = map;
       dbReady = true;
-      renderKpis();
-      applyFilters();
+      refrescarDiferido();
     }, err => {
       console.error('preparados onSnapshot error:', err && err.code, err && err.message);
       dbReady = true;
@@ -2595,16 +2620,14 @@ async function initDb() {
     db.collection('entregas_parciales').onSnapshot(qs => {
       setEntregas(qs.docs.filter(d => d.exists).map(d => d.data()));
       rebuildData();
-      renderKpis();
-      applyFilters();
+      refrescarDiferido();
     }, err => {
       console.warn('entregas_parciales onSnapshot:', err && err.code, err && err.message);
     });
     db.collection('avance_etapas').onSnapshot(qs => {
       setAvanceEtapas(qs.docs.filter(d => d.exists).map(d => d.data()));
       rebuildData();
-      renderKpis();
-      applyFilters();
+      refrescarDiferido();
     }, err => {
       console.warn('avance_etapas onSnapshot:', err && err.code, err && err.message);
     });
@@ -2612,15 +2635,13 @@ async function initDb() {
       const map = {};
       qs.docs.forEach(d => { if (d.exists) map[d.id] = d.data(); });
       prioridadMap = map;
-      renderKpis();
-      applyFilters();
+      refrescarDiferido();
     }, err => {
       console.error('prioridades onSnapshot error:', err && err.code, err && err.message);
     });
     db.collection('stock_movimientos').onSnapshot(qs => {
       stockMovimientos = qs.docs.filter(d => d.exists).map(d => d.data());
-      renderKpis();
-      applyFilters();
+      refrescarDiferido();
     }, err => {
       console.error('stock_movimientos onSnapshot error:', err && err.code, err && err.message);
     });
@@ -2628,22 +2649,19 @@ async function initDb() {
       const map = {};
       qs.docs.forEach(d => { if (d.exists) map[d.id] = d.data(); });
       despachadoMap = map;
-      renderKpis();
-      applyFilters();
+      refrescarDiferido();
     }, err => {
       console.error('despachado onSnapshot error:', err && err.code, err && err.message);
     });
     db.collection('despachos_log').onSnapshot(qs => {
       despachosLog = qs.docs.filter(d => d.exists).map(d => ({ ...d.data(), id: d.id }));
-      renderKpis();
-      applyFilters();
+      refrescarDiferido();
     }, err => {
       console.error('despachos_log onSnapshot error:', err && err.code, err && err.message);
     });
     db.collection('preparados_log').onSnapshot(qs => {
       preparadosLogList = qs.docs.filter(d => d.exists).map(d => ({ ...d.data(), id: d.id }));
-      renderKpis();
-      applyFilters();
+      refrescarDiferido();
     }, err => {
       console.error('preparados_log onSnapshot error:', err && err.code, err && err.message);
     });
@@ -2652,8 +2670,7 @@ async function initDb() {
       qs.docs.forEach(d => { if (d.exists) map[d.id] = d.data(); });
       avanceManualMap = map;
       recomputeEffectiveStages();
-      renderKpis();
-      applyFilters();
+      refrescarDiferido();
     }, err => {
       console.error('avance_manual onSnapshot error:', err && err.code, err && err.message);
     });
@@ -3956,8 +3973,8 @@ function applyFilters() {
     if (currentFilter === 'vencidas_term' && !isVencidaTerminacion(row)) return false;
     if (currentFilter === 'proceso' && (row.estado_general !== 'En Fabricación' || row.area_actual === 'Moldeo / Fusión')) return false;
     if (currentFilter === 'cancelados' && row.estado_general !== 'Cancelado') return false;
-    if (currentFilter === 'prioridad_alta' && getPriority(row.id) !== 'alta') return false;
-    if (currentFilter === 'prioridad_media' && getPriority(row.id) !== 'media') return false;
+    if (currentFilter === 'prioridad_alta' && getPriorityRow(row) !== 'alta') return false;
+    if (currentFilter === 'prioridad_media' && getPriorityRow(row) !== 'media') return false;
 
     if (currentFilter === 'repuestos' && selectedMatRep !== 'ALL') {
       if (row.material.toUpperCase() !== selectedMatRep.toUpperCase()) return false;
@@ -4552,7 +4569,7 @@ function showToast(message, kind) {
       return `<div class="text-dim" style="margin-top:3px; font-size:0.7rem; line-height:1.3;">🚚 Salieron ${salio.toLocaleString()} u.<br>Quedan ${falta.toLocaleString()} u. pendientes</div>`;
     }
     function buildPrioridadCellHtml(r) {
-      const nivel = getPriority(r.id);
+      const nivel = getPriorityRow(r);
       if (canSetPriority) {
         return `
           <select class="prioridad-select prioridad-${nivel || 'normal'}" onchange="savePriority(${r.id}, this.value, this)">
@@ -4569,8 +4586,8 @@ function showToast(message, kind) {
       rows = rows.slice().sort((a, b) => {
         let v1, v2;
         if (sortCol === 'prioridad') {
-          v1 = PRIORIDAD_RANK[getPriority(a.id)];
-          v2 = PRIORIDAD_RANK[getPriority(b.id)];
+          v1 = PRIORIDAD_RANK[getPriorityRow(a)];
+          v2 = PRIORIDAD_RANK[getPriorityRow(b)];
         } else if (sortCol === 'pend') {
           v1 = remainingPend(a); v2 = remainingPend(b);
         } else {
@@ -4598,7 +4615,7 @@ function showToast(message, kind) {
         const repBadge = buildRepBadge(r);
         const prepCellHtml = buildPrepCellHtml(r);
         const prioridadCellHtml = buildPrioridadCellHtml(r);
-        const nivel = getPriority(r.id);
+        const nivel = getPriorityRow(r);
         const rKey = rowKey(r);
         const parteBadge = (r._partes ? `<div style="margin-top:3px;"><span class="pill pill-info">📦 Entrega ${r._parte}/${r._partes}</span></div>` : '') + (r._stRank != null ? `<div style="margin-top:3px;"><span class="pill pill-info">↪ Parcial: ${r._stQ.toLocaleString()} u.</span></div>` : '');
         const dividirBtn = buildDividirBtnHtml(r);
@@ -5275,7 +5292,7 @@ function showToast(message, kind) {
       const totalKg = kgSum(DATA);
       const totalPedidos = new Set(DATA.map(r=>r.comprobante)).size;
       document.getElementById('kpi-total-items').textContent = totalItems;
-      document.getElementById('kpi-total-kg').textContent = `${totalKg.toLocaleString(undefined,{maximumFractionDigits:0})} Kg reales (${totalPedidos} pedidos) — incluye ítems cancelados en la cantidad, no en los Kg (sin tarjeta propia)`;
+      document.getElementById('kpi-total-kg').textContent = `${totalKg.toLocaleString(undefined,{maximumFractionDigits:0})} Kg reales (${totalPedidos} pedidos)`;
 
       const moldeo = DATA.filter(r=>r.area_actual==='Moldeo / Fusión');
       const kgMoldeo = kgSum(moldeo);
@@ -5355,14 +5372,14 @@ function showToast(message, kind) {
           : 'Fundidas, esperando en Terminación, con fecha ya pasada — ya contadas arriba, no suma aparte';
       }
 
-      const prioritarios = DATA.filter(r => r.estado_general !== 'Cancelado' && getPriority(r.id) === 'alta');
+      const prioritarios = DATA.filter(r => r.estado_general !== 'Cancelado' && getPriorityRow(r) === 'alta');
       const kgPrio = kgSum(prioritarios);
       document.getElementById('kpi-prioridad').textContent = prioritarios.length;
       document.getElementById('kpi-prioridad-kg').textContent = prioritarios.length
         ? `🔴 ${kgPrio.toLocaleString(undefined,{maximumFractionDigits:0})} Kg en Alta`
         : '';
 
-      const prioridadMedia = DATA.filter(r => r.estado_general !== 'Cancelado' && getPriority(r.id) === 'media');
+      const prioridadMedia = DATA.filter(r => r.estado_general !== 'Cancelado' && getPriorityRow(r) === 'media');
       const kgPrioMedia = kgSum(prioridadMedia);
       document.getElementById('kpi-prioridad-media').textContent = prioridadMedia.length;
       document.getElementById('kpi-prioridad-media-kg').textContent = prioridadMedia.length
