@@ -721,7 +721,7 @@
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
       <div>
         <div style="font-weight:700; color:#fff; font-size:0.95rem;">❌ Rechazos</div>
-        <div class="text-dim" style="margin-top:4px;">Terminación registra la pieza rechazada (con su Nº de probeta, si tiene). Pasa a Planificación para replanificarla; el registro queda para siempre.</div>
+        <div class="text-dim" style="margin-top:4px;">Terminación registra la pieza rechazada (con su Nº de probeta si la pieza lleva trazabilidad). Pasa a Planificación para replanificarla; el registro queda para siempre.</div>
       </div>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="view-toggle-btn" id="rz-motivos-btn" style="display:none;" onclick="openMotivosDialog()">⚙️ Motivos</button>
@@ -2242,11 +2242,20 @@ function prepSinDetalleDisponible(row) {
   return Math.max(0, prepPendienteDespacho(row) - totalLotes);
 }
 
+// Lo que se despachó SIN pasar por una hoja de pesada (línea sin lote, o despachos viejos sin detalle
+// de probetas) ya salió de la planta: no tiene que seguir apareciendo como pendiente de pesar.
+function despachadoSinHoja(row) {
+  return despachosLog.filter(d => String(d.itemId) === String(row.id)).reduce((s, d) => {
+    const pr = d.probetas || [];
+    if (!pr.length) return s + (d.cantidad || 0);
+    return s + pr.filter(p => !p.loteId).reduce((a, p) => a + (p.cantidad || 0), 0);
+  }, 0);
+}
 function prepSinHojaDisponible(row) {
   const totalPesado = preparadosLogList
     .filter(l => String(l.itemId) === String(row.id))
     .reduce((s, l) => s + (l.cantidad || 0), 0);
-  return Math.max(0, prepCantClamped(row) - totalPesado);
+  return Math.max(0, prepCantClamped(row) - totalPesado - despachadoSinHoja(row));
 }
 function hojaDisponibleRows() {
   return BASE.filter(r => prepSinHojaDisponible(r) > 0.0001);
@@ -3026,8 +3035,15 @@ function rzElegir(id) {
   const dl = document.getElementById('rz-probetas');
   if (dl) dl.innerHTML = lotes.map(p => `<option value="${escHtml(p)}">`).join('');
   const pi = document.getElementById('rz-probeta'); if (pi) pi.value = '';
+  rz.traza = lotes.length ? 'si' : '';
+  const tz = document.getElementById('rz-traza'); if (tz) tz.value = rz.traza;
+  rzTrazaUI();
   rzBuscar(rz.q || '');
   rzActualizarKg();
+}
+function rzTrazaUI() {
+  const w = document.getElementById('rz-probeta-wrap'); if (w) w.style.display = (rz.traza === 'si') ? '' : 'none';
+  if (rz.traza !== 'si') { rz.probeta = ''; const pi = document.getElementById('rz-probeta'); if (pi) pi.value = ''; }
 }
 function rzActualizarKg() {
   if (!rz.kgTocado) rz.kg = rzKgAuto();
@@ -3035,7 +3051,7 @@ function rzActualizarKg() {
 }
 function openRechazoDialog() {
   if (!puedeCargarRechazo()) { alert('Tu usuario no tiene permiso para registrar rechazos.'); return; }
-  rz = { q: '', sel: null, cant: '', probeta: '', motivo: '', otro: '', detalle: '', kg: 0, kgTocado: false };
+  rz = { q: '', sel: null, cant: '', traza: '', probeta: '', motivo: '', otro: '', detalle: '', kg: 0, kgTocado: false };
   const activos = motivosList.filter(m => m.activo !== false);
   const motivoHtml = activos.length ? `
     <div class="stock-field"><label>Motivo</label>
@@ -3055,7 +3071,13 @@ function openRechazoDialog() {
       <div class="stock-field" style="flex:1;"><label>Cantidad rechazada (u.)</label><input type="number" min="1" step="1" oninput="rz.cant = this.value; rzActualizarKg()"></div>
       <div class="stock-field" style="flex:1;"><label>Kg (se calcula solo)</label><input type="number" id="rz-kg" min="0" step="0.1" oninput="rz.kg = Number(this.value); rz.kgTocado = true"></div>
     </div>
-    <div class="stock-field"><label>Nº de probeta (si tiene)</label><input type="text" id="rz-probeta" list="rz-probetas" placeholder="Dejalo vacío si no tiene" oninput="rz.probeta = this.value"><datalist id="rz-probetas"></datalist></div>
+    <div class="stock-field"><label>¿La pieza lleva trazabilidad?</label>
+      <select id="rz-traza" onchange="rz.traza = this.value; rzTrazaUI()">
+        <option value="">— Elegí —</option>
+        <option value="si">Sí, lleva Nº de probeta</option>
+        <option value="no">No lleva</option>
+      </select></div>
+    <div class="stock-field" id="rz-probeta-wrap" style="display:none;"><label>Nº de probeta (trazabilidad) — obligatorio</label><input type="text" id="rz-probeta" list="rz-probetas" placeholder="Ej: AM6050" oninput="rz.probeta = this.value"><datalist id="rz-probetas"></datalist></div>
     ${motivoHtml}
     <div class="stock-field"><label>Detalle (opcional)</label><input type="text" oninput="rz.detalle = this.value"></div>
     <div class="stock-actions">
@@ -3072,6 +3094,8 @@ async function saveRechazo() {
   if (!(cant > 0)) { alert('Poné la cantidad rechazada.'); return; }
   const motivo = (rz.motivo === '__otro__' || (!rz.motivo && rz.otro)) ? (rz.otro || '').trim() : (rz.motivo || '').trim();
   if (!motivo) { alert('Elegí o escribí el motivo del rechazo.'); return; }
+  if (!rz.traza) { alert('Indicá si la pieza lleva trazabilidad (Sí o No lleva).'); return; }
+  if (rz.traza === 'si' && !(rz.probeta || '').trim()) { alert('Esta pieza lleva trazabilidad: cargá el Nº de probeta.'); return; }
   if (!dbRef) { alert('No se pudo conectar al almacenamiento compartido. Probá recargar la página.'); return; }
   const btn = document.getElementById('rz-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
@@ -3079,7 +3103,7 @@ async function saveRechazo() {
     await dbRef.collection('rechazos').add({
       item_id: b.id, cliente: b.cliente, comprobante: b.comprobante, oc: b.oc, codigo: b.codigo,
       descripcion: b.descripcion, material: b.material, cantidad: cant, kg: Number(rz.kg) || rzKgAuto(),
-      probeta: (rz.probeta || '').trim() || null, motivo, detalle: (rz.detalle || '').trim() || null,
+      probeta: rz.traza === 'si' ? (rz.probeta || '').trim() : null, motivo, detalle: (rz.detalle || '').trim() || null,
       area_detecta: 'Terminación', dia: diaLocalStr(), estado: 'pendiente',
     });
     closeStockDialog();
