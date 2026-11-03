@@ -5885,15 +5885,12 @@ function showToast(message, kind) {
       <td><span class="${x.n === 'rojo' ? 'rep' : 'soon'}">${NIV[x.n]}</span></td><td class="num"><b class="soon">${x.L}</b></td><td>${puedePlanificar() ? btn('Cargar moldeo de ' + x.L, `cir_moldeo(${x.L},'${esc(x.c)}')`, 'pri') : ''}</td></tr>`).join('');
     return `<div class="dia-head"><div class="dia-tiles">
         <div class="tile"><div class="n">${n}</div><div class="l">cargas en moldeo / fusión</div></div>
-        <div class="tile"><div class="n">${u}</div><div class="l">piezas en curso</div></div>
-        <div class="tile ${sug.length ? 'hoy' : ''}"><div class="n">${sug.length}</div><div class="l">piezas que el kanban pide reponer</div></div></div>
+        <div class="tile"><div class="n">${u}</div><div class="l">piezas en curso</div></div></div>
         <div>${puedePlanificar() ? btn('+ Cargar moldeo / fusión', 'cir_moldeo()', 'pri') : '<span class="code">Para cargar moldeo hace falta rol Editor.</span>'}</div></div>
-      <div class="panel"><h2>📌 El kanban pide reponer</h2><div class="sub">Piezas del kanban de Terminación (Sector Z) en amarillo o rojo. El lote sugerido ya descuenta lo que está en proceso (stock virtual). Plazo de reposición: ${plazo} días.</div>
-        ${sugRows ? `<table><tr><th>Pieza</th><th class="num">Estantería</th><th class="num">k</th><th class="num">Stock virtual</th><th>Nivel</th><th class="num">Lote sugerido</th><th></th></tr>${sugRows}</table>` : '<div class="empty">Ninguna pieza necesita reposición ahora.</div>'}</div>
-      ${(C.pasos || []).length ? `<div class="panel"><h2>↩ Pasaron a Terminación hace poco</h2><div class="sub">Si pasaste algo por error, tocá <b>Deshacer</b>: vuelve a Moldeo / Fusión y desde ahí lo podés borrar. Solo se puede si esa cantidad sigue en Terminación.</div>
-        <table><tr><th>Pieza</th><th class="num">Cantidad</th><th>Cuándo</th><th></th></tr>${C.pasos.map(m => `<tr><td>${nameCell(m.codigo)}</td><td class="num"><b>${m.cantidad}</b></td><td>${esc(String(m.ts || '').slice(0, 10).split('-').reverse().join('/'))}<div class="code">${esc(String(m.ts || '').slice(11, 16))}</div></td><td>${puedeOperar() ? btn('↩ Deshacer', `cir_deshacerPase(${m.id})`) : ''}</td></tr>`).join('')}</table></div>` : ''}
       <div class="panel"><h2>🏭 En moldeo / fusión ahora</h2><div class="sub">Cuentan en el stock virtual del kanban de Terminación. Cuando la pieza llega a Terminación, tocá <b>Pasó a Terminación</b> (total o parcial).</div>
-        ${rows ? `<table><tr><th>Pieza</th><th class="num">Cantidad</th><th>Cargado</th><th></th></tr>${rows}</table>` : '<div class="empty">No hay nada cargado en moldeo / fusión.</div>'}</div>`;
+        ${rows ? `<table><tr><th>Pieza</th><th class="num">Cantidad</th><th>Cargado</th><th></th></tr>${rows}</table>` : '<div class="empty">No hay nada cargado en moldeo / fusión.</div>'}</div>
+      ${(C.pasos || []).length ? `<div class="panel"><h2>↩ Pasaron a Terminación hace poco</h2><div class="sub">Si pasaste algo por error, tocá <b>Deshacer</b>: vuelve a Moldeo / Fusión y desde ahí lo podés borrar. Solo se puede si esa cantidad sigue en Terminación.</div>
+        <table><tr><th>Pieza</th><th class="num">Cantidad</th><th>Cuándo</th><th></th></tr>${C.pasos.map(m => `<tr><td>${nameCell(m.codigo)}</td><td class="num"><b>${m.cantidad}</b></td><td>${esc(String(m.ts || '').slice(0, 10).split('-').reverse().join('/'))}<div class="code">${esc(String(m.ts || '').slice(11, 16))}</div></td><td>${puedeOperar() ? btn('↩ Deshacer', `cir_deshacerPase(${m.id})`) : ''}</td></tr>`).join('')}</table></div>` : ''}`;
   }
 
   // ---------- Kanban: configuración + listado con stock físico y virtual ----------
