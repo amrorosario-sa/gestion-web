@@ -307,6 +307,10 @@
 
   .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(16px); z-index: 2000; background: #132033; border: 1px solid #334155; color: #f1f5f9; padding: 10px 18px; border-radius: 9999px; font-size: 0.85rem; font-weight: 600; box-shadow: 0 8px 24px rgba(0,0,0,0.45); opacity: 0; pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease; max-width: 90vw; text-align: center; }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #side-alerts { position: fixed; right: 16px; bottom: 70px; z-index: 2100; display: flex; flex-direction: column; gap: 8px; max-width: min(360px, calc(100vw - 32px)); pointer-events: none; }
+  .side-alert { pointer-events: auto; cursor: pointer; background: #1c1917; border: 1px solid #f59e0b; border-left-width: 5px; color: #fef3c7; padding: 10px 14px; border-radius: 10px; font-size: 0.85rem; line-height: 1.4; box-shadow: 0 6px 20px rgba(0,0,0,0.45); opacity: 0; transform: translateX(24px); transition: opacity .25s, transform .25s; }
+  .side-alert.show { opacity: 1; transform: translateX(0); }
+  .side-alert.rojo { border-color: #ef4444; background: #290f0f; color: #fee2e2; }
   .toast.success { border-color: #22c55e; }
   .toast.success::before { content: '✅ '; }
   .toast.error { border-color: var(--danger); }
@@ -2788,10 +2792,21 @@ async function savePrep(key, pend, cellEl) {
   if (btn) btn.disabled = true;
   input.disabled = true;
   try {
+    const totalAntes = prepCant(id);
     await dbRef.collection('preparados').doc(String(id)).set({ cant: total, ts: new Date().toISOString() });
     delete prepDrafts[key];
     preparadosMap[String(id)] = { ...(preparadosMap[String(id)] || {}), cant: total };
-    showToast((row && row._pk) ? 'Guardado — se carga primero en la entrega más próxima' : 'Guardado', 'success');
+    // Si la pieza está en la estantería kanban de Mecanizado (aros), lo preparado se da de baja de ahí
+    // (y vuelve si se baja la cantidad). Si el parche 020 no está corrido, simplemente no hace nada.
+    let kan = null;
+    if (total !== totalAntes && row && row.codigo) {
+      try { const r = await supabaseClient.rpc('mec_prep_kanban', { p_item: Number(id), p_prev: totalAntes, p_new: total }); if (!r.error) kan = r.data; } catch (e) { kan = null; }
+    }
+    let msgKan = '';
+    if (kan && kan.descontado > 0) msgKan = ' · ' + kan.descontado + ' dadas de baja de la estantería kanban';
+    else if (kan && kan.devuelto > 0) msgKan = ' · ' + kan.devuelto + ' devueltas a la estantería kanban';
+    showToast(((row && row._pk) ? 'Guardado — se carga primero en la entrega más próxima' : 'Guardado') + msgKan, 'success');
+    if (kan && kan.descontado > 0 && window.cirAvisoKanban) window.cirAvisoKanban(row.codigo, kan.descontado);
     renderKpis();
     applyFilters();
   } catch (e) {
@@ -4138,6 +4153,21 @@ function escHtml(s) {
 }
 
 let toastTimer = null;
+// Cartel de aviso al costado (dura unos segundos; tocándolo se cierra). Se usa p. ej. cuando una entrega
+// deja la estantería kanban por debajo del límite.
+function showSideAlert(html, kind, ms) {
+  let box = document.getElementById('side-alerts');
+  if (!box) { box = document.createElement('div'); box.id = 'side-alerts'; document.body.appendChild(box); }
+  const el = document.createElement('div');
+  el.className = 'side-alert' + (kind ? ' ' + kind : '');
+  el.innerHTML = html;
+  const quitar = () => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); };
+  el.onclick = quitar;
+  box.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(quitar, ms || 9000);
+}
+
 function showToast(message, kind) {
   const el = document.getElementById('toast');
   if (!el) return;
@@ -5551,6 +5581,18 @@ function showToast(message, kind) {
   const kOf = (u, c) => { const r = kRow(u, c); return r ? r.k : null; };
   function nivel(u, c) { const k = kOf(u, c); if (k == null) return null; const st = stock(c, u); return st >= 2 * k ? 'verde' : st >= k ? 'amarillo' : 'rojo'; }
   const NIV = { verde: '🟢 Verde', amarillo: '🟡 Amarillo', rojo: '🔴 Rojo' };
+  // Cartel al costado cuando una salida deja la estantería kanban peor que antes (amarillo / rojo).
+  const nivelDe = (k, x) => x >= 2 * k ? 'verde' : x >= k ? 'amarillo' : 'rojo';
+  function avisoNivel(c, antes, despues) {
+    const k = kOf('kanban', c); if (k == null || typeof showSideAlert !== 'function') return;
+    const rk = { verde: 0, amarillo: 1, rojo: 2 }, na = nivelDe(k, antes), nd = nivelDe(k, despues);
+    if (nd === 'verde' || rk[nd] <= rk[na]) return;
+    const nom = esc(nombre(c));
+    showSideAlert(nd === 'rojo'
+      ? `🔴 <b>${nom}</b><br>La estantería kanban quedó en <b>${despues}</b>: bajó del límite (${k}). Hay que reponer.`
+      : `🟡 <b>${nom}</b><br>La estantería kanban quedó en <b>${despues}</b>, cerca del límite (${k}). Conviene ir reponiendo.`, nd === 'rojo' ? 'rojo' : '', 10000);
+  }
+  window.cirAvisoKanban = async (cod, descontado) => { try { await load(); const d = stock(cod, 'kanban'); avisoNivel(cod, d + descontado, d); } catch (e) { /* sin aviso */ } };
   const alertas = u => C.k.filter(r => r.ubicacion === u && ['amarillo', 'rojo'].includes(nivel(u, r.codigo))).map(r => r.codigo);
   const enMoldeo = c => C.moldeos.filter(o => o.codigo === c).reduce((a, o) => a + o.cantidad, 0);
   const planSinEntregar = c => C.planes.reduce((a, p) => { const r = rec(p.receta); return (r && (c === r.macho || c === r.hembra)) ? a + Math.max(0, pendPlan(p) - holdOf(p, c)) : a; }, 0);
@@ -5728,16 +5770,18 @@ function showToast(message, kind) {
   A.zaM = c => ask('Entregar a Mecanizado', esc(nombre(c)) + '<br>Entrega suelta, sin plan.', [{ id: 'n', label: 'Cantidad (máx. ' + stock(c, 'sector_z') + ')', value: Math.min(stock(c, 'sector_z'), 5), max: stock(c, 'sector_z') }], 'Entregar',
     v => rpc('mec_mover', { p_codigo: c, p_desde: 'sector_z', p_hasta: 'mecanizado', p_cant: v.n, p_motivo: 'entrega suelta a Mecanizado' }));
   A.moldeo = (def, cod) => ask('Cargar moldeo / fusión para kanban', 'Piezas que se mandan a moldear y fundir para reponer kanban (pedidos internos que no vienen de SGA).', [
-    { type: 'pieza', id: 'c', label: 'Pieza', value: cod || '' }, { id: 'n', label: 'Cantidad', value: def || 10, max: 99999 }, { type: 'dec', id: 'kg', label: 'Kg por unidad (solo si la pieza todavía no lo tiene cargado)', ph: 'Ej: 12,5 — para que sume Kg al indicador de Fundido' }, { type: 'text', id: 'x', label: 'Nota (opcional)', ph: 'Ej: colada del viernes' }], 'Cargar',
-    async v => { if (v.kg > 0) await rpc('mec_set_kg', { p_codigo: v.c, p_kg: v.kg }); await tbl(supabaseClient.from('mec_moldeos').insert({ codigo: v.c, cantidad: v.n, nota: v.x || null })); });
+    { type: 'pieza', id: 'c', label: 'Pieza', value: cod || '' }, { id: 'n', label: 'Cantidad', value: def || 10, max: 99999 }, { type: 'dec', id: 'kg', label: 'Kg por unidad (solo si la pieza todavía no lo tiene cargado)', ph: 'Ej: 12,5 — para que sume Kg al indicador de Fundido' }, { type: 'date', id: 'f', label: 'Fecha de moldeo / fusión (hoy por defecto; cambiala si fue otro día)', value: TODAY() }, { type: 'text', id: 'x', label: 'Nota (opcional)', ph: 'Ej: colada del viernes' }], 'Cargar',
+    async v => { if (v.f > TODAY()) throw new Error('La fecha no puede ser futura.'); if (v.kg > 0) await rpc('mec_set_kg', { p_codigo: v.c, p_kg: v.kg }); await tbl(supabaseClient.from('mec_moldeos').insert({ codigo: v.c, cantidad: v.n, fecha: v.f, nota: v.x || null })); });
   A.deshacerPase = id => { const m = (C.pasos || []).find(x => x.id === id); if (!m) return;
     ask('Deshacer pase a Terminación', esc(nombre(m.codigo)) + ` — ${m.cantidad} u.<br>Se sacan de Terminación y vuelven a Moldeo / Fusión. Desde ahí las podés borrar con 🗑 si fue un error de carga.`, [], 'Deshacer pase',
       () => rpc('mec_moldeo_deshacer', { p_mov: id })); };
   A.kg = c => ask('Kg por unidad', esc(nombre(c)) + '<br>Se usa para que lo moldeado/fundido para kanban sume Kg al indicador de Fundido. Lo ya cargado sin Kg se recalcula.',
     [{ type: 'dec', id: 'kg', label: 'Kg por unidad', value: kgDe(c) || '', required: true }], 'Guardar', v => rpc('mec_set_kg', { p_codigo: c, p_kg: v.kg }));
   A.pasoTerm = id => { const o = C.moldeos.find(x => x.id === id);
-    ask('Pasó a Terminación', esc(nombre(o.codigo)) + ' — en moldeo/fusión: ' + o.cantidad, [{ id: 'n', label: 'Cantidad que pasó (máx. ' + o.cantidad + ')', value: o.cantidad, max: o.cantidad }], 'Pasar a Terminación',
-      v => rpc('mec_moldeo_a_terminacion', { p_id: id, p_cant: v.n })); };
+    ask('Pasó a Terminación', esc(nombre(o.codigo)) + ' — en moldeo/fusión: ' + o.cantidad, [{ id: 'n', label: 'Cantidad que pasó (máx. ' + o.cantidad + ')', value: o.cantidad, max: o.cantidad }, { type: 'date', id: 'f', label: 'Fecha en que pasó a Terminación (hoy por defecto)', value: TODAY() }], 'Pasar a Terminación',
+      async v => { if (v.f > TODAY()) throw new Error('La fecha no puede ser futura.'); if (v.f < String(o.fecha || '')) throw new Error('No puede pasar antes de la fecha de moldeo (' + fmt(o.fecha) + ').');
+        const r = await supabaseClient.rpc('mec_moldeo_a_terminacion', v.f === TODAY() ? { p_id: id, p_cant: v.n } : { p_id: id, p_cant: v.n, p_fecha: v.f });
+        if (r.error) throw new Error(/Could not find the function|schema cache/i.test(r.error.message || '') ? 'Para fechar el pase falta correr el parche 020 en Supabase.' : r.error.message); }); };
   A.delMoldeo = async id => { if (!confirm('¿Borrar este moldeo cargado?')) return; try { { const r = await supabaseClient.rpc('mec_moldeo_borrar', { p_id: id }); if (r.error) { if (/Could not find the function|schema cache/i.test(r.error.message || '')) await tbl(supabaseClient.from('mec_moldeos').delete().eq('id', id)); else throw new Error(r.error.message); } } await reload(); } catch (e) { alert(e.message); } };
   A.k = (u, c) => { const cur = kOf(u, c); const plazo = C.cfg[u === 'sector_z' ? 'plazo_sector_z' : 'plazo_kanban'];
     ask('Cantidad k — ' + UBIC[u], esc(nombre(c)) + `<br>k es lo que se consume durante el plazo de reposición (${plazo} días). Verde: 2k o más · amarillo: entre 1k y 2k (avisa reponer) · rojo: menos de 1k. Poné 0 para quitarlo.`,
@@ -5786,7 +5830,9 @@ function showToast(message, kind) {
     ask('Retirar de la estantería kanban para un pedido', esc(nombre(c)) + `<br>Hay ${stock(c, 'kanban')} en la estantería. El pedido queda como preparado para despachar.`, [
       { type: 'select', id: 'p', label: 'Pedido', options: opts, value: opts[0][0] }, { id: 'n', label: 'Cantidad', value: Math.max(1, max), max: Math.min(stock(c, 'kanban'), 99999) }], 'Retirar',
       async v => { const row = findRow(v.p); if (!row) throw new Error('No se encontró el pedido.'); if (v.n > remainingPend(row)) throw new Error('Ese pedido solo necesita ' + remainingPend(row) + ' más.');
+        const antesK = stock(c, 'kanban');
         await rpc('mec_egresar', { p_codigo: c, p_ubic: 'kanban', p_cant: v.n, p_pedido: row.comprobante });
+        avisoNivel(c, antesK, antesK - v.n);
         try { await marcarPreparado(row, v.n); } catch (e) { throw new Error('Se descontó de la estantería pero no se pudo marcar el pedido como preparado. Avisale a quien administra el tablero. (' + (e.message || e) + ')'); } });
   };
   A.armar = pid => { const p = C.planes.find(x => x.id === pid), r = rec(p.receta);
