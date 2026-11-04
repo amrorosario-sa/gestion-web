@@ -6064,10 +6064,11 @@ function showToast(message, kind) {
     const rows = C.rechazos.slice(0, 8).map(r => `<tr><td>${fmt(r.dia)}</td><td>${nameCell(r.codigo)}</td><td class="num"><b>${r.cantidad}</b></td><td>${r.destino === 'descarte' ? '🗑️ descarte' : '🔧 a Terminación'}</td><td>${esc(r.motivo || '—')}${r.detalle ? `<div class="code">${esc(r.detalle)}</div>` : ''}</td><td>${r.probeta ? esc(r.probeta) : (r.lleva_trazabilidad ? '—' : '<span class="code">no lleva</span>')}</td></tr>`).join('');
     return `<div class="panel"><h2>❌ Últimos rechazos en Mecanizado</h2><div class="sub">Quedan registrados con motivo y Nº de probeta (trazabilidad) cuando la pieza lleva.</div>${rows ? `<table><tr><th>Día</th><th>Pieza</th><th class="num">Cant.</th><th>Destino</th><th>Motivo</th><th>Probeta</th></tr>${rows}</table>` : '<div class="empty">Todavía no hay rechazos registrados.</div>'}</div>`;
   }
-  function sueltasPanel() {
+  function sueltasPanel(soloSiHay) {
     const sueltas = Object.keys(C.stock.mecanizado || {}).filter(c => libre(c) > 0).map(c => { const rs = C.recetas.filter(r => r.macho === c || r.hembra === c);
       return `<tr><td>${nameCell(c)}${rs.length ? `<div class="code">${rs.map(r => (r.macho === c ? 'macho' : 'hembra') + ' de ' + esc(r.nombre)).join(' · ')}</div>` : ''}</td><td class="num"><b>${libre(c)}</b></td><td>${puedeOperar() ? btn('Sale procesada…', `cir_salidaLibre('${esc(c)}')`) + btn('Rechazar…', `cir_rechazar('${esc(c)}')`) : ''}</td></tr>`; }).join('');
     const hayArmable = C.recetas.some(r => Math.min(libre(r.macho), libre(r.hembra)) > 0);
+    if (soloSiHay && !sueltas) return '';
     return `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>🧰 Fuera de plan — piezas sueltas en Mecanizado</h2>${puedeOperar() ? btn('Armar aros fuera de plan…', 'cir_armarLibre()', hayArmable ? 'pri' : '') : ''}</div>
       <div class="sub">Si hacés algo distinto de lo planificado, cargalo acá. Son las piezas que Terminación entregó sin plan o lo que sobró de un plan cerrado.</div>
       ${sueltas ? `<table><tr><th>Pieza</th><th class="num">Sueltas</th><th></th></tr>${sueltas}</table>` : '<div class="empty">No hay piezas sueltas en Mecanizado.</div>'}</div>`;
@@ -6086,10 +6087,12 @@ function showToast(message, kind) {
         <div class="card-mid">⚙️ Machos acá: <b>${p.hold_macho}</b> &nbsp;·&nbsp; Hembras acá: <b>${p.hold_hembra}</b></div><div class="card-mid">${estado}</div>
         ${puedeOperar() ? `<div class="row-actions" style="margin-top:8px;">${btn('Armar' + (max ? ' ' + max : ''), `cir_armar(${p.id})`, 'pri', !max)}${btn('Rechazar piezas…', `cir_rechazarPlan(${p.id})`, '', !(p.hold_macho || p.hold_hembra))}</div>` : ''}</div>`; };
     const proxRows = prox.slice(0, 12).map(p => `<tr><td><b>${fmt(p.fecha)}</b></td><td>${esc(rec(p.receta).nombre)}</td><td class="num"><b>${pendPlan(p)}</b></td></tr>`).join('');
-    return diaHeader('⚙️ Mecanizado — mi programa del día', [[sum(delDia), 'aros para HOY', delDia.length ? 'hoy' : ''], [sum(atras), 'atrasados', atras.length ? 'rojo' : ''], [listos, 'listos para armar ahora']]) +
-      alertPanel('kanban', 'Hay que armar aros para reponerla.', false) +
+    const hayArmable = C.recetas.some(r => Math.min(libre(r.macho), libre(r.hembra)) > 0);
+    const acciones = puedeOperar() ? `<div class="row-actions" style="margin:2px 0 12px;">${btn('🧰 Armar aros fuera de plan…', 'cir_armarLibre()', hayArmable ? 'pri' : '')}</div>` : '';
+    return diaHeader('⚙️ Mecanizado — mi programa del día', [[sum(delDia), 'aros para HOY', delDia.length ? 'hoy' : ''], [sum(atras), 'atrasados', atras.length ? 'rojo' : ''], [listos, 'listos para armar ahora']]) + acciones +
       (hoyP.length ? `<div class="sec-title">Lo que tenés que armar</div>${hoyP.map(card).join('')}` : '<div class="panel"><div class="empty" style="font-size:.9rem;">✔ No tenés aros planificados para hoy ni atrasados.</div></div>') +
-      `<div class="panel"><h2>📅 Próximos días</h2><div class="sub">Lo que viene en tu programa.</div>${proxRows ? `<table><tr><th>Armar el</th><th>Aro</th><th class="num">Cantidad</th></tr>${proxRows}</table>` : '<div class="empty">No hay nada más planificado.</div>'}</div>` + sueltasPanel() + rechazosPanel();
+      `<div class="panel"><h2>📅 Próximos días</h2><div class="sub">Lo que viene en tu programa.</div>${proxRows ? `<table><tr><th>Armar el</th><th>Aro</th><th class="num">Cantidad</th></tr>${proxRows}</table>` : '<div class="empty">No hay nada más planificado.</div>'}</div>` +
+      alertPanel('kanban', 'Hay que armar aros para reponerla.', false) + sueltasPanel(true) + rechazosPanel();
   }
 
   function vDiaTerm() {
@@ -6106,11 +6109,12 @@ function showToast(message, kind) {
     const proxRows = prox.slice(0, 12).map(p => { const r = rec(p.receta); return `<tr><td><b>${fmt(dueOf(p))}</b></td><td>${esc(r.nombre)}</td><td class="num"><b>${pendPlan(p)}</b> machos + <b>${pendPlan(p)}</b> hembras</td></tr>`; }).join('');
     const term = Object.keys(C.stock.terminacion || {}).filter(c => stock(c, 'terminacion') > 0).map(c => `<tr><td>${nameCell(c)}</td><td class="num">${stock(c, 'terminacion')}</td><td>${puedeOperar() ? btn('Terminé piezas…', `cir_terminar('${esc(c)}')`) : ''}</td></tr>`).join('');
     const mold = C.moldeos.map(o => `<tr><td>${nameCell(o.codigo)}${o.nota ? `<div class="code">${esc(o.nota)}</div>` : ''}</td><td class="num">${o.cantidad}</td><td>${puedeOperar() ? btn('Pasó a Terminación…', `cir_pasoTerm(${o.id})`) : ''}</td></tr>`).join('');
-    return diaHeader('🔧 Terminación — mis entregas del día', [[pzs(delDia), 'piezas a entregar HOY', delDia.length ? 'hoy' : ''], [pzs(atras), 'atrasadas', atras.length ? 'rojo' : '']]) +
-      alertPanel('sector_z', 'Hay que reponer esta estantería.', false) +
+    const accionesT = puedeOperar() ? `<div class="row-actions" style="margin:2px 0 12px;">${btn('+ Entrega suelta a Mecanizado', 'cir_entregaSuelta()', 'pri')}</div>` : '';
+    return diaHeader('🔧 Terminación — mis entregas del día', [[pzs(delDia), 'piezas a entregar HOY', delDia.length ? 'hoy' : ''], [pzs(atras), 'atrasadas', atras.length ? 'rojo' : '']]) + accionesT +
       (deb.length ? `<div class="sec-title">Lo que tenés que entregar a Mecanizado</div>${deb.map(card).join('')}` : '<div class="panel"><div class="empty" style="font-size:.9rem;">✔ No tenés entregas pendientes para hoy ni atrasadas.</div></div>') +
-      `<div class="panel"><h2>📅 Próximas entregas</h2><div class="sub">Lo que viene en los próximos días hábiles.</div>${proxRows ? `<table><tr><th>Entregar el</th><th>Aro</th><th class="num">Piezas</th></tr>${proxRows}</table>` : '<div class="empty">No hay nada más planificado.</div>'}</div>
-      <div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>🔧 En Terminación</h2>${puedeOperar() ? btn('+ Entrega suelta a Mecanizado', 'cir_entregaSuelta()') : ''}</div><div class="sub">Piezas que están para procesar. Al terminar van a Sector Z o directo a Mecanizado. Con "Entrega suelta" le pasás a Mecanizado una pieza que no está en ningún plan.</div>
+      `<div class="panel"><h2>📅 Próximas entregas</h2><div class="sub">Lo que viene en los próximos días hábiles.</div>${proxRows ? `<table><tr><th>Entregar el</th><th>Aro</th><th class="num">Piezas</th></tr>${proxRows}</table>` : '<div class="empty">No hay nada más planificado.</div>'}</div>` +
+      alertPanel('sector_z', 'Hay que reponer esta estantería.', false) +
+      `<div class="panel"><h2>🔧 En Terminación</h2><div class="sub">Piezas que están para procesar. Al terminar van a Sector Z o directo a Mecanizado. Con "Entrega suelta" le pasás a Mecanizado una pieza que no está en ningún plan.</div>
         ${term ? `<table><tr><th>Pieza</th><th class="num">Cantidad</th><th></th></tr>${term}</table>` : '<div class="empty">No hay piezas en Terminación.</div>'}</div>
       ${mold ? `<div class="panel"><h2>🏭 En moldeo / fusión</h2><div class="sub">Cuando lleguen a Terminación, marcalas.</div><table><tr><th>Pieza</th><th class="num">Cantidad</th><th></th></tr>${mold}</table></div>` : ''}`;
   }
