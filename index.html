@@ -5766,6 +5766,8 @@ function showToast(message, kind) {
       { type: 'select', id: 'd', label: '¿A dónde va?', options: [['sector_z', '🗄️ Sector Z (kanban de piezas que llevan mecanizado)'], ['mecanizado', '⚙️ Mecanizado (directo)']], value: 'sector_z' }], 'Mover',
       v => rpc('mec_mover', { p_codigo: c, p_desde: 'terminacion', p_hasta: v.d, p_cant: v.n }));
   };
+  A.entregarParte = (pid, c) => { const p = C.planes.find(x => x.id === pid); if (!p) return; const falta = Math.max(0, pendPlan(p) - holdOf(p, c)), disp = stock(c, 'sector_z') + stock(c, 'terminacion'), max = Math.min(falta, disp);
+    ask('Entregar una parte a Mecanizado', esc(nombre(c)) + `<br>Plan #${pid} · falta entregar ${falta} · disponible ${disp}. El resto se entrega después.`, [{ id: 'n', label: 'Cantidad que entregás ahora (máx. ' + max + ')', value: max, max }], 'Entregar', v => rpc('mec_entregar', { p_plan: pid, p_codigo: c, p_cant: v.n })); };
   A.entregar = async (pid, c) => { try { await rpc('mec_entregar', { p_plan: pid, p_codigo: c, p_cant: null }); await reload(); } catch (e) { alert(e.message); } };
   A.zaM = c => ask('Entregar a Mecanizado', esc(nombre(c)) + '<br>Entrega suelta, sin plan.', [{ id: 'n', label: 'Cantidad (máx. ' + stock(c, 'sector_z') + ')', value: Math.min(stock(c, 'sector_z'), 5), max: stock(c, 'sector_z') }], 'Entregar',
     v => rpc('mec_mover', { p_codigo: c, p_desde: 'sector_z', p_hasta: 'mecanizado', p_cant: v.n, p_motivo: 'entrega suelta a Mecanizado' }));
@@ -5792,9 +5794,18 @@ function showToast(message, kind) {
       v => tbl(supabaseClient.from('mec_config').upsert({ clave: key, valor: v.n }, { onConflict: 'clave' }))); };
   A.kNuevo = u => ask('Definir k — ' + UBIC[u], 'Elegí la pieza y su k (consumo durante el plazo de reposición).', [{ type: 'pieza', id: 'c', label: 'Pieza', value: '' }, { id: 'n', label: 'k (unidades)', value: 10, max: 99999 }], 'Guardar',
     v => tbl(supabaseClient.from('mec_k').upsert({ ubicacion: u, codigo: v.c, k: v.n }, { onConflict: 'ubicacion,codigo' })));
-  A.ajustar = (u, cod) => ask('Ajustar stock — ' + UBIC[u], 'Para cargar el stock inicial o corregir un conteo. Se registra en el libro de movimientos. Poné la diferencia: positivo suma, negativo resta.', [
-    { type: 'pieza', id: 'c', label: 'Pieza', value: cod || '' }, { id: 'n', label: 'Diferencia (+/−)', value: 1, max: 99999, min: -99999 }, { type: 'text', id: 'x', label: 'Motivo', value: 'conteo inicial' }], 'Guardar',
-    v => { if (!v.n) throw new Error('La diferencia no puede ser 0.'); return rpc('mec_ajustar', { p_codigo: v.c, p_ubic: u, p_delta: v.n, p_motivo: v.x || 'ajuste' }); });
+  A.ajustar = (u, cod, areas) => { const ars = areas || [u];
+    const campos = (ars.length > 1 ? [{ type: 'select', id: 'u', label: 'Área que contaste', options: ars.map(a => [a, UBIC[a]]), value: u }] : []).concat([
+      { type: 'pieza', id: 'c', label: 'Pieza', value: cod || '' },
+      { type: 'select', id: 'm', label: '¿Qué cargás?', options: [['contado', 'Lo que conté (la cantidad real que hay ahora)'], ['dif', 'Una diferencia (+ suma / − resta)']], value: 'contado' },
+      { id: 'n', label: 'Cantidad contada (o diferencia)', value: cod ? stock(cod, u) : 0, max: 99999, min: -99999 }, { type: 'text', id: 'x', label: 'Motivo', value: 'conteo físico' }]);
+    ask('Ajustar stock — ' + ars.map(a => UBIC[a]).join(' / '), 'Para cargar el stock inicial o corregir un conteo. Se registra en el libro de movimientos. Con "Lo que conté" ponés la cantidad real y el sistema calcula la diferencia solo.', campos, 'Guardar',
+      v => { const ub = v.u || u; let delta = v.n;
+        if (v.m === 'contado') { if (v.n < 0) throw new Error('Lo contado no puede ser negativo.'); const cur = stock(v.c, ub); delta = v.n - cur; if (!delta) throw new Error('Ya figura esa cantidad (' + cur + '): no hay nada que ajustar.'); }
+        else if (!delta) throw new Error('La diferencia no puede ser 0.');
+        return rpc('mec_ajustar', { p_codigo: v.c, p_ubic: ub, p_delta: delta, p_motivo: v.x || 'ajuste' }); }); };
+  A.ajustarMec = () => A.ajustar('mecanizado');
+  A.ajustarTerm = () => A.ajustar('terminacion', '', ['terminacion', 'sector_z']);
   A.nuevoPlan = (def, cod) => {
     if (!C.recetas.length) { alert('Primero cargá una receta (macho + hembra → aro armado) en la sección Recetas.'); return; }
     const rDe = cod ? C.recetas.find(r => r.salida === cod) : null;
@@ -6074,6 +6085,15 @@ function showToast(message, kind) {
       ${sueltas ? `<table><tr><th>Pieza</th><th class="num">Sueltas</th><th></th></tr>${sueltas}</table>` : '<div class="empty">No hay piezas sueltas en Mecanizado.</div>'}</div>`;
   }
 
+  // ---------- tarjetas resumen (Mecanizado / Terminación): se toca una para ver el detalle ----------
+  C.tile = C.tile || {};
+  const pbadge = (t, k) => `<span class="pbadge ${k}">${t}</span>`;
+  const ptile = (mode, key, ic, name, n, l, st, cls) => `<button class="ptile ${cls || ''}${C.tile[mode] === key ? ' open' : ''}" onclick="cirTile('${mode}','${key}')"><span class="arrow">▾</span><span class="ic">${ic}</span><span class="name">${name}</span><span class="n">${n}</span><span class="l">${l}</span><span class="st">${st || ''}</span></button>`;
+  const ptiles = (mode, tiles, details) => `<div class="ptiles">${tiles.join('')}</div>` + (C.tile[mode] && details[C.tile[mode]] != null ? `<div class="pdetail">${details[C.tile[mode]]}</div>` : '<div class="phint">👆 Tocá una tarjeta para ver el detalle</div>');
+  window.cirTile = (mode, key) => { C.tile[mode] = C.tile[mode] === key ? null : key; render(); };
+  const stockTabla = (u, titulo) => { const cs = Object.keys(C.stock[u] || {}).filter(x => stock(x, u) > 0).sort((a, b) => nombre(a).localeCompare(nombre(b), 'es'));
+    return `<div class="panel"><h2>${titulo}</h2>${cs.length ? `<table><tr><th>Pieza</th><th class="num">Hay</th><th></th></tr>${cs.map(x => `<tr><td>${nameCell(x)}</td><td class="num"><b>${stock(x, u)}</b></td><td>${puedePlanificar() ? btn('Ajustar', `cir_ajustar('${u}','${esc(x)}')`) : ''}</td></tr>`).join('')}</table>` : '<div class="empty">No hay piezas cargadas en esta ubicación.</div>'}</div>`; };
+
   function vDiaMec() {
     const hoy = TODAY();
     const act = planesOrd().filter(p => pendPlan(p) > 0 && rec(p.receta));
@@ -6088,11 +6108,22 @@ function showToast(message, kind) {
         ${puedeOperar() ? `<div class="row-actions" style="margin-top:8px;">${btn('Armar' + (max ? ' ' + max : ''), `cir_armar(${p.id})`, 'pri', !max)}${btn('Rechazar piezas…', `cir_rechazarPlan(${p.id})`, '', !(p.hold_macho || p.hold_hembra))}</div>` : ''}</div>`; };
     const proxRows = prox.slice(0, 12).map(p => `<tr><td><b>${fmt(p.fecha)}</b></td><td>${esc(rec(p.receta).nombre)}</td><td class="num"><b>${pendPlan(p)}</b></td></tr>`).join('');
     const hayArmable = C.recetas.some(r => Math.min(libre(r.macho), libre(r.hembra)) > 0);
-    const acciones = puedeOperar() ? `<div class="row-actions" style="margin:2px 0 12px;">${btn('🧰 Armar aros fuera de plan…', 'cir_armarLibre()', hayArmable ? 'pri' : '')}</div>` : '';
-    return diaHeader('⚙️ Mecanizado — mi programa del día', [[sum(delDia), 'aros para HOY', delDia.length ? 'hoy' : ''], [sum(atras), 'atrasados', atras.length ? 'rojo' : ''], [listos, 'listos para armar ahora']]) + acciones +
-      (hoyP.length ? `<div class="sec-title">Lo que tenés que armar</div>${hoyP.map(card).join('')}` : '<div class="panel"><div class="empty" style="font-size:.9rem;">✔ No tenés aros planificados para hoy ni atrasados.</div></div>') +
-      `<div class="panel"><h2>📅 Próximos días</h2><div class="sub">Lo que viene en tu programa.</div>${proxRows ? `<table><tr><th>Armar el</th><th>Aro</th><th class="num">Cantidad</th></tr>${proxRows}</table>` : '<div class="empty">No hay nada más planificado.</div>'}</div>` +
-      alertPanel('kanban', 'Hay que armar aros para reponerla.', false) + sueltasPanel(true) + rechazosPanel();
+    const acciones = (puedeOperar() || puedePlanificar()) ? `<div class="quick">${puedeOperar() ? btn('🧰 Armar aros fuera de plan…', 'cir_armarLibre()', hayArmable ? 'pri' : '') : ''}${puedePlanificar() ? btn('📋 Contar / ajustar stock', 'cir_ajustarMec()') : ''}</div>` : '';
+    const alK = alertas('kanban'), rojos = alK.filter(x => nivel('kanban', x) === 'rojo').length, amar = alK.length - rojos;
+    const sueltasN = Object.keys(C.stock.mecanizado || {}).filter(x => libre(x) > 0).length;
+    const rechRec = C.rechazos.filter(r => (parse(hoy) - parse(r.dia)) / 86400000 <= 7).length;
+    const faltaEntrega = hoyP.some(p => Math.min(p.hold_macho, p.hold_hembra, pendPlan(p)) < pendPlan(p));
+    const tiles = [
+      ptile('mec', 'hoy', '⚙️', 'Armar hoy', sum(hoyP), 'aros · ' + hoyP.length + (hoyP.length === 1 ? ' plan' : ' planes'), (atras.length ? pbadge(atras.length + (atras.length === 1 ? ' ATRASADO' : ' ATRASADOS'), 'r') : '') + (hoyP.length && faltaEntrega ? pbadge('falta entrega', 'w') : '') + (hoyP.length && !faltaEntrega ? pbadge('todo listo', 'g') : ''), atras.length ? 'rojo' : (delDia.length ? 'hoy' : '')),
+      ptile('mec', 'prox', '📅', 'Próximos días', prox.length, 'planes · ' + sum(prox) + ' aros', prox.length ? `<span class="code">Próximo: ${fmt(prox[0].fecha)}</span>` : '<span class="code">nada planificado</span>'),
+      ptile('mec', 'kan', '🏬', 'Piezas de kanban', alK.length, 'para reponer', (rojos ? pbadge(rojos + ' en rojo', 'r') : '') + (amar ? pbadge(amar + ' en amarillo', 'w') : '') + (!alK.length ? pbadge('todo en verde', 'g') : ''), rojos ? 'rojo' : (amar ? 'hoy' : '')),
+      ptile('mec', 'rech', '🧰', 'Sueltas y rechazos', sueltasN + ' · ' + rechRec, 'sueltas · rechazos (7 días)', C.rechazos.length ? `<span class="code">Último rechazo: ${fmt(C.rechazos[0].dia)}</span>` : '<span class="code">sin rechazos</span>')];
+    const details = {
+      hoy: hoyP.length ? `<div class="sec-title">Lo que tenés que armar</div>${hoyP.map(card).join('')}` : '<div class="panel"><div class="empty" style="font-size:.9rem;">✔ No tenés aros planificados para hoy ni atrasados.</div></div>',
+      prox: `<div class="panel"><h2>📅 Próximos días</h2><div class="sub">Lo que viene en tu programa.</div>${proxRows ? `<table><tr><th>Armar el</th><th>Aro</th><th class="num">Cantidad</th></tr>${proxRows}</table>` : '<div class="empty">No hay nada más planificado.</div>'}</div>`,
+      kan: alK.length ? alertPanel('kanban', 'Hay que armar aros para reponerla.', false) : '<div class="panel"><div class="empty" style="font-size:.9rem;">✔ Todas las piezas de la estantería kanban están en verde.</div></div>',
+      rech: sueltasPanel(false) + stockTabla('mecanizado', '⚙️ Todo lo que hay ahora en Mecanizado') + rechazosPanel() };
+    return diaHeader('⚙️ Mecanizado — mi programa del día', []) + acciones + ptiles('mec', tiles, details);
   }
 
   function vDiaTerm() {
@@ -6103,20 +6134,30 @@ function showToast(message, kind) {
     const delDia = deb.filter(p => dueOf(p) === hoy), atras = deb.filter(p => dueOf(p) < hoy);
     const pzs = l => l.reduce((a, p) => a + items(p).reduce((b, i) => b + i.falta, 0), 0);
     const card = p => { const r = rec(p.receta), late = dueOf(p) < hoy;
-      const rows = items(p).map(i => `<tr><td>${nameCell(i.c)}</td><td class="num"><b style="font-size:1.1rem;">${i.falta}</b><div class="code">a entregar</div></td><td class="num">${i.disp}<div class="code">disp. Z + Term.</div></td>
-        <td>${i.falta ? (puedeOperar() ? btn('Entregar ' + Math.min(i.falta, i.disp), `cir_entregar(${p.id},'${esc(i.c)}')`, 'pri', !i.disp) : '') + (i.disp < i.falta ? `<div class="late" style="font-size:.74rem;">faltan ${i.falta - i.disp} por terminar</div>` : '') : '<span class="ok">✔ entregado</span>'}</td></tr>`).join('');
+      const rows = items(p).map(i => `<tr><td>${nameCell(i.c)}</td><td class="num"><b style="font-size:1.1rem;">${i.falta}</b><div class="code">a entregar · ya entregaste ${holdOf(p, i.c)} de ${pendPlan(p)}</div></td><td class="num">${i.disp}<div class="code">disp. Z + Term.</div></td>
+        <td>${i.falta ? (puedeOperar() ? '<div class="row-actions">' + btn('Entregar ' + Math.min(i.falta, i.disp), `cir_entregar(${p.id},'${esc(i.c)}')`, 'pri', !i.disp) + (Math.min(i.falta, i.disp) > 1 ? btn('Entregar una parte…', `cir_entregarParte(${p.id},'${esc(i.c)}')`, '', !i.disp) : '') + '</div>' : '') + (i.disp < i.falta ? `<div class="late" style="font-size:.74rem;">faltan ${i.falta - i.disp} por terminar</div>` : '') : '<span class="ok">✔ entregado</span>'}</td></tr>`).join('');
       return `<div class="card ${late ? 'c-late' : 'c-hoy'}"><div class="card-top"><div><div class="big">Para armar ${pendPlan(p)} × ${esc(r.nombre)}</div><div class="code">Mecanizado lo arma el ${fmt(p.fecha)} · plan #${p.id}</div></div><div>${late ? `<span class="chip rojo">ATRASADA · era del ${fmt(dueOf(p))}</span>` : '<span class="chip hoy">HOY</span>'}</div></div><table>${rows}</table></div>`; };
     const proxRows = prox.slice(0, 12).map(p => { const r = rec(p.receta); return `<tr><td><b>${fmt(dueOf(p))}</b></td><td>${esc(r.nombre)}</td><td class="num"><b>${pendPlan(p)}</b> machos + <b>${pendPlan(p)}</b> hembras</td></tr>`; }).join('');
     const term = Object.keys(C.stock.terminacion || {}).filter(c => stock(c, 'terminacion') > 0).map(c => `<tr><td>${nameCell(c)}</td><td class="num">${stock(c, 'terminacion')}</td><td>${puedeOperar() ? btn('Terminé piezas…', `cir_terminar('${esc(c)}')`) : ''}</td></tr>`).join('');
     const mold = C.moldeos.map(o => `<tr><td>${nameCell(o.codigo)}${o.nota ? `<div class="code">${esc(o.nota)}</div>` : ''}</td><td class="num">${o.cantidad}</td><td>${puedeOperar() ? btn('Pasó a Terminación…', `cir_pasoTerm(${o.id})`) : ''}</td></tr>`).join('');
-    const accionesT = puedeOperar() ? `<div class="row-actions" style="margin:2px 0 12px;">${btn('+ Entrega suelta a Mecanizado', 'cir_entregaSuelta()', 'pri')}</div>` : '';
-    return diaHeader('🔧 Terminación — mis entregas del día', [[pzs(delDia), 'piezas a entregar HOY', delDia.length ? 'hoy' : ''], [pzs(atras), 'atrasadas', atras.length ? 'rojo' : '']]) + accionesT +
-      (deb.length ? `<div class="sec-title">Lo que tenés que entregar a Mecanizado</div>${deb.map(card).join('')}` : '<div class="panel"><div class="empty" style="font-size:.9rem;">✔ No tenés entregas pendientes para hoy ni atrasadas.</div></div>') +
-      `<div class="panel"><h2>📅 Próximas entregas</h2><div class="sub">Lo que viene en los próximos días hábiles.</div>${proxRows ? `<table><tr><th>Entregar el</th><th>Aro</th><th class="num">Piezas</th></tr>${proxRows}</table>` : '<div class="empty">No hay nada más planificado.</div>'}</div>` +
-      alertPanel('sector_z', 'Hay que reponer esta estantería.', false) +
-      `<div class="panel"><h2>🔧 En Terminación</h2><div class="sub">Piezas que están para procesar. Al terminar van a Sector Z o directo a Mecanizado. Con "Entrega suelta" le pasás a Mecanizado una pieza que no está en ningún plan.</div>
-        ${term ? `<table><tr><th>Pieza</th><th class="num">Cantidad</th><th></th></tr>${term}</table>` : '<div class="empty">No hay piezas en Terminación.</div>'}</div>
-      ${mold ? `<div class="panel"><h2>🏭 En moldeo / fusión</h2><div class="sub">Cuando lleguen a Terminación, marcalas.</div><table><tr><th>Pieza</th><th class="num">Cantidad</th><th></th></tr>${mold}</table></div>` : ''}`;
+    const accionesT = (puedeOperar() || puedePlanificar()) ? `<div class="quick">${puedeOperar() ? btn('+ Entrega suelta a Mecanizado', 'cir_entregaSuelta()', 'pri') : ''}${puedePlanificar() ? btn('📋 Contar / ajustar stock', 'cir_ajustarTerm()') : ''}</div>` : '';
+    const alZ = alertas('sector_z'), rojosZ = alZ.filter(x => nivel('sector_z', x) === 'rojo').length, amarZ = alZ.length - rojosZ;
+    const enTerm = Object.keys(C.stock.terminacion || {}).filter(x => stock(x, 'terminacion') > 0).length;
+    const faltaTerm = deb.some(p => items(p).some(i => i.falta > i.disp));
+    const tiles = [
+      ptile('term', 'hoy', '🔧', 'Entregar hoy', pzs(deb), 'piezas · ' + deb.length + (deb.length === 1 ? ' plan' : ' planes'), (atras.length ? pbadge(atras.length + (atras.length === 1 ? ' ATRASADA' : ' ATRASADAS'), 'r') : '') + (deb.length && faltaTerm ? pbadge('falta terminar', 'w') : '') + (deb.length && !faltaTerm ? pbadge('podés entregar todo', 'g') : ''), atras.length ? 'rojo' : (delDia.length ? 'hoy' : '')),
+      ptile('term', 'prox', '📅', 'Próximas entregas', prox.length, 'planes · ' + prox.reduce((a, p) => a + 2 * pendPlan(p), 0) + ' piezas', prox.length ? `<span class="code">Próxima: ${fmt(dueOf(prox[0]))}</span>` : '<span class="code">nada planificado</span>'),
+      ptile('term', 'rep', '🗄️', 'Reponer Sector Z', alZ.length, 'para reponer', (rojosZ ? pbadge(rojosZ + ' en rojo', 'r') : '') + (amarZ ? pbadge(amarZ + ' en amarillo', 'w') : '') + (!alZ.length ? pbadge('todo en verde', 'g') : ''), rojosZ ? 'rojo' : (amarZ ? 'hoy' : '')),
+      ptile('term', 'stock', '📦', 'En Terminación', enTerm + ' · ' + C.moldeos.length, 'piezas en Terminación · en moldeo', C.moldeos.length ? `<span class="code">${C.moldeos.reduce((a, o) => a + o.cantidad, 0)} u. en moldeo / fusión</span>` : '<span class="code">nada en moldeo</span>')];
+    const details = {
+      hoy: deb.length ? `<div class="sec-title">Lo que tenés que entregar a Mecanizado</div>${deb.map(card).join('')}` : '<div class="panel"><div class="empty" style="font-size:.9rem;">✔ No tenés entregas pendientes para hoy ni atrasadas.</div></div>',
+      prox: `<div class="panel"><h2>📅 Próximas entregas</h2><div class="sub">Lo que viene en los próximos días hábiles.</div>${proxRows ? `<table><tr><th>Entregar el</th><th>Aro</th><th class="num">Piezas</th></tr>${proxRows}</table>` : '<div class="empty">No hay nada más planificado.</div>'}</div>`,
+      rep: alZ.length ? alertPanel('sector_z', 'Hay que reponer esta estantería.', false) : '<div class="panel"><div class="empty" style="font-size:.9rem;">✔ Todas las piezas de Sector Z están en verde.</div></div>',
+      stock: `<div class="panel"><h2>🔧 En Terminación</h2><div class="sub">Piezas que están para procesar. Al terminar van a Sector Z o directo a Mecanizado. Con "Entrega suelta" le pasás a Mecanizado una pieza que no está en ningún plan.</div>
+        ${term ? `<table><tr><th>Pieza</th><th class="num">Cantidad</th><th></th></tr>${Object.keys(C.stock.terminacion || {}).filter(x => stock(x, 'terminacion') > 0).map(x => `<tr><td>${nameCell(x)}</td><td class="num">${stock(x, 'terminacion')}</td><td><div class="row-actions">${puedeOperar() ? btn('Terminé piezas…', `cir_terminar('${esc(x)}')`) : ''}${puedePlanificar() ? btn('Ajustar', `cir_ajustar('terminacion','${esc(x)}')`) : ''}</div></td></tr>`).join('')}</table>` : '<div class="empty">No hay piezas en Terminación.</div>'}</div>` +
+        stockTabla('sector_z', '🗄️ Lo que hay ahora en Sector Z') +
+        (mold ? `<div class="panel"><h2>🏭 En moldeo / fusión</h2><div class="sub">Cuando lleguen a Terminación, marcalas.</div><table><tr><th>Pieza</th><th class="num">Cantidad</th><th></th></tr>${mold}</table></div>` : '') };
+    return diaHeader('🔧 Terminación — mis entregas del día', []) + accionesT + ptiles('term', tiles, details);
   }
 
   // ---------- menú y vistas por rol ----------
@@ -6168,6 +6209,17 @@ function showToast(message, kind) {
   #cir-root .tile.hoy { border-color:var(--warn); background:rgba(251,191,36,.1); } #cir-root .tile.hoy .n { color:var(--warn); } #cir-root .tile.rojo { border-color:var(--bad); background:rgba(248,113,113,.1); } #cir-root .tile.rojo .n { color:var(--bad); }
   #cir-root .kbar { position:relative; width:44px; height:84px; margin:0 auto; background:#0f172a; border:1px solid var(--line); border-radius:6px; overflow:hidden; } #cir-root .kbar i { position:absolute; left:0; bottom:0; width:50%; } #cir-root .kbar b { position:absolute; right:0; bottom:0; width:50%; border-top:3px solid; background:rgba(148,163,184,.35); } #cir-root .kbar s { position:absolute; left:0; right:0; height:1px; background:#e2e8f0; opacity:.7; } #cir-root .kbar-wrap { display:flex; align-items:flex-end; justify-content:center; gap:4px; font-size:.62rem; color:var(--dim); } #cir-root .kbar-lbl { position:relative; width:18px; height:84px; } #cir-root .kbar-lbl span { position:absolute; left:0; transform:translateY(50%); line-height:1; }
   #cir-root .kq { background:#0f172a; color:#fff; border:1px solid var(--line); border-radius:7px; padding:6px 9px; font-size:.85rem; margin-left:auto; min-width:160px; }
+  #cir-root .ptiles { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; } @media (max-width:760px) { #cir-root .ptiles { grid-template-columns:repeat(2,1fr); } }
+  #cir-root .ptile { position:relative; text-align:left; background:var(--card); border:2px solid var(--line); border-radius:14px; padding:12px 14px; color:inherit; cursor:pointer; font:inherit; min-height:128px; display:flex; flex-direction:column; gap:2px; }
+  #cir-root .ptile:active { transform:scale(.98); } #cir-root .ptile .ic { font-size:1.25rem; } #cir-root .ptile .name { font-size:.78rem; color:var(--dim); font-weight:700; text-transform:uppercase; letter-spacing:.03em; }
+  #cir-root .ptile .n { font-size:2.1rem; font-weight:800; color:#fff; line-height:1.1; } #cir-root .ptile .l { font-size:.8rem; color:var(--dim); } #cir-root .ptile .st { margin-top:auto; font-size:.76rem; font-weight:700; }
+  #cir-root .ptile .arrow { position:absolute; right:12px; top:12px; color:var(--dim); transition:transform .2s; }
+  #cir-root .ptile.hoy { border-color:var(--warn); background:linear-gradient(180deg, rgba(251,191,36,.14), var(--card)); } #cir-root .ptile.hoy .n { color:var(--warn); }
+  #cir-root .ptile.rojo { border-color:var(--bad); background:linear-gradient(180deg, rgba(248,113,113,.14), var(--card)); } #cir-root .ptile.rojo .n { color:var(--bad); }
+  #cir-root .ptile.open { border-color:var(--acc); box-shadow:0 0 0 2px rgba(56,189,248,.25); } #cir-root .ptile.open .arrow { transform:rotate(180deg); color:var(--acc); }
+  #cir-root .pbadge { display:inline-block; font-size:.7rem; font-weight:800; padding:2px 8px; border-radius:99px; margin:0 4px 2px 0; } #cir-root .pbadge.r { background:var(--bad); color:#1c1917; } #cir-root .pbadge.w { background:var(--warn); color:#1c1917; } #cir-root .pbadge.g { background:var(--ok); color:#052e1a; }
+  #cir-root .pdetail { margin-top:12px; } #cir-root .phint { margin-top:12px; color:var(--dim); font-size:.84rem; text-align:center; padding:18px; border:1px dashed var(--line); border-radius:12px; }
+  #cir-root .quick { margin:2px 0 14px; display:flex; gap:8px; flex-wrap:wrap; }
   #cir-root .sec-title { font-size:.8rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--dim); margin:14px 0 6px; }
   #cir-root .card { background:var(--card); border:2px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:10px; }
   #cir-root .card.c-hoy { border-color:var(--warn); background:linear-gradient(180deg, rgba(251,191,36,.12), var(--card)); } #cir-root .card.c-late { border-color:var(--bad); background:linear-gradient(180deg, rgba(248,113,113,.14), var(--card)); }
@@ -6215,7 +6267,7 @@ function showToast(message, kind) {
   }
   async function reload() { await load(); render(); }
   window.cirTab = t => { C.tab = t; render(); };
-  window.cirOpen = async mode => { C.mode = (typeof mode === 'string' && VIEWS.some(v => v.key === mode)) ? mode : 'full'; ensureDom(); document.getElementById('cir-root').classList.add('on'); render(); await reload(); };
+  window.cirOpen = async mode => { C.tile = {}; C.mode = (typeof mode === 'string' && VIEWS.some(v => v.key === mode)) ? mode : 'full'; ensureDom(); document.getElementById('cir-root').classList.add('on'); render(); await reload(); };
   window.cirClose = () => { const r = document.getElementById('cir-root'); if (r) r.classList.remove('on'); };
   window.__cir = { C, load, render, nivel, sv, lote, isBiz, prevBiz, FERIADOS };
 })();
