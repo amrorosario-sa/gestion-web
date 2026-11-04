@@ -29,7 +29,7 @@
   }
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
   body { background: var(--bg); color: var(--text-main); padding: 16px; min-height: 100vh; }
-  .ind-tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+  .ind-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
   .ind-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
   @media (max-width: 1100px) { .ind-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } .ind-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 700px) { .ind-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ind-grid { grid-template-columns: minmax(0, 1fr); } }
@@ -451,6 +451,7 @@
       <button class="hdr-btn" id="mold-btn" style="display:none;" onclick="window.cirOpen && window.cirOpen('mold')">🏭 Moldeo / Fusión</button>
       <button class="hdr-btn" id="kan-btn" style="display:none;" onclick="window.cirOpen && window.cirOpen('kan')">🏬 Kanban</button>
       <button class="hdr-btn" id="ven-btn" style="display:none;" onclick="window.venOpen && window.venOpen()">💰 Ventas</button>
+      <button class="hdr-btn" id="pf-btn" style="display:none;" onclick="window.pfOpen && window.pfOpen()">🔥 Parte de fusión</button>
       <button class="hdr-btn" id="mec-btn" style="display:none;" onclick="openMecDialog()">📋 Artículos</button>
       <span class="badge-live" id="asof-badge">ACTUALIZADO</span>
       <span class="user-pill" id="user-pill" style="margin-left:10px;"></span>
@@ -2536,6 +2537,7 @@ const SECCIONES_DEF = [
   ['kanban_moldeo', '🏭 Moldeo / Fusión: cargar piezas para kanban (menú propio)'],
   ['kanban', '🏬 Kanban: configuración y stock (Terminación y Mecanizado)'],
   ['plan_moldeo', '🧮 Moldeo: planificador de vueltas (solo quien planifica)'],
+  ['parte_fusion', '🔥 Parte de fusión: cargar el parte y confirmar fusión (Fundición / Planeamiento)'],
 ];
 const SECCION_ELEMS = {
   moldeo: ['card-moldeo', 'chip-moldeo'],
@@ -2609,6 +2611,7 @@ function applyInspectorVisibility() {
   if (mecBtn) mecBtn.style.display = CURRENT_PROFILE ? '' : 'none';
   if (window.cirRefreshBtn) window.cirRefreshBtn();
   if (window.venRefreshBtn) window.venRefreshBtn();
+  if (window.pfRefreshBtn) window.pfRefreshBtn();
   const areaBtn = document.getElementById('area-btn');
   if (areaBtn) areaBtn.style.display = (CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? '' : 'none';
   const nav = document.getElementById('main-nav');
@@ -2666,7 +2669,8 @@ async function initDb() {
       motivosList = qs.docs.filter(d => d.exists).map(d => d.data()).sort((a, b) => (a.orden - b.orden) || String(a.nombre).localeCompare(String(b.nombre), 'es'));
     }, err => console.warn('rechazo_motivos onSnapshot:', err && err.code, err && err.message));
     db.collection('eventos_produccion').onSnapshot(qs => {
-      eventosProd = qs.docs.filter(d => d.exists).map(d => d.data());
+      eventosProdRaw = qs.docs.filter(d => d.exists).map(d => d.data());
+      eventosProd = window.pfEventos ? window.pfEventos(eventosProdRaw) : eventosProdRaw;
       recargarSiCorresponde();
     }, err => console.warn('eventos_produccion onSnapshot:', err && err.code, err && err.message));
     db.collection('entregas_parciales').onSnapshot(qs => {
@@ -2815,7 +2819,7 @@ async function savePrep(key, pend, cellEl) {
       try { const r = await supabaseClient.rpc('mec_prep_kanban', { p_item: Number(id), p_prev: totalAntes, p_new: total }); if (!r.error) kan = r.data; } catch (e) { kan = null; }
     }
     let msgKan = '';
-    if (kan && kan.descontado > 0) msgKan = ' · ' + kan.descontado + ' dadas de baja de la estantería kanban';
+    if (kan && (kan.descontado > 0 || kan.desc_term > 0)) msgKan = ' · ' + [kan.descontado > 0 ? kan.descontado + ' dadas de baja de la estantería kanban' : '', kan.desc_term > 0 ? kan.desc_term + ' salieron de Terminación' : ''].filter(Boolean).join(' y ');
     else if (kan && kan.devuelto > 0) msgKan = ' · ' + kan.devuelto + ' devueltas a la estantería kanban';
     showToast(((row && row._pk) ? 'Guardado — se carga primero en la entrega más próxima' : 'Guardado') + msgKan, 'success');
     if (kan && kan.descontado > 0 && window.cirAvisoKanban) window.cirAvisoKanban(row.codigo, kan.descontado);
@@ -2999,9 +3003,10 @@ async function splitQuitarDivision() {
 // =========================================================================
 // ---- Indicadores, Rechazos (Terminación) y Replanificación (Planificación) ----
 // =========================================================================
-let rechazosList = [], motivosList = [], eventosProd = [];
+let rechazosList = [], motivosList = [], eventosProd = [], eventosProdRaw = [];
+window.pfReaplicarEventos = function () { if (typeof window.pfEventos === 'function') { eventosProd = window.pfEventos(eventosProdRaw); } if (typeof currentFilter !== 'undefined' && currentFilter === 'indicadores') applyFilters(); };
 let rechazoVerReplan = false;
-let indState = { periodo: 'semana', desde: '', hasta: '', medida: 'kg' };
+let indState = { periodo: 'semana', desde: '', hasta: '', medida: 'kg', kgTipo: 'neto' };
 
 function actualizarBadgeReplan() {
   const el = document.getElementById('replan-badge');
@@ -3031,13 +3036,16 @@ function sumPeriodo(r) {
   const num = v => Number(v) || 0;
   const des = despachosLog.filter(d => enRango(d.dia, r));
   const fun = eventosProd.filter(e => e.tipo === 'fundido' && enRango(e.dia, r));
+  const mol = eventosProd.filter(e => e.tipo === 'moldeado' && enRango(e.dia, r));
+  const kgv = e => (indState.kgTipo === 'bruto' && Number(e.kg_bruto) > 0) ? Number(e.kg_bruto) : num(e.kg);
   const rec = rechazosList.filter(x => enRango(x.dia, r));
   const conFecha = des.filter(d => d.fecha_entrega);
   const kgConFecha = conFecha.reduce((s, d) => s + num(d.kg), 0);
   const kgATiempo = conFecha.filter(d => d.dia <= d.fecha_entrega).reduce((s, d) => s + num(d.kg), 0);
   return {
     desKg: des.reduce((s, d) => s + num(d.kg), 0), desU: des.reduce((s, d) => s + num(d.cantidad), 0), desN: des.length,
-    funKg: fun.reduce((s, e) => s + num(e.kg), 0), funU: fun.reduce((s, e) => s + num(e.cantidad), 0),
+    funKg: fun.reduce((s, e) => s + kgv(e), 0), funKgN: fun.reduce((s, e) => s + num(e.kg), 0), funU: fun.reduce((s, e) => s + num(e.cantidad), 0),
+    molKg: mol.reduce((s, e) => s + kgv(e), 0), molU: mol.reduce((s, e) => s + num(e.cantidad), 0),
     recKg: rec.reduce((s, x) => s + num(x.kg), 0), recU: rec.reduce((s, x) => s + num(x.cantidad), 0), recN: rec.length,
     cumpl: kgConFecha > 0 ? kgATiempo / kgConFecha : null, cumplN: conFecha.length, cumplDesN: des.length,
   };
@@ -3059,6 +3067,7 @@ function setIndRango() {
   renderIndicadoresPanel();
 }
 function setIndMedida(m) { indState.medida = m; renderIndicadoresPanel(); }
+function setIndKg(k) { indState.kgTipo = k; renderIndicadoresPanel(); }
 
 // ---- Gráficos de barras verticales (SVG) ----
 function niceMax(v) {
@@ -3120,8 +3129,9 @@ function renderIndicadoresPanel() {
     </div>`;
   const pBtn = (k, t) => `<button class="chip ${indState.periodo === k ? 'active' : ''}" onclick="setIndPeriodo('${k}')">${t}</button>`;
   const hayFundidos = eventosProd.some(e => e.tipo === 'fundido');
-  const pctRec = A.funKg > 0 ? (A.recKg / A.funKg * 100) : null;
-  const pctRecPrev = B.funKg > 0 ? (B.recKg / B.funKg * 100) : null;
+  const hayMoldeado = eventosProd.some(e => e.tipo === 'moldeado');
+  const pctRec = A.funKgN > 0 ? (A.recKg / A.funKgN * 100) : null;
+  const pctRecPrev = B.funKgN > 0 ? (B.recKg / B.funKgN * 100) : null;
 
   // 1-3) Semanales: despachado, fundido, rechazo (últimas 8 semanas)
   const sem = [];
@@ -3178,6 +3188,7 @@ function renderIndicadoresPanel() {
   box.innerHTML = `
     <div class="quick-chips" style="margin-bottom:10px;">
       ${pBtn('semana', 'Esta semana')}${pBtn('semana_ant', 'Semana pasada')}${pBtn('mes', 'Este mes')}${pBtn('mes_ant', 'Mes pasado')}
+      <span class="text-dim" style="margin-left:10px; font-size:0.75rem; align-self:center;">Kg:</span><button class="chip ${indState.kgTipo !== 'bruto' ? 'active' : ''}" onclick="setIndKg('neto')">Neto</button><button class="chip ${indState.kgTipo === 'bruto' ? 'active' : ''}" onclick="setIndKg('bruto')" title="Con montantes. Solo lo cargado desde el parte de fusión tiene bruto; el resto se muestra en neto.">Bruto</button>
       <span class="text-dim" style="font-size:0.75rem; align-self:center; margin-left:6px;">o rango:</span>
       <input type="date" id="ind-desde" value="${escHtml(indState.desde)}" onchange="setIndRango()" style="background:#0f172a; border:1px solid var(--card-border); color:#fff; border-radius:8px; padding:5px 8px; font-size:0.78rem;">
       <input type="date" id="ind-hasta" value="${escHtml(indState.hasta)}" onchange="setIndRango()" style="background:#0f172a; border:1px solid var(--card-border); color:#fff; border-radius:8px; padding:5px 8px; font-size:0.78rem;">
@@ -3187,6 +3198,7 @@ function renderIndicadoresPanel() {
     <div class="ind-tiles">
       ${tile('Despachado', fmtN(A.desKg) + ' Kg', `${fmtN(A.desU)} u. · ${A.desN} despacho${A.desN === 1 ? '' : 's'}<br>${deltaHtml(A.desKg, B.desKg)}`, '#c084fc')}
       ${tile('Fundido', hayFundidos ? fmtN(A.funKg) + ' Kg' : '—', hayFundidos ? `${fmtN(A.funU)} u. pasaron a Terminación o se moldearon para kanban<br>${deltaHtml(A.funKg, B.funKg)}` : 'Se empieza a registrar con la próxima actualización de SGA', '#34d399')}
+      ${hayMoldeado ? tile('Moldeado', fmtN(A.molKg) + ' Kg', `${fmtN(A.molU)} u. cargadas desde el parte de fusión (se cuentan una sola vez)<br>${deltaHtml(A.molKg, B.molKg)}`, '#38bdf8') : ''}
       ${tile('Rechazo', fmtN(A.recKg) + ' Kg', `${fmtN(A.recU)} u. · ${A.recN} registro${A.recN === 1 ? '' : 's'}<br>${deltaHtml(A.recKg, B.recKg, true)}`, '#ef4444')}
       ${tile('% rechazo s/ fundido', pctRec == null ? '—' : fmtN(pctRec, 1) + ' %', pctRec == null ? 'Hace falta fundido registrado en el período' : `Rechazo ÷ fundido<br>${pctRecPrev == null ? '<span class="text-dim">período anterior sin datos</span>' : deltaHtml(pctRec, pctRecPrev, true)}`, '#fbbf24')}
       ${tile('Entregas en fecha', A.cumpl == null ? '—' : fmtN(A.cumpl * 100) + ' %', A.cumpl == null ? 'Se mide con los despachos que guardan su fecha de entrega (desde que se activó)' : `${A.cumplN} de ${A.cumplDesN} despachos con fecha · por Kg<br>${B.cumpl == null ? '<span class="text-dim">período anterior sin datos</span>' : deltaHtml(A.cumpl, B.cumpl)}`, A.cumpl == null ? '#94a3b8' : (A.cumpl >= 0.9 ? '#22c55e' : '#fbbf24'))}
@@ -3195,6 +3207,7 @@ function renderIndicadoresPanel() {
     <div class="ind-grid">
       ${card('🚚 Despachado por semana', `Kg · últimas 8 semanas · total ${tot8('desKg')} Kg`, semChart('desKg', 'Despachado', '#c084fc'))}
       ${card('🔥 Fundido por semana', `Kg que pasaron a Terminación (más lo moldeado para kanban) · total ${tot8('funKg')} Kg`, hayFundidos ? semChart('funKg', 'Fundido', '#34d399') : '<div class="text-dim" style="padding:30px 8px; text-align:center; font-size:0.8rem;">Se empieza a registrar con la próxima actualización diaria de SGA.</div>')}
+      ${hayMoldeado ? card('🧱 Moldeado por semana', `Kg ${indState.kgTipo === 'bruto' ? 'brutos' : 'netos'} cargados desde el parte de fusión · total ${tot8('molKg')} Kg`, semChart('molKg', 'Moldeado', '#38bdf8')) : ''}
       ${card('❌ Rechazo por semana', `Kg · total ${tot8('recKg')} Kg`, semChart('recKg', 'Rechazo', '#ef4444'))}
       ${card('📥 Ingresado vs despachado por mes', 'Kg · últimos 6 meses · <span style="color:#38bdf8;">■</span> ingresado <span style="color:#c084fc;">■</span> despachado', ingDes + (hayIngresos ? '<div class="text-dim" style="font-size:0.66rem; padding:2px 2px 6px;">Los meses anteriores a la activación solo incluyen lo que sigue pendiente en SGA, así que quedan incompletos.</div>' : '<div class="text-dim" style="font-size:0.66rem; padding:2px 2px 6px;">Falta correr el SQL 007 para cargar los ingresos.</div>'))}
       ${card('📉 Pareto de rechazos por motivo', `Total del período: ${fmtN(totalP, med === 'kg' ? 1 : 0)} ${med === 'kg' ? 'Kg' : 'u.'} · línea amarilla = % acumulado`, pareto, medBtns)}
@@ -4117,9 +4130,9 @@ function buildAlertPill(r) {
   return '<span class="text-dim">🟢 En Fecha</span>';
 }
 function buildStatusPill(r) {
-  if (r.estado_general === 'Fundido / En Terminación') return `<span class="pill pill-ready rt-click" style="cursor:pointer;" title="Tocá para ver la ruta de Terminación" onclick="event.stopPropagation(); window.rutaOpen && rutaOpen('${rowKey(r)}')">📦 Fundido / Terminación</span>${window.rutaExtra ? window.rutaExtra(r) : ''}`;
+  if (r.estado_general === 'Fundido / En Terminación') return `<span class="pill pill-ready rt-click" style="cursor:pointer;" title="Tocá para ver la ruta de Terminación" onclick="event.stopPropagation(); window.rutaOpen && rutaOpen('${rowKey(r)}')">📦 Fundido / Terminación</span>${window.rutaExtra ? window.rutaExtra(r) : ''}${window.pfExtra ? window.pfExtra(r) : ''}`;
   if (r.estado_general === 'Cancelado') return `<span class="pill pill-danger">${r.area_actual}</span>`;
-  return `<span class="pill pill-warning">⏳ En: ${r.area_actual}</span>`;
+  return `<span class="pill pill-warning">⏳ En: ${r.area_actual}</span>${window.pfExtra ? window.pfExtra(r) : ''}`;
 }
 function buildRepBadge(r) {
   if (r.es_repuesto) return '<span class="tag-rep">REPUESTO</span> ';
@@ -4757,6 +4770,16 @@ function showToast(message, kind) {
       };
     }
 
+    // Probetas que trae el parte de fusión para las piezas de este pedido: un renglón por probeta
+    function hojaRenglonesIniciales(r, disponible) {
+      const sug = (window.pfProbetas ? window.pfProbetas(r) : []);
+      if (!sug.length || disponible <= 0) return [makeHojaRenglon(r.kxu, disponible)];
+      const out = []; let rem = disponible;
+      sug.forEach(s => { const c = Math.min(rem, Math.round(s.n)); if (c > 0) { const rg = makeHojaRenglon(r.kxu, c); rg.probeta = s.probeta; out.push(rg); rem -= c; } });
+      if (rem > 0) out.push(makeHojaRenglon(r.kxu, rem));
+      return out.length ? out : [makeHojaRenglon(r.kxu, disponible)];
+    }
+
     async function openHojaModal() {
       if (selectedHojaIds.size === 0) return;
       const items = [...selectedHojaIds].map(id => baseRow(id)).filter(Boolean);
@@ -4790,7 +4813,8 @@ function showToast(message, kind) {
             pend: disponible,
             kxu: r.kxu,
             precio: hojaPrecios.get(r.id) || null,
-            renglones: [makeHojaRenglon(r.kxu, disponible)],
+            sugeridas: (window.pfProbetas ? window.pfProbetas(r) : []),
+            renglones: hojaRenglonesIniciales(r, disponible),
           };
         }),
       };
@@ -4878,6 +4902,7 @@ function showToast(message, kind) {
             <label>Orden de Compra (OC)</label>
             <input type="text" placeholder="(opcional)" value="${escHtml(it.oc)}" oninput="updateHojaItemField(${idx}, 'oc', this.value)">
           </div>
+          ${(it.sugeridas || []).length ? `<div class="hoja-kg-ref" style="margin-bottom:6px;">🔥 Probetas del parte de fusión: ${it.sugeridas.map(x => `<b>${escHtml(x.probeta)}</b> (${x.n} u.)`).join(' · ')}</div>` : ''}
           ${renglonesHtml}
           <button type="button" class="hoja-btn-add-renglon" onclick="addHojaRenglon(${idx})">+ Agregar otra probeta (si parte de esta pieza salió con otro Nº)</button>
           <div class="hoja-renglon-total${overLimit ? ' over' : ''}" id="hoja-total-${idx}">Total a pesar: <b>${total.toLocaleString()}</b> / ${it.pend.toLocaleString()} u. preparadas disponibles${overLimit ? ' — ¡supera lo preparado disponible!' : ''}</div>
@@ -5595,13 +5620,17 @@ function showToast(message, kind) {
   const pedidosAbiertos = c => (typeof DATA === 'undefined' ? [] : DATA.filter(r => r.codigo === c && r.estado_general !== 'Cancelado' && remainingPend(r) > 0)).sort((a, b) => (a.fecha_entrega || '').localeCompare(b.fecha_entrega || ''));
   const pedidosPend = c => pedidosAbiertos(c).reduce((a, r) => a + remainingPend(r), 0);
   // stock virtual: Z = estantería + Terminación + moldeo/fusión − planificado sin entregar; K = estantería + planificado − pedidos
-  function sv(u, c) { return u === 'sector_z' ? stock(c, 'sector_z') + stock(c, 'terminacion') + enMoldeo(c) - planSinEntregar(c) : stock(c, 'kanban') + planPend(c) - pedidosPend(c); }
-  function svTxt(u, c) { return u === 'sector_z' ? `${stock(c, 'sector_z')} estantería + ${stock(c, 'terminacion')} terminación + ${enMoldeo(c)} moldeo/fusión − ${planSinEntregar(c)} planificado` : `${stock(c, 'kanban')} estantería + ${planPend(c)} planificado − ${pedidosPend(c)} en pedidos`; }
+  // parte de fusión: lo pendiente de fusión cuenta en el stock virtual hasta que llega a la estantería (kanban: también lo que está en Terminación)
+  const pfV = c => (window.pfVirtual ? window.pfVirtual(c) : { pend: 0, destKan: false });
+  const pfK = c => { const v = pfV(c); return v.destKan ? { pend: v.pend, term: stock(c, 'terminacion') } : { pend: 0, term: 0 }; };
+  const pfZ = c => { const v = pfV(c); return v.destKan ? 0 : v.pend; };
+  function sv(u, c) { return u === 'sector_z' ? stock(c, 'sector_z') + stock(c, 'terminacion') + enMoldeo(c) + pfZ(c) - planSinEntregar(c) : stock(c, 'kanban') + planPend(c) + pfK(c).pend + pfK(c).term - pedidosPend(c); }
+  function svTxt(u, c) { return u === 'sector_z' ? `${stock(c, 'sector_z')} estantería + ${stock(c, 'terminacion')} terminación + ${enMoldeo(c) + pfZ(c)} moldeo/fusión − ${planSinEntregar(c)} planificado` : `${stock(c, 'kanban')} estantería + ${planPend(c)} planificado + ${pfK(c).term} terminación + ${pfK(c).pend} pend. de fusión − ${pedidosPend(c)} en pedidos`; }
   // stock virtual en filas (estantería / + planificados / − en pedido)
   function svRows(u, c) {
     const L = u === 'sector_z'
-      ? [['', stock(c, 'sector_z'), 'en estantería'], ['+', stock(c, 'terminacion'), 'en terminación'], ['+', enMoldeo(c), 'en moldeo/fusión'], ['−', planSinEntregar(c), 'planificado']]
-      : [['', stock(c, 'kanban'), 'en estantería'], ['+', planPend(c), 'planificados'], ['−', pedidosPend(c), 'en pedido']];
+      ? [['', stock(c, 'sector_z'), 'en estantería'], ['+', stock(c, 'terminacion'), 'en terminación'], ['+', enMoldeo(c) + pfZ(c), 'en moldeo/fusión'], ['−', planSinEntregar(c), 'planificado']]
+      : [['', stock(c, 'kanban'), 'en estantería'], ['+', planPend(c), 'planificados']].concat(pfK(c).term ? [['+', pfK(c).term, 'en terminación']] : [], pfK(c).pend ? [['+', pfK(c).pend, 'pend. de fusión (parte)']] : [], [['−', pedidosPend(c), 'en pedido']]);
     return '<div class="svr">' + L.map(([o, n, t]) => `<div><i>${o}</i><b>${n}</b> ${t}</div>`).join('') + '</div>';
   }
   // lote sugerido = 2k − stock virtual + 2.5k (fórmula tal cual la definió el cliente; ver nota en el parche)
@@ -5631,7 +5660,7 @@ function showToast(message, kind) {
       C.planes = planes; C.moldeos = moldeos; C.k = k; C.exc = exc; C.recetas = recetas; C.movs = movs;
       C.cfg = {}; cfg.forEach(r => { C.cfg[r.clave] = r.valor; });
       try { const rr = await supabaseClient.from('mec_rechazos').select('*').order('id', { ascending: false }).limit(30); C.rechazos = rr.error ? [] : (rr.data || []); } catch (e) { C.rechazos = []; }
-      C.error = null; C.loaded = true; await resolveNames(); await loadKg(); await loadPasos();
+      C.error = null; C.loaded = true; await resolveNames(); await loadKg(); await loadPasos(); if (window.pfEnsure) await window.pfEnsure();
     } catch (e) {
       C.error = /relation .*mec_|schema cache|does not exist|Could not find/i.test(e.message || '') ? 'Falta correr el parche 011 en Supabase (ver instrucciones).' : 'No se pudo cargar: ' + (e.message || e);
     }
@@ -6350,6 +6379,8 @@ function showToast(message, kind) {
     paintCards();
   }
   window.cirCards = force => cardsRefresh(!!force);
+  window.cirEsMachoHembra = c => C.recetas.some(r => r.macho === c || r.hembra === c);
+  window.cirReload = () => load();
   // al tocar la tarjeta: abre la vista que le corresponda a cada persona
   window.cirCardOpen = which => {
     const order = which === 'kan' ? ['kan', 'full'] : ['mec', 'full', 'kan'];
@@ -6741,7 +6772,7 @@ function showToast(message, kind) {
   const rol = () => (typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE) ? CURRENT_PROFILE.rol : '';
   const puedeOp = () => (typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE) && (CURRENT_PROFILE.es_admin || ['colaborador', 'editor'].includes(rol()));
   const E = s => (typeof escHtml === 'function' ? escHtml(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
-  const rowOf = key => (typeof DATA !== 'undefined' ? DATA : []).find(r => rowKey(r) === key);
+  const rowOf = key => (String(key).startsWith('pf-') ? (window.pfRowOf ? window.pfRowOf(key) : null) : (typeof DATA !== 'undefined' ? DATA : []).find(r => rowKey(r) === key));
   const rutaDe = id => RT_RUTAS.find(x => x.id === id);
   const fmtTs = ts => { try { const d = new Date(ts); return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
 
@@ -6820,7 +6851,7 @@ function showToast(message, kind) {
     let body;
     if (RT.error) body = `<div style="color:#f87171;padding:10px 0">${E(RT.error)}</div>`;
     else if (!st) {
-      const g = guess(r);
+      const g = (String(key).startsWith('pf-') && window.pfRutaDe && window.pfRutaDe(key)) || guess(r);
       body = `<div style="padding:10px 0 4px;font-size:.85rem;color:#cbd5e1">Todavía no se definió la ruta de esta pieza. Elegí la que corresponde (tamaño / tratamiento térmico / material).</div>
         <select id="rt-ruta" class="rt-sel">${RT_RUTAS.map(x => `<option value="${x.id}" ${x.id === g ? 'selected' : ''}>Ruta ${x.id} — ${E(x.n)}</option>`).join('')}</select>
         <div style="display:flex;gap:16px;margin:10px 0;font-size:.85rem"><label><input type="checkbox" id="rt-sold"> Lleva soldadura</label><label><input type="checkbox" id="rt-inox"> Es inoxidable (pasivado)</label></div>
@@ -6852,6 +6883,11 @@ function showToast(message, kind) {
     try { await guardar(key, { hechos: hs }); pintar(key); refrescar(); } catch (e) { alert(e.message); } };
   window.rutaUndo = async key => { const st = RT.av[key]; if (!st || !(st.hechos || []).length) return; if (!confirm('¿Deshacer el último paso marcado?')) return;
     try { await guardar(key, { hechos: st.hechos.slice(0, -1) }); pintar(key); refrescar(); } catch (e) { alert(e.message); } };
+  // para el parte de fusión: texto del paso actual, lista de rutas, propuesta y precarga
+  window.rutaPaso = key => { const st = RT.av[key]; if (!st) return null; const es = estado(st); if (es.completa) return 'ruta completa'; const c = es.cs[es.idx]; return c ? (c.opts.length > 1 ? c.opts.map(o => nomPaso(o.p)).join(' / ') : nomPaso(c.opts[0].p)) : null; };
+  window.rutaLista = () => RT_RUTAS;
+  window.rutaGuessFor = r => guess(r);
+  window.rutaPreload = () => cargar(true);
   function refrescar() { try { if (typeof applyFilters === 'function') applyFilters(); } catch (e) { /* sin refresco */ } }
 })();
 
@@ -6911,6 +6947,382 @@ function showToast(message, kind) {
   window.tjReset = () => { S.order = []; S.hidden = []; guardar(); aplicar(); };
   window.tjAplicar = aplicar;
   [0, 1200, 3500, 9000].forEach(t => setTimeout(aplicar, t));
+})();
+
+</script>
+<script>
+(function () {
+  // Parte de Fusión: se carga el archivo del día, cada línea empieza su proceso (pendiente de fusión),
+  // la fusión se confirma a mano (total o parcial) y después sigue Terminación → destino.
+  // Datos: tablas pf_lineas / pf_movs / pf_reglas / pf_cargas y funciones pf_* (parche 023).
+  const P = { L: [], M: [], R: {}, K: [], loaded: false, loading: false, error: null, tab: 'seg', filtro: 'pend', q: '', kg: 'neto', prev: null, fecha: '', msg: null, idx: new Map(), archivo: '' };
+  try { const v = localStorage.getItem('pf_kg'); if (v === 'bruto' || v === 'neto') P.kg = v; } catch (e) { /* sin guardado */ }
+  const E = s => (typeof escHtml === 'function' ? escHtml(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
+  const nf = (n, d) => Number(n || 0).toLocaleString('es-AR', { maximumFractionDigits: d == null ? 1 : d });
+  const pad = n => String(n).padStart(2, '0');
+  const hoy = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+  const fd = iso => iso ? String(iso).slice(0, 10).split('-').reverse().slice(0, 2).join('/') : '';
+  const dif = (a, b) => Math.round((new Date(a) - new Date(b)) / 86400000);
+  const nOC = oc => String(oc || '').replace(/^0+/, '').toUpperCase();
+  const nn = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const admin = () => !!(typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE && CURRENT_PROFILE.es_admin);
+  const rol = () => (typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE && CURRENT_PROFILE.rol) || '';
+  const puedeSec = () => typeof puedeVer === 'function' && puedeVer('parte_fusion');
+  const puedeConf = () => admin() || (['colaborador', 'editor'].includes(rol()) && puedeSec());   // Fundición / Planeamiento
+  const puedeOp = () => admin() || ['colaborador', 'editor'].includes(rol());                       // Terminación
+  const pend = l => Number(l.cant) - Number(l.fundido);
+  const term = l => Number(l.fundido) - Number(l.terminado) - Number(l.consumido);
+  const kgU = l => P.kg === 'bruto' ? Number(l.peso_bruto) : Number(l.peso_neto);
+  const TIPO = { pedido: ['Pedido de cliente', 'ped'], kanban: ['Kanban', 'kan'], interno: ['Interno AMRO', 'int'] };
+  const DEST = { pedido: '📦 Lista para despacho', pedido_mec: '⚙️ Mecanizado → vuelve al pedido', kanban: '🏬 Estantería kanban', sector_z: '🗄️ Sector Z → Mecanizado' };
+  const LPROD = { '03': 'Línea grande', '04': 'Línea chica', '05': 'Modelo suelto' };
+  const errTxt = e => { const m = (e && e.message) || String(e); return /pf_lineas|pf_movs|pf_reglas|pf_cargas|schema cache|does not exist|Could not find/i.test(m) ? 'Falta correr el parche 023 en Supabase (ver instrucciones).' : m; };
+  const rpc = async (fn, args) => { const { data, error } = await supabaseClient.rpc(fn, args); if (error) throw new Error(/Could not find the function|schema cache/i.test(error.message || '') ? 'Falta correr el parche 023 en Supabase (función ' + fn + ').' : error.message); return data; };
+  const toast = (t, k) => { try { if (typeof showToast === 'function') showToast(t, k || 'success'); } catch (e) { /* sin aviso */ } };
+
+  // ---------- reglas: destino por artículo ----------
+  const aroLike = l => !!((window.cirEsMachoHembra && window.cirEsMachoHembra(l.codigo)) || (l.tipo === 'interno' && /aro giratorio/i.test(l.descripcion || '') && /macho|hembra/i.test(l.descripcion || '')));
+  const destOk = (l, d) => d && (l.tipo === 'pedido' ? ['pedido', 'pedido_mec'].includes(d) : ['kanban', 'sector_z'].includes(d));
+  function destDe(l) {
+    const r = P.R[l.codigo]; if (r && destOk(l, r.destino)) return r.destino;
+    if (l.tipo === 'pedido') return (typeof CATALOGO_MEC !== 'undefined' && CATALOGO_MEC.has(l.codigo)) ? 'pedido_mec' : 'pedido';
+    return aroLike(l) ? 'sector_z' : 'kanban';
+  }
+
+  // ---------- datos ----------
+  async function fetchAll(name, order) {
+    const out = [];
+    for (let from = 0; ; from += 1000) {
+      let q = supabaseClient.from(name).select('*'); if (order) q = q.order(order.col, { ascending: order.asc !== false });
+      const { data, error } = await q.range(from, from + 999); if (error) throw error;
+      out.push(...(data || [])); if (!data || data.length < 1000) break;
+    }
+    return out;
+  }
+  function indexar() {
+    P.idx = new Map();
+    P.L.forEach(l => { const k = l.codigo + '|' + l.oc_norm; if (!P.idx.has(k)) P.idx.set(k, []); P.idx.get(k).push(l); });
+  }
+  async function load(force) {
+    if (P.loading || (P.loaded && !force)) return;
+    P.loading = true;
+    try {
+      const [L, R, K] = await Promise.all([fetchAll('pf_lineas', { col: 'id' }), fetchAll('pf_reglas'), supabaseClient.from('pf_cargas').select('*').order('id', { ascending: false }).limit(15).then(r => { if (r.error) throw r.error; return r.data || []; })]);
+      P.L = L.map(l => Object.assign({}, l, { cant: Number(l.cant), fundido: Number(l.fundido), terminado: Number(l.terminado), consumido: Number(l.consumido), peso_neto: Number(l.peso_neto), peso_bruto: Number(l.peso_bruto) }));
+      P.R = {}; R.forEach(r => { P.R[r.codigo] = r; }); P.K = K; P.error = null; indexar();
+    } catch (e) { P.error = errTxt(e); P.L = []; P.idx = new Map(); }
+    P.loaded = true; P.loading = false;
+    try { if (window.pfReaplicarEventos) window.pfReaplicarEventos(); } catch (e) { /* sin indicadores */ }
+  }
+  window.pfEnsure = async () => { try { await load(); } catch (e) { /* sin parte */ } };
+  const recargar = async () => { await load(true); refrescarTabla(); if (P.open) pintar(); };
+  function refrescarTabla() { try { if (typeof applyFilters === 'function') applyFilters(); } catch (e) { /* sin refresco */ } try { if (window.cirRefreshBtn) window.cirRefreshBtn(); } catch (e) { /* sin refresco */ } }
+
+  // ---------- vínculo con los pedidos de SGA: artículo + OC + cliente ----------
+  const cliOk = (l, r) => { const a = nn(l.cliente), b = nn(r.cliente); return !a || !b || a === b || a.includes(b) || b.includes(a); };
+  const vinc = r => (P.idx.get((r.codigo || '') + '|' + nOC(r.oc)) || []).filter(l => l.tipo === 'pedido' && cliOk(l, r));
+  const pedidoDe = l => (typeof DATA === 'undefined' ? [] : DATA).filter(r => r.codigo === l.codigo && nOC(r.oc) === l.oc_norm && cliOk(l, r));
+  const rKey = l => 'pf-' + l.id;
+  const rutaTxt = l => { try { return window.rutaPaso ? window.rutaPaso(rKey(l)) : null; } catch (e) { return null; } };
+
+  function estadoTxt(l) {
+    const out = [], p = pend(l), t = term(l);
+    if (p > 0) out.push(`⏳ ${nf(p, 0)} u. pendiente de fusión${l.fecha_parte && dif(hoy(), l.fecha_parte) > 2 ? ' (atrasada)' : ''}`);
+    if (t > 0) { const rt = rutaTxt(l); out.push(`🔧 ${nf(t, 0)} u. en Terminación${rt ? ' · ' + rt : ''}`); }
+    if (Number(l.terminado) > 0) out.push(`✅ ${nf(l.terminado, 0)} u. → ${DEST[l.destino] || l.destino || ''}`);
+    if (Number(l.consumido) > 0) out.push(`🧾 ${nf(l.consumido, 0)} u. se usaron en un pedido`);
+    return out;
+  }
+  window.pfExtra = r => {
+    if (!P.loaded) { if (!P.loading && typeof supabaseClient !== 'undefined') load().then(() => { if (!P.error && P.L.length) refrescarTabla(); }); return ''; }
+    if (P.error || !P.L.length) return '';
+    const ls = vinc(r); if (!ls.length) return '';
+    const p = ls.reduce((a, l) => a + pend(l), 0), t = ls.reduce((a, l) => a + term(l), 0), o = ls.reduce((a, l) => a + Number(l.terminado), 0);
+    const parts = [];
+    if (p > 0) parts.push(`⏳ ${nf(p, 0)} pend. fusión`);
+    if (t > 0) { const l = ls.find(x => term(x) > 0), rt = l && rutaTxt(l); parts.push(`🔧 ${nf(t, 0)} en Terminación${rt ? ' (' + rt + ')' : ''}`); }
+    if (o > 0) parts.push(`✅ ${nf(o, 0)} ${ls.every(l => !l.destino || l.destino === ls[0].destino) ? (DEST[ls[0].destino] || '') : 'ya salieron'}`);
+    if (!parts.length) parts.push('🔥 en el parte de fusión');
+    const sgaAdel = r.estado_general === 'Fundido / En Terminación' && p > 0;
+    return `<div class="pf-mini" title="Parte de fusión${sgaAdel ? ' · SGA ya lo muestra fundido; en el parte falta confirmarlo' : ''}" onclick="event.stopPropagation();pfBuscar('${E(r.codigo)}')">🔥 ${parts.join(' · ')}${sgaAdel ? ' · SGA ya lo tiene fundido' : ''}</div>`;
+  };
+  // probetas del parte para la hoja de pesada: [{probeta, n}] de las piezas ya fundidas del pedido
+  window.pfProbetas = r => {
+    if (!P.loaded || P.error) return [];
+    const m = new Map();
+    vinc(r).filter(l => l.probeta && Number(l.fundido) - Number(l.consumido) > 0).forEach(l => m.set(l.probeta, (m.get(l.probeta) || 0) + Number(l.fundido) - Number(l.consumido)));
+    return [...m.entries()].map(([probeta, n]) => ({ probeta, n }));
+  };
+  window.pfRowOf = key => {
+    const l = P.L.find(x => rKey(x) === key); if (!l) return null;
+    const t = Math.max(term(l), 1);
+    return { codigo: l.codigo, descripcion: l.descripcion, cliente: l.cliente, comprobante: 'Colada ' + (l.colada || ''), pend: t, cant: t, kilos: t * Number(l.peso_neto), material: l.material, oc: l.oc };
+  };
+  window.pfRutaDe = key => { const l = P.L.find(x => rKey(x) === key); return l && P.R[l.codigo] && P.R[l.codigo].ruta_id ? Number(P.R[l.codigo].ruta_id) : null; };
+  // para el stock virtual de kanban
+  window.pfVirtual = c => {
+    const ls = P.L.filter(l => l.codigo === c && l.tipo !== 'pedido');
+    const dk = ls.length ? destDe(ls[0]) === 'kanban' : !!(P.R[c] && P.R[c].destino === 'kanban');
+    return { pend: ls.reduce((a, l) => a + Math.max(0, pend(l)), 0), destKan: dk };
+  };
+  // indicadores: para no contar dos veces lo que SGA y el parte anotan, de cada artículo+OC se usa la fuente que más fundió
+  window.pfEventos = raw => {
+    if (!P.L.length || typeof baseRow !== 'function') return raw;
+    const G = new Map();
+    P.L.forEach(l => { const g = l.codigo + '|' + l.oc_norm; if (!G.has(g)) G.set(g, { ids: new Set(), pf: 0, sga: [], sq: 0 }); const o = G.get(g); o.ids.add(l.id); o.pf += Number(l.fundido); });
+    raw.forEach(e => {
+      if (e.tipo !== 'fundido' || e.origen === 'parte' || !e.item_id) return;
+      const b = baseRow(e.item_id); if (!b) return; const o = G.get((b.codigo || '') + '|' + nOC(b.oc)); if (!o) return;
+      o.sga.push(e); o.sq += Number(e.cantidad) || 0;
+    });
+    const drop = new Set(), dropPf = new Set();
+    G.forEach(o => { if (!o.sga.length) return; if (o.pf >= o.sq) o.sga.forEach(e => drop.add(e)); else o.ids.forEach(i => dropPf.add(i)); });
+    if (!drop.size && !dropPf.size) return raw;
+    return raw.filter(e => !drop.has(e) && !(e.origen === 'parte' && e.tipo === 'fundido' && dropPf.has(e.pf_id)));
+  };
+
+  // ---------- lectura del archivo ----------
+  const normH = s => String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+  const needXlsx = () => new Promise((ok, no) => { if (window.XLSX) return ok(); const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; s.onload = ok; s.onerror = () => no(new Error('No se pudo cargar el lector de Excel (¿hay internet?)')); document.head.appendChild(s); });
+  const fISO = v => { const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(String(v || '').trim()); return m ? `${m[3]}-${pad(m[2])}-${pad(m[1])}` : null; };
+  const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  async function leerArchivo(file) {
+    await needXlsx();
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
+    const hi = aoa.findIndex(r => r.some(c => normH(c) === 'colada'));
+    if (hi < 0) throw new Error('No encuentro la fila de títulos (Colada, Cod. Artículo…). ¿Es el Parte de Fusión?');
+    const col = {}; aoa[hi].forEach((c, i) => { const h = normH(c); if (h && !(h in col)) col[h] = i; });
+    const need = { colada: 'colada', cod: 'cod articulo', cc: 'cod cliente', cant: 'cant ingreso fusion', oc: 'numero de oc' };
+    const falta = Object.entries(need).filter(([, h]) => !(h in col)).map(([, h]) => h);
+    if (falta.length) throw new Error('Al archivo le faltan columnas: ' + falta.join(', '));
+    const g = (r, h) => (h in col ? r[col[h]] : '');
+    const s = v => String(v == null ? '' : v).trim();
+    const num = v => { const n = Number(String(v).replace(',', '.')); return isNaN(n) ? 0 : n; };
+    let fecha = null;
+    for (let i = 0; i < hi; i++) { const m = /(\d{1,2}) de ([a-záéíóú]+) de (\d{4})/i.exec(s(aoa[i][0])); if (m && MESES.includes(m[2].toLowerCase())) { fecha = `${m[3]}-${pad(MESES.indexOf(m[2].toLowerCase()) + 1)}-${pad(m[1])}`; break; } }
+    const rows = [], omit = [];
+    aoa.slice(hi + 1).forEach(r => {
+      const colada = s(g(r, 'colada')), cod = s(g(r, 'cod articulo')); if (!colada && !cod) return;
+      const cant = num(g(r, 'cant ingreso fusion')); const ocRaw = s(g(r, 'numero de oc')), cc = s(g(r, 'cod cliente'));
+      const x = {
+        colada, codigo: cod, probeta: s(g(r, 'probeta')) || null, cliente_cod: cc, cliente: s(g(r, 'nombre')), descripcion: s(g(r, 'detalle')), material: s(g(r, 'detalle material')),
+        oc: ocRaw, tipo: /KANBAN/i.test(ocRaw) ? 'kanban' : cc === '000097' ? 'interno' : 'pedido', linea_prod: s(g(r, 'linea de produccion')),
+        pn: num(g(r, 'peso neto')), pb: num(g(r, 'peso bruto')), cant, fecha_parte: fISO(g(r, 'fecha de planificacion')), fecha_entrega: fISO(g(r, 'entrega')),
+      };
+      if (cant <= 0 || !cod) { omit.push(x); return; } rows.push(x);
+    });
+    if (!rows.length) throw new Error('El archivo no trae líneas con cantidad.');
+    return { rows, omit, fecha };
+  }
+  const llaveDe = x => [x.colada, x.codigo, nOC(x.oc), x.cliente_cod, x.probeta || ''].join('|');
+  function armarDiff(rows) {
+    const m = new Map(); rows.forEach(x => { const k = llaveDe(x); if (!m.has(k)) m.set(k, Object.assign({}, x, { cant: 0, k })); m.get(k).cant += x.cant; });
+    const byK = new Map(P.L.map(l => [l.llave, l])); const nuevas = [], ya = [], cambian = [];
+    m.forEach(x => { const l = byK.get(x.k); if (!l) nuevas.push(x); else if (x.cant !== l.cant && x.cant >= l.fundido) cambian.push(Object.assign(x, { antes: l.cant })); else ya.push(x); });
+    const noFig = P.L.filter(l => pend(l) > 0 && !m.has(l.llave));
+    const sinPed = nuevas.filter(x => x.tipo === 'pedido' && !(typeof DATA === 'undefined' ? [] : DATA).some(r => r.codigo === x.codigo && nOC(r.oc) === nOC(x.oc) && cliOk({ cliente: x.cliente }, r)));
+    return { nuevas, ya, cambian, noFig, sinPed, total: m.size };
+  }
+
+  // ---------- pantalla ----------
+  const CSS = `
+  #pf-root{position:fixed;inset:0;background:#0f172a;color:#e2e8f0;z-index:60;overflow:auto;display:none;font-size:14px;line-height:1.45;--card:#1e293b;--line:#334155;--dim:#94a3b8;--acc:#f97316;--ok:#34d399;--warn:#fbbf24;--bad:#f87171}
+  #pf-root.on{display:block}#pf-root *{box-sizing:border-box}#pf-root .wrap{max-width:1150px;margin:0 auto;padding:14px 16px 50px}
+  #pf-root h1{font-size:1.15rem;margin:0}#pf-root .top{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+  #pf-root .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}#pf-root .tab{background:var(--card);border:1px solid var(--line);color:#e2e8f0;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:.85rem}#pf-root .tab.on{background:var(--acc);color:#0f172a;border-color:var(--acc);font-weight:700}
+  #pf-root .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px}#pf-root .panel h2{font-size:.95rem;margin:0 0 4px}#pf-root .sub{color:var(--dim);font-size:.8rem;margin:0 0 8px}
+  #pf-root .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:12px}#pf-root .kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 10px}#pf-root .kpi b{display:block;font-size:1.3rem;color:#fff}#pf-root .kpi span{font-size:.72rem;color:var(--dim)}
+  #pf-root .btn{background:#334155;color:#fff;border:1px solid #475569;border-radius:8px;padding:7px 12px;cursor:pointer;font-size:.82rem}#pf-root .btn.pri{background:var(--acc);color:#0f172a;border-color:var(--acc);font-weight:700}#pf-root .btn.sm{padding:4px 9px;font-size:.76rem}#pf-root .btn:disabled{opacity:.45;cursor:not-allowed}
+  #pf-root .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}#pf-root .mono{font-size:.74rem;color:var(--dim)}
+  #pf-root table{width:100%;border-collapse:collapse;min-width:760px}#pf-root th{font-size:.72rem;color:var(--dim);text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);font-weight:600}#pf-root td{padding:7px 8px;border-bottom:1px solid #263449;vertical-align:top;font-size:.84rem}#pf-root .num{text-align:right}
+  #pf-root .tblwrap{overflow-x:auto}#pf-root .chip{display:inline-block;font-size:.68rem;padding:1px 7px;border-radius:99px;background:#334155;color:#cbd5e1;margin:1px 2px 1px 0}
+  #pf-root .chip.ped{background:rgba(56,189,248,.18);color:#7dd3fc}#pf-root .chip.kan{background:rgba(52,211,153,.18);color:#6ee7b7}#pf-root .chip.int{background:rgba(167,139,250,.2);color:#c4b5fd}#pf-root .chip.prob{background:rgba(249,115,22,.2);color:#fdba74}#pf-root .chip.bad{background:rgba(248,113,113,.2);color:#fca5a5}#pf-root .chip.warn{background:rgba(251,191,36,.2);color:#fde68a}#pf-root .chip.ok{background:rgba(52,211,153,.2);color:#6ee7b7}
+  #pf-root .cola{background:#0f172a;border:1px solid var(--line);border-radius:6px;padding:1px 7px;font-family:ui-monospace,monospace;font-size:.78rem}
+  #pf-root .filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center}#pf-root .f{background:#0f172a;border:1px solid var(--line);color:#cbd5e1;border-radius:99px;padding:4px 11px;font-size:.76rem;cursor:pointer}#pf-root .f.on{background:var(--acc);color:#0f172a;border-color:var(--acc);font-weight:700}
+  #pf-root input[type=text],#pf-root input[type=number],#pf-root input[type=date],#pf-root select{background:#0f172a;color:#fff;border:1px solid var(--line);border-radius:7px;padding:6px 8px;font-size:.85rem}
+  #pf-root .diff{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}#pf-root .dcol{background:#0f172a;border:1px solid var(--line);border-radius:10px;padding:9px 11px}#pf-root .dcol h3{font-size:.85rem;margin:0 0 3px}#pf-root .dcol ul{margin:0;padding:0;list-style:none;max-height:260px;overflow:auto}#pf-root .dcol li{font-size:.78rem;padding:4px 0;border-top:1px solid #263449}
+  #pf-root .dcol.new{border-color:var(--ok)}#pf-root .dcol.gone{border-color:var(--warn)}#pf-root .note{background:rgba(251,191,36,.1);border:1px solid #92400e;border-radius:8px;padding:8px 10px;font-size:.8rem;margin-top:8px}
+  #pf-root .err{background:rgba(248,113,113,.12);border:1px solid var(--bad);border-radius:8px;padding:10px;color:#fecaca}
+  #pf-dlg{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:80;display:none;align-items:center;justify-content:center;padding:12px}#pf-dlg.on{display:flex}
+  #pf-dlg .box{background:#1e293b;border:1px solid #334155;border-radius:14px;width:100%;max-width:460px;max-height:90vh;overflow:auto;padding:16px;color:#e2e8f0;font-size:.88rem}
+  #pf-dlg label{display:block;margin:10px 0 3px;font-size:.78rem;color:#94a3b8}#pf-dlg input,#pf-dlg select{width:100%;background:#0f172a;color:#fff;border:1px solid #334155;border-radius:7px;padding:8px;font-size:.9rem}
+  #pf-dlg .row{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}#pf-dlg .btn{background:#334155;color:#fff;border:1px solid #475569;border-radius:8px;padding:8px 14px;cursor:pointer}#pf-dlg .btn.pri{background:#f97316;color:#0f172a;border-color:#f97316;font-weight:700}
+  .pf-mini{font-size:.68rem;color:#fdba74;margin-top:3px;font-weight:600;cursor:pointer}`;
+  (function () { const st = document.createElement('style'); st.textContent = '.pf-mini{font-size:.68rem;color:#fdba74;margin-top:3px;font-weight:600;cursor:pointer}'; document.head.appendChild(st); })();
+  function ensureDom() {
+    if (document.getElementById('pf-root')) return;
+    const s = document.createElement('style'); s.textContent = CSS; document.head.appendChild(s);
+    const r = document.createElement('div'); r.id = 'pf-root'; r.innerHTML = '<div class="wrap" id="pf-wrap"></div>'; document.body.appendChild(r);
+    const d = document.createElement('div'); d.id = 'pf-dlg'; d.onclick = e => { if (e.target === d) dlgClose(); }; d.innerHTML = '<div class="box" id="pf-box"></div>'; document.body.appendChild(d);
+  }
+  const dlg = html => { ensureDom(); document.getElementById('pf-box').innerHTML = html; document.getElementById('pf-dlg').classList.add('on'); };
+  const dlgClose = () => { const d = document.getElementById('pf-dlg'); if (d) d.classList.remove('on'); };
+  window.pfDlgClose = dlgClose;
+
+  const chips = l => `<span class="chip ${TIPO[l.tipo][1]}">${TIPO[l.tipo][0]}</span>${LPROD[l.linea_prod] ? `<span class="chip">${LPROD[l.linea_prod]}</span>` : ''}${l.probeta ? `<span class="chip prob">Probeta ${E(l.probeta)}</span>` : ''}`;
+  const kgTxt = (n, l) => nf(n * kgU(l), 1);
+  const sumL = (ls, f) => ls.reduce((a, l) => a + f(l), 0);
+  const kgBtns = () => `<div class="row"><span class="mono">Kg:</span><button class="f ${P.kg === 'neto' ? 'on' : ''}" onclick="pfKg('neto')">Neto</button><button class="f ${P.kg === 'bruto' ? 'on' : ''}" onclick="pfKg('bruto')">Bruto (con montantes)</button></div>`;
+  window.pfKg = k => { P.kg = k; try { localStorage.setItem('pf_kg', k); } catch (e) { /* sin guardado */ } pintar(); };
+
+  function vSeg() {
+    if (P.error) return `<div class="err">${E(P.error)}</div>`;
+    const ls = P.L, kgW = P.kg === 'bruto' ? 'bruto' : 'neto';
+    const mol = sumL(ls, l => l.cant), molKg = sumL(ls, l => l.cant * kgU(l)), fun = sumL(ls, l => l.fundido), funKg = sumL(ls, l => l.fundido * kgU(l));
+    const kpis = `<div class="kpis"><div class="kpi"><b>${nf(mol, 0)}</b><span>piezas moldeadas (se cuentan una sola vez) · ${nf(molKg, 0)} kg ${kgW}</span></div>
+      <div class="kpi"><b>${nf(sumL(ls, pend), 0)}</b><span>pendientes de fusión</span></div>
+      <div class="kpi"><b>${nf(fun, 0)}</b><span>fundidas confirmadas · <b style="display:inline;font-size:.8rem;color:var(--ok)">${nf(funKg, 0)} kg ${kgW}</b></span></div>
+      <div class="kpi"><b>${nf(sumL(ls, l => Math.max(0, term(l))), 0)}</b><span>en Terminación</span></div>
+      <div class="kpi"><b>${nf(sumL(ls, l => Number(l.terminado)), 0)}</b><span>ya salieron a su destino</span></div></div>`;
+    const F = { todas: l => true, pend: l => pend(l) > 0, atr: l => pend(l) > 0 && l.fecha_parte && dif(hoy(), l.fecha_parte) > 2, term: l => term(l) > 0, out: l => Number(l.terminado) > 0, nofig: l => l.no_figura && pend(l) > 0 };
+    const q = nn(P.q);
+    const base = ls.filter(l => !q || nn([l.colada, l.codigo, l.oc, l.cliente, l.descripcion, l.probeta].join(' ')).includes(q));
+    const fb = (k, t) => `<button class="f ${P.filtro === k ? 'on' : ''}" onclick="pfFiltro('${k}')">${t} (${base.filter(F[k]).length})</button>`;
+    const rows = base.filter(F[P.filtro]).sort((a, b) => (pend(b) > 0) - (pend(a) > 0) || String(a.fecha_parte || '').localeCompare(String(b.fecha_parte || '')) || Number(a.colada) - Number(b.colada)).slice(0, 400).map(l => {
+      const p = pend(l), t = term(l), d = l.fecha_parte ? dif(hoy(), l.fecha_parte) : 0, est = estadoTxt(l).filter(x => !x.startsWith('⏳'));
+      const acc = [];
+      if (p > 0 && puedeConf()) acc.push(`<button class="btn sm pri" onclick="pfFundir(${l.id})">Se fundió…</button>`);
+      if (t > 0) { acc.push(`<button class="btn sm" onclick="rutaOpen('${rKey(l)}')">🧭 Ruta</button>`); if (puedeOp()) acc.push(`<button class="btn sm pri" onclick="pfTerminar(${l.id})">Terminó Terminación</button>`); }
+      acc.push(`<button class="btn sm" onclick="pfHist(${l.id})" title="Historial">📜</button>`);
+      return `<tr><td><span class="cola">${E(l.colada)}</span></td>
+        <td><b>${E((l.descripcion || '').slice(0, 64))}</b><div class="mono">${E(l.codigo)} · ${E(l.cliente)} · OC ${E(l.oc_norm || l.oc)}</div><div>${chips(l)}</div></td>
+        <td class="num"><b>${nf(p, 0)}</b> <span class="mono">/ ${nf(l.cant, 0)}</span><div class="mono">${kgTxt(l.cant, l)} kg</div>${p > 0 ? `<div>${l.no_figura ? '<span class="chip bad">no figura en el último parte</span>' : d > 2 ? `<span class="chip bad">${d} días</span>` : d > 0 ? `<span class="chip warn">hace ${d} d</span>` : ''}</div>` : ''}</td>
+        <td class="num"><b>${nf(Math.max(0, t), 0)}</b></td>
+        <td>${est.map(x => `<div>${E(x)}</div>`).join('') || '<span class="mono">—</span>'}<div class="mono">Destino: ${DEST[destDe(l)]}</div></td>
+        <td><div class="row">${acc.join('')}</div></td></tr>`;
+    }).join('');
+    return (P.msg ? `<div class="panel" style="border-color:var(--ok)">${P.msg}</div>` : '') + kpis + `<div class="panel"><div class="row" style="justify-content:space-between"><div><h2>Seguimiento de coladas</h2><p class="sub"><b>Se fundió…</b> pide cuántas: si es parte de la colada, esa parte pasa a Terminación y el resto queda pendiente de fusión.</p></div>${kgBtns()}</div>
+      <div class="filters">${fb('pend', 'Pendientes de fusión')}${fb('atr', 'Atrasadas (+2 días)')}${fb('term', 'En Terminación')}${fb('out', 'Ya en destino')}${fb('nofig', 'No figuran en el último parte')}${fb('todas', 'Todas')}
+        <input type="text" id="pf-q" placeholder="Buscar colada, artículo, OC, cliente, probeta…" value="${E(P.q)}" oninput="pfBusca(this.value)" style="min-width:230px;margin-left:auto"></div>
+      ${ls.length ? `<div class="tblwrap"><table><tr><th>Colada</th><th>Pieza</th><th class="num">Pend. fusión</th><th class="num">En Terminación</th><th>Dónde está</th><th>Acciones</th></tr>${rows || '<tr><td colspan="6" class="mono" style="padding:16px">Nada con este filtro.</td></tr>'}</table></div>` : '<div class="mono" style="padding:16px">Todavía no se cargó ningún parte. Usá la pestaña "Cargar parte".</div>'}</div>`;
+  }
+  function vCargar() {
+    if (P.error) return `<div class="err">${E(P.error)}</div>`;
+    const ult = P.K[0];
+    let h = `<div class="panel"><h2>Cargar el parte de fusión</h2><p class="sub">Subí el archivo del día. Cada línea nueva <b>empieza el proceso</b> (pendiente de fusión) y suma a <b>moldeado</b>. Lo que ya estaba cargado <b>no se cuenta otra vez</b>, y ninguna línea se borra aunque deje de aparecer.</p>
+      <div class="row"><input type="file" id="pf-file" accept=".xls,.xlsx" ${puedeConf() ? '' : 'disabled'}><label class="mono">Fecha del parte <input type="date" id="pf-fecha" value="${E(P.fecha || hoy())}" max="${hoy()}"></label></div>
+      ${puedeConf() ? '' : '<div class="note">Solo Fundición / Planeamiento cargan el parte.</div>'}
+      ${ult ? `<div class="mono" style="margin-top:8px">Última carga: ${fd(ult.fecha)} · ${E(ult.archivo || '')} · ${ult.nuevas} nuevas, ${ult.ya} ya estaban, ${ult.cambian} con cambio de cantidad, ${ult.no_figuran} dejaron de figurar.</div>` : ''}</div>`;
+    if (P.msg) h += `<div class="panel" style="border-color:var(--ok)">${P.msg}</div>`;
+    const v = P.prev; if (!v) return h;
+    const li = x => `<li><b>Colada ${E(x.colada)}</b> · ${E((x.descripcion || '').slice(0, 46))}<br><span class="mono">${nf(x.cant, 0)} u. · ${E(x.cliente)} · OC ${E(nOC(x.oc))}</span> ${x.probeta ? `<span class="chip prob">${E(x.probeta)}</span>` : ''}<span class="chip ${TIPO[x.tipo][1]}">${TIPO[x.tipo][0]}</span></li>`;
+    const nof = v.noFig.map(l => `<li><b>Colada ${E(l.colada)}</b> · ${E((l.descripcion || '').slice(0, 46))}<br><span class="mono">${nf(pend(l), 0)} u. pendientes · sigue en la app</span></li>`).join('');
+    h += `<div class="panel"><h2>Vista previa · ${E(P.archivo)} · ${fd(P.fecha)}</h2><p class="sub">${v.total} líneas en el archivo. Todavía no se guardó nada.</p><div class="diff">
+      <div class="dcol new"><h3>Nuevas (${v.nuevas.length})</h3><p class="mono">Empiezan el proceso y suman a moldeado.</p><ul>${v.nuevas.map(li).join('') || '<li class="mono">Ninguna</li>'}</ul></div>
+      <div class="dcol"><h3>Ya estaban (${v.ya.length})</h3><p class="mono">No se cuentan de nuevo.</p><ul>${v.ya.map(li).join('') || '<li class="mono">Ninguna</li>'}</ul></div>
+      <div class="dcol gone"><h3>Ya no figuran (${v.noFig.length})</h3><p class="mono">Solo aviso: no se borran ni se pasan solas.</p><ul>${nof || '<li class="mono">Ninguna</li>'}</ul></div></div>
+      ${v.cambian.length ? `<div class="note"><b>Cambió la cantidad:</b> ${v.cambian.map(c => `colada ${E(c.colada)} ${E((c.descripcion || '').slice(0, 34))}: ${nf(c.antes, 0)} → ${nf(c.cant, 0)} u.`).join(' · ')} (se ajusta lo moldeado y lo pendiente).</div>` : ''}
+      ${v.sinPed.length ? `<div class="note"><b>Sin pedido en SGA (artículo + OC + cliente):</b> ${v.sinPed.map(x => `colada ${E(x.colada)} · ${E((x.descripcion || '').slice(0, 30))} · OC ${E(nOC(x.oc))} · ${E(x.cliente)}`).join(' · ')}. Se cargan igual; revisá que la OC esté igual en SGA.</div>` : ''}
+      ${P.omit && P.omit.length ? `<div class="note">${P.omit.length} línea(s) sin cantidad se ignoraron.</div>` : ''}
+      <div class="row" style="margin-top:12px"><button class="btn pri" id="pf-go" onclick="pfConfirmarCarga()" ${(v.nuevas.length || v.cambian.length || v.noFig.length) ? '' : 'disabled'}>Cargar al sistema</button><button class="btn" onclick="pfCancelarCarga()">Cancelar</button>${(v.nuevas.length || v.cambian.length) ? '' : '<span class="mono">No hay nada nuevo para cargar.</span>'}</div></div>`;
+    return h;
+  }
+  function vVinculo() {
+    if (P.error) return `<div class="err">${E(P.error)}</div>`;
+    const lp = P.L.filter(l => l.tipo === 'pedido'); if (!lp.length) return '<div class="panel"><div class="mono">No hay piezas de pedido en el parte todavía.</div></div>';
+    const sin = lp.filter(l => !pedidoDe(l).length);
+    const grupos = new Map(); lp.filter(l => pedidoDe(l).length).forEach(l => { const k = l.codigo + '|' + l.oc_norm + '|' + nn(l.cliente); if (!grupos.has(k)) grupos.set(k, []); grupos.get(k).push(l); });
+    const cards = [...grupos.values()].map(ls => { const l0 = ls[0], peds = pedidoDe(l0);
+      return `<div class="panel"><div class="row" style="justify-content:space-between"><div><b>${E((l0.descripcion || '').slice(0, 64))}</b><div class="mono">${E(l0.cliente)} · OC ${E(l0.oc_norm)} · ${E(l0.codigo)}</div></div><div class="mono">Pedido SGA: ${peds.map(r => 'NV ' + E(r.comprobante) + ' (' + nf(r.pend, 0) + ' u. · ' + E(r.estado_general || '') + ')').join(' · ')}</div></div>
+        <div class="tblwrap"><table style="min-width:520px"><tr><th>Colada</th><th class="num">Cant.</th><th>Dónde está</th></tr>${ls.map(l => `<tr><td><span class="cola">${E(l.colada)}</span>${l.probeta ? ` <span class="chip prob">${E(l.probeta)}</span>` : ''}</td><td class="num">${nf(l.cant, 0)}</td><td>${estadoTxt(l).map(x => `<div>${E(x)}</div>`).join('')}</td></tr>`).join('')}</table></div></div>`; }).join('');
+    return `<div class="note" style="margin-top:0;margin-bottom:12px">El vínculo es artículo + OC + cliente (la OC se compara sin ceros a la izquierda). En el tablero de pedidos, cada pedido muestra debajo del estado el proceso de sus piezas en el parte.</div>
+      ${sin.length ? `<div class="panel" style="border-color:var(--bad)"><h2 style="color:var(--bad)">Líneas del parte sin pedido en SGA (${sin.length})</h2><p class="sub">Puede que el pedido todavía no esté cargado en SGA o que la OC / el cliente estén escritos distinto.</p>${sin.map(l => `<div class="mono">Colada ${E(l.colada)} · ${E((l.descripcion || '').slice(0, 50))} · ${E(l.cliente)} · OC ${E(l.oc_norm)} · ${nf(l.cant, 0)} u.</div>`).join('')}</div>` : ''}${cards}`;
+  }
+  const RUTAS = () => (window.rutaLista ? window.rutaLista() : []);
+  function vReglas() {
+    if (P.error) return `<div class="err">${E(P.error)}</div>`;
+    const as = [...new Map(P.L.map(l => [l.codigo, l])).values()].sort((a, b) => a.tipo.localeCompare(b.tipo) || String(a.descripcion).localeCompare(String(b.descripcion)));
+    if (!as.length) return '<div class="panel"><div class="mono">Cuando cargues el parte, acá se corrige el destino y la ruta de cada artículo.</div></div>';
+    const ed = puedeConf() || (typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE && (admin() || rol() === 'editor'));
+    const rows = as.map(l => { const r = P.R[l.codigo] || {}, d = destDe(l), opts = l.tipo === 'pedido' ? ['pedido', 'pedido_mec'] : ['kanban', 'sector_z'];
+      const rid = r.ruta_id || (window.rutaGuessFor ? window.rutaGuessFor({ cant: 1, kilos: Number(l.peso_neto), material: l.material, descripcion: l.descripcion }) : '');
+      return `<tr><td><b>${E((l.descripcion || '').slice(0, 58))}</b><div class="mono">${E(l.codigo)}</div></td><td><span class="chip ${TIPO[l.tipo][1]}">${TIPO[l.tipo][0]}</span></td>
+        <td><select ${ed ? '' : 'disabled'} onchange="pfRegla('${E(l.codigo)}','destino',this.value)">${opts.map(o => `<option value="${o}" ${d === o ? 'selected' : ''}>${DEST[o]}</option>`).join('')}</select></td>
+        <td><select ${ed ? '' : 'disabled'} onchange="pfRegla('${E(l.codigo)}','ruta_id',this.value)">${RUTAS().map(x => `<option value="${x.id}" ${Number(rid) === x.id ? 'selected' : ''}>Ruta ${x.id} · ${E(x.n)}</option>`).join('')}</select></td></tr>`; }).join('');
+    return `<div class="panel"><h2>Qué pasa después de Terminación</h2><p class="sub">Destino y ruta propuestos por artículo (pedidos con mecanizado → Mecanizado; manotas y piezas de kanban → estantería; machos y hembras de aros → Sector Z). Se corrige acá y rige desde ya.</p><div class="tblwrap"><table><tr><th>Artículo</th><th>Tipo</th><th>Destino al terminar</th><th>Ruta de Terminación</th></tr>${rows}</table></div></div>`;
+  }
+  const TABS = [['seg', '📋 Seguimiento'], ['cargar', '⬆ Cargar parte'], ['vinculo', '🔗 Pedidos de SGA'], ['reglas', '⚙️ Destino y ruta']];
+  function pintar() {
+    ensureDom(); const W = document.getElementById('pf-wrap');
+    const V = { seg: vSeg, cargar: vCargar, vinculo: vVinculo, reglas: vReglas };
+    const foco = document.activeElement && document.activeElement.id === 'pf-q' ? document.activeElement.selectionStart : null;
+    W.innerHTML = `<div class="top"><h1>🔥 Parte de fusión</h1><button class="btn" onclick="pfClose()">✕ Cerrar</button></div>
+      <div class="tabs">${TABS.map(([k, t]) => `<button class="tab ${P.tab === k ? 'on' : ''}" onclick="pfTab('${k}')">${t}</button>`).join('')}</div>${!P.loaded ? '<div class="panel"><div class="mono">Cargando…</div></div>' : V[P.tab]()}`;
+    if (foco != null) { const i = document.getElementById('pf-q'); if (i) { i.focus(); try { i.setSelectionRange(foco, foco); } catch (e) { /* sin cursor */ } } }
+  }
+  window.pfOpen = async (tab, q) => {
+    if (!puedeSec() && !admin()) return; ensureDom(); if (tab) P.tab = tab; if (q != null) { P.q = q; P.filtro = 'todas'; }
+    P.open = true; document.getElementById('pf-root').classList.add('on'); pintar();
+    try { if (window.rutaPreload) await window.rutaPreload(); } catch (e) { /* sin ruta */ }
+    await load(true); pintar();
+  };
+  window.pfBuscar = q => { if (puedeSec() || admin()) window.pfOpen('seg', q); };
+  window.pfClose = () => { P.open = false; const r = document.getElementById('pf-root'); if (r) r.classList.remove('on'); refrescarTabla(); };
+  window.pfTab = k => { P.tab = k; if (k !== 'cargar') P.msg = null; pintar(); };
+  window.pfFiltro = k => { P.filtro = k; pintar(); };
+  window.pfBusca = v => { P.q = v; pintar(); };
+  window.pfRefreshBtn = () => { const b = document.getElementById('pf-btn'); if (b) b.style.display = (puedeSec() || admin()) ? '' : 'none'; };
+  setTimeout(window.pfRefreshBtn, 0); [1500, 4000, 9000, 20000].forEach(t => setTimeout(window.pfRefreshBtn, t));
+
+  // ---------- acciones ----------
+  const lin = id => P.L.find(l => l.id === Number(id));
+  window.pfFundir = id => { const l = lin(id); if (!l) return;
+    dlg(`<b>¿Cuánto se fundió?</b><div class="mono">Colada ${E(l.colada)} · ${E((l.descripcion || '').slice(0, 54))}${l.probeta ? ' · probeta ' + E(l.probeta) : ''}</div>
+      <label>Cantidad (pendientes: ${nf(pend(l), 0)})</label><input type="number" id="pf-d-n" min="1" max="${pend(l)}" step="1" value="${pend(l)}">
+      <label>Fecha de fusión</label><input type="date" id="pf-d-f" value="${hoy()}" max="${hoy()}">
+      <div class="mono" style="margin-top:8px">Si es menos que lo pendiente, el resto sigue pendiente de fusión. Lo fundido pasa a Terminación y suma a kg fundidos.</div>
+      <div class="row"><button class="btn pri" id="pf-d-ok" onclick="pfFundirOk(${l.id})">Confirmar fusión</button><button class="btn" onclick="pfDlgClose()">Cancelar</button></div>`); };
+  window.pfFundirOk = async id => { const n = Number(document.getElementById('pf-d-n').value), f = document.getElementById('pf-d-f').value || hoy(), b = document.getElementById('pf-d-ok'); b.disabled = true;
+    try { await rpc('pf_confirmar', { p_linea: Number(id), p_cant: n, p_fecha: f }); dlgClose(); toast('Fusión confirmada: ' + nf(n, 0) + ' u. pasan a Terminación'); await recargar(); } catch (e) { b.disabled = false; alert(errTxt(e)); } };
+  window.pfTerminar = id => { const l = lin(id); if (!l) return; const t = term(l), d0 = destDe(l);
+    const rt = rutaTxt(l), incompleta = rt && !/completa/i.test(rt);
+    const opts = l.tipo === 'pedido' ? ['pedido', 'pedido_mec'] : ['kanban', 'sector_z'];
+    dlg(`<b>Terminó Terminación</b><div class="mono">Colada ${E(l.colada)} · ${E((l.descripcion || '').slice(0, 54))}</div>
+      ${incompleta ? `<div class="note">La ruta no está completa (falta: ${E(rt)}). Podés pasarla igual si corresponde.</div>` : ''}
+      <label>Cantidad (en Terminación: ${nf(t, 0)})</label><input type="number" id="pf-t-n" min="1" max="${t}" step="1" value="${t}">
+      <label>Va a</label><select id="pf-t-d">${opts.map(o => `<option value="${o}" ${o === d0 ? 'selected' : ''}>${DEST[o]}</option>`).join('')}</select>
+      <div class="row"><button class="btn pri" id="pf-t-ok" onclick="pfTerminarOk(${l.id})">Confirmar</button><button class="btn" onclick="pfDlgClose()">Cancelar</button></div>`); };
+  window.pfTerminarOk = async id => { const n = Number(document.getElementById('pf-t-n').value), d = document.getElementById('pf-t-d').value, b = document.getElementById('pf-t-ok'); b.disabled = true;
+    try { await rpc('pf_terminar', { p_linea: Number(id), p_cant: n, p_destino: d }); dlgClose(); toast(nf(n, 0) + ' u. → ' + DEST[d].replace(/^\S+\s/, '')); try { if (window.cirReload) await window.cirReload(); } catch (e) { /* sin circuito */ } await recargar(); } catch (e) { b.disabled = false; alert(errTxt(e)); } };
+  window.pfHist = async id => { const l = lin(id); if (!l) return; dlg('<div class="mono">Cargando…</div>');
+    try {
+      const { data, error } = await supabaseClient.from('pf_movs').select('*').eq('linea_id', Number(id)).order('id', { ascending: false }); if (error) throw error;
+      const ult = {}; (data || []).forEach(m => { if (!m.deshecho && (m.tipo === 'fusion' || m.tipo === 'terminado') && !ult[m.tipo]) ult[m.tipo] = m.id; });
+      const nom = { moldeado: 'Aparece en el parte', ajuste: 'Cambio de cantidad', fusion: 'Fusión confirmada', terminado: 'Terminó Terminación' };
+      const rows = (data || []).map(m => `<div style="padding:6px 0;border-top:1px solid #334155;${m.deshecho ? 'opacity:.5;text-decoration:line-through' : ''}"><b>${nom[m.tipo]}</b> · ${nf(m.cantidad, 0)} u. ${m.destino ? '→ ' + E((DEST[m.destino] || m.destino)) : ''}<div class="mono">${fd(m.fecha)}${m.nota ? ' · ' + E(m.nota) : ''} · ${new Date(m.ts).toLocaleString('es-AR')}</div>
+        ${!m.deshecho && ult[m.tipo] === m.id && ((m.tipo === 'fusion' && puedeConf()) || (m.tipo === 'terminado' && puedeOp())) ? `<button class="btn" style="padding:3px 9px;font-size:.74rem;margin-top:4px" onclick="pfDeshacer(${m.id},'${m.tipo}')">↩ Deshacer</button>` : ''}</div>`).join('');
+      dlg(`<b>Historial</b><div class="mono">Colada ${E(l.colada)} · ${E((l.descripcion || '').slice(0, 54))}</div><div class="mono">Del parte: ${nf(l.cant, 0)} · fundido ${nf(l.fundido, 0)} · salieron ${nf(l.terminado, 0)}</div><div style="margin-top:8px">${rows || '<div class="mono">Sin movimientos.</div>'}</div>
+        <div class="row">${Number(l.fundido) === 0 && puedeConf() ? `<button class="btn" onclick="pfQuitar(${l.id})">🗑 Sacar esta línea (cargada por error)</button>` : ''}<button class="btn" onclick="pfDlgClose()">Cerrar</button></div>`);
+    } catch (e) { dlg(`<div class="err">${E(errTxt(e))}</div><div class="row"><button class="btn" onclick="pfDlgClose()">Cerrar</button></div>`); } };
+  window.pfDeshacer = async (mid, tipo) => { if (!confirm('¿Deshacer este movimiento?')) return;
+    try { await rpc(tipo === 'fusion' ? 'pf_deshacer_fusion' : 'pf_deshacer_terminado', { p_mov: Number(mid) }); dlgClose(); toast('Movimiento deshecho'); try { if (window.cirReload) await window.cirReload(); } catch (e) { /* sin circuito */ } await recargar(); } catch (e) { alert(errTxt(e)); } };
+  window.pfQuitar = async id => { if (!confirm('¿Sacar esta línea del seguimiento? También se resta de lo moldeado.')) return;
+    try { await rpc('pf_quitar', { p_linea: Number(id) }); dlgClose(); toast('Línea sacada'); await recargar(); } catch (e) { alert(errTxt(e)); } };
+  window.pfRegla = async (cod, campo, val) => { const l = P.L.find(x => x.codigo === cod); if (!l) return;
+    const cur = P.R[cod] || {}; const row = { codigo: cod, destino: cur.destino || destDe(l), ruta_id: cur.ruta_id || null, updated_at: new Date().toISOString() };
+    row[campo] = campo === 'ruta_id' ? Number(val) : val;
+    try { const { error } = await supabaseClient.from('pf_reglas').upsert(row, { onConflict: 'codigo' }); if (error) throw error; P.R[cod] = row; toast('Guardado'); refrescarTabla(); pintar(); } catch (e) { alert(errTxt(e)); pintar(); } };
+  document.addEventListener('change', async e => {
+    const t = e.target; if (!t || t.id !== 'pf-file' || !t.files || !t.files[0]) return;
+    const f = t.files[0]; P.msg = null; P.fecha = document.getElementById('pf-fecha') ? document.getElementById('pf-fecha').value : hoy();
+    try {
+      await load(true); const r = await leerArchivo(f); P.archivo = f.name; if (r.fecha && r.fecha <= hoy()) P.fecha = r.fecha;
+      P.omit = r.omit; P.rows = r.rows; P.prev = armarDiff(r.rows);
+    } catch (err) { P.prev = null; P.msg = `<div class="err">${E(errTxt(err))}</div>`; }
+    pintar();
+  });
+  window.pfCancelarCarga = () => { P.prev = null; P.rows = null; P.msg = null; pintar(); };
+  window.pfConfirmarCarga = async () => {
+    if (!P.rows || !P.prev) return; const b = document.getElementById('pf-go'); if (b) b.disabled = true;
+    const fecha = (document.getElementById('pf-fecha') && document.getElementById('pf-fecha').value) || P.fecha || hoy();
+    try {
+      const r = await rpc('pf_cargar', { p_fecha: fecha, p_archivo: P.archivo, p_lineas: P.rows });
+      P.msg = `<b>Parte cargado.</b> ${r.nuevas} líneas nuevas (empiezan el proceso, ${nf(r.moldeado, 0)} u. moldeadas), ${r.ya} ya estaban (no se cuentan otra vez), ${r.cambian} con cambio de cantidad, ${r.no_figuran} dejaron de figurar (solo aviso).`;
+      P.prev = null; P.rows = null; toast('Parte cargado'); P.tab = 'seg'; P.filtro = 'pend'; await recargar();
+    } catch (e) { if (b) b.disabled = false; alert(errTxt(e)); }
+  };
+  window.pfStateForTest = () => P;
 })();
 
 </script>
