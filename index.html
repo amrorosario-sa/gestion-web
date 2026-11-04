@@ -88,6 +88,10 @@
   .kpi-card.moldeo { border-left: 4px solid var(--accent); }
   .kpi-card.cancel { border-left: 4px solid #64748b; }
   .kpi-card.prep { border-left: 4px solid #2dd4bf; }
+  .kpi-card.mecan { border-left: 4px solid var(--warning); }
+  .kpi-card.stock { border-left: 4px solid #a5b4fc; }
+  .quick-chips .chip:not(.chip-clear) { display: none !important; }
+  .quick-chips { border-top: none; margin-top: 4px; padding-top: 0; }
   .kpi-card.priority-combo { cursor: default; }
   .kpi-card.priority-combo:hover { transform: none; box-shadow: none; border-color: var(--card-border); }
   .priority-row { display: flex; justify-content: space-between; align-items: baseline; padding: 3px 6px; margin: 4px -6px 0; border-radius: 6px; cursor: pointer; transition: background 0.15s; }
@@ -495,30 +499,37 @@
       <div class="value" id="kpi-despachado" style="color: #c084fc;">0</div>
       <div class="sub" id="kpi-despachado-kg"></div>
     </div>
-    <div class="kpi-card process" id="card-proceso" onclick="setFilterFromCard('proceso')" title="Click para filtrar Pendiente previo a Moldeo">
-      <div class="label">⏳ Pendiente Previo a Moldeo</div>
+    <div class="kpi-card process" id="card-proceso" onclick="setFilterFromCard('proceso')" title="Click para filtrar lo que está en Ingeniería de Producto (antes de moldeo)">
+      <div class="label">⏳ En Ingeniería de Producto</div>
       <div class="value" id="kpi-in-progress" style="color: #fbbf24;">0</div>
       <div class="sub" id="kpi-progress-kg"></div>
     </div>
-    <div class="kpi-card stock" id="card-stock" onclick="setFilterFromCard('stock')" title="Click para ver y gestionar el Stock sin pedido">
-      <div class="label">📦 Stock (sin pedido)</div>
-      <div class="value" id="kpi-stock" style="color: #a5b4fc;">0</div>
-      <div class="sub" id="kpi-stock-kg">Piezas fabricadas sin pedido — no suman al Total de arriba</div>
+    <div class="kpi-card stock" id="card-kanban" onclick="window.cirCardOpen && cirCardOpen('kan')" title="Piezas del kanban en amarillo o rojo (hay que reponer) — click para abrir el Kanban">
+      <div class="label">🏬 Kanban</div>
+      <div class="value" id="kpi-kanban" style="color: #a5b4fc;">—</div>
+      <div class="sub" id="kpi-kanban-sub">Cargando…</div>
+    </div>
+    <div class="kpi-card mecan" id="card-mecanizado" onclick="window.cirCardOpen && cirCardOpen('mec')" title="Lo que se está trabajando en Mecanizado — click para ver el programa">
+      <div class="label">⚙️ En Mecanizado</div>
+      <div class="value" id="kpi-mecanizado" style="color: #fbbf24;">—</div>
+      <div class="sub" id="kpi-mecanizado-sub">Cargando…</div>
     </div>
     <div class="kpi-card rep" id="card-repuestos" onclick="setFilterFromCard('repuestos')" title="Click para ver resumen en 2 ventanas y filtrar Repuestos">
       <div class="label">⚙️ Repuestos Reales (Código R)</div>
       <div class="value" id="kpi-repuestos" style="color: #c084fc;">0</div>
       <div class="sub" id="kpi-rep-kg"></div>
     </div>
-    <div class="kpi-card urgent" id="card-vencidas" onclick="setFilterFromCard('vencidas')" title="Click para filtrar Vencidas en Fabricación">
-      <div class="label">⚠️ Vencidas en Fabricación</div>
-      <div class="value" id="kpi-urgent" style="color: #f87171;">0</div>
-      <div class="sub">Alerta sobre ítems ya contados arriba — no suma aparte</div>
-    </div>
-    <div class="kpi-card urgent" id="card-vencidas_term" onclick="setFilterFromCard('vencidas_term')" title="Click para filtrar Vencidas en Terminación">
-      <div class="label">⚠️ Vencidas en Terminación</div>
-      <div class="value" id="kpi-urgent-term" style="color: #f87171;">0</div>
-      <div class="sub">Fundidas, esperando en Terminación, con fecha ya pasada — ya contadas arriba, no suma aparte</div>
+    <div class="kpi-card urgent priority-combo" id="card-vencidas_box" title="Alertas ya incluidas en las otras tarjetas — tocá una fila para filtrar">
+      <div class="label">⚠️ Vencidas</div>
+      <div class="priority-row" id="card-vencidas" onclick="setFilterFromCard('vencidas')" title="Filtrar Vencidas en Fabricación">
+        <span class="priority-label">🏭 Fabricación</span>
+        <span class="priority-value" id="kpi-urgent" style="color: #f87171;">0</span>
+      </div>
+      <div class="priority-row" id="card-vencidas_term" onclick="setFilterFromCard('vencidas_term')" title="Filtrar Vencidas en Terminación (fundidas, esperando)">
+        <span class="priority-label">🔧 Terminación</span>
+        <span class="priority-value" id="kpi-urgent-term" style="color: #f87171;">0</span>
+      </div>
+      <div class="sub" id="kpi-venc-kg"></div>
     </div>
     <div class="kpi-card priority-combo" id="card-prioridades" title="La fija Planeamiento — tocá Alta o Media para filtrar cada una por separado">
       <div class="label">🚩 Prioridades</div>
@@ -530,7 +541,7 @@
         <span class="priority-label">🟡 Media</span>
         <span class="priority-value" id="kpi-prioridad-media" style="color: #fbbf24;">0</span>
       </div>
-      <div class="sub" id="kpi-prioridad-kg">La fija Planeamiento — ya incluido arriba, no suma aparte</div>
+      <div class="sub" id="kpi-prioridad-kg">La fija Planeamiento</div>
       <div class="sub" id="kpi-prioridad-media-kg" style="margin-top:2px;"></div>
     </div>
   </div>
@@ -594,7 +605,7 @@
           <input type="date" id="filter-hasta" onchange="applyFilters()" style="min-width:0; flex:1;">
         </div>
       </div>
-      <div class="filter-group">
+      <div class="filter-group" style="display:none;">
         <label>Rango de Kg</label>
         <select id="filter-kg" onchange="applyFilters()">
           <option value="">Todos los pesos</option>
@@ -614,7 +625,7 @@
       <button class="chip" id="chip-armar_hoja" style="display:none;" onclick="setChipFilter('armar_hoja')">🧾 Armar Hoja de Pesada</button>
       <button class="chip" id="chip-despachado" onclick="setChipFilter('despachado')">🚚 Despachado</button>
 
-      <button class="chip" id="chip-proceso" onclick="setChipFilter('proceso')">⏳ Pendiente Previo a Moldeo</button>
+      <button class="chip" id="chip-proceso" onclick="setChipFilter('proceso')">⏳ En Ingeniería de Producto</button>
       <button class="chip" id="chip-stock" onclick="setChipFilter('stock')">📦 Stock (sin pedido)</button>
       <button class="chip" id="chip-repuestos" onclick="setChipFilter('repuestos')">⚙️ Solo Repuestos (Código R)</button>
       <button class="chip" id="chip-vencidas" onclick="setChipFilter('vencidas')">🚨 Urgentes Comercial (Vencidas / &lt;7d)</button>
@@ -2508,11 +2519,11 @@ const SECCIONES_DEF = [
   ['moldeo', '🔥 En Moldeo / Fusión'],
   ['listas', '🔧 En Terminación'],
   ['preparado', '📦 Preparado p/ Despacho'],
-  ['proceso', '⏳ Pendiente previo a Moldeo'],
+  ['proceso', '⏳ En Ingeniería de Producto (antes de moldeo)'],
   ['repuestos', '⚙️ Repuestos'],
   ['vencidas', '⚠️ Vencidas / Urgentes'],
   ['prioridades', '🚩 Prioridades'],
-  ['stock', '📦 Stock sin pedido'],
+  ['stock', '📦 Stock sin pedido (en desuso: ahora es la tarjeta Kanban)'],
   ['despachado', '🚚 Despachado (historial)'],
   ['armar_hoja', '🧾 Armar Hoja de Pesada'],
   ['indicadores', '📊 Indicadores'],
@@ -2532,9 +2543,9 @@ const SECCION_ELEMS = {
   preparado: ['card-preparado', 'chip-preparado'],
   proceso: ['card-proceso', 'chip-proceso'],
   repuestos: ['card-repuestos', 'chip-repuestos'],
-  vencidas: ['card-vencidas', 'card-vencidas_term', 'chip-vencidas', 'chip-vencidas_term'],
+  vencidas: ['card-vencidas_box', 'chip-vencidas', 'chip-vencidas_term'],
   prioridades: ['card-prioridades', 'chip-prioridad_alta', 'chip-prioridad_media'],
-  stock: ['card-stock', 'chip-stock'],
+  stock: [],
   despachado: ['card-despachado', 'chip-despachado'],
   armar_hoja: ['card-armar_hoja', 'chip-armar_hoja'],
   indicadores: ['nav-indicadores'],
@@ -4106,7 +4117,7 @@ function buildAlertPill(r) {
   return '<span class="text-dim">🟢 En Fecha</span>';
 }
 function buildStatusPill(r) {
-  if (r.estado_general === 'Fundido / En Terminación') return '<span class="pill pill-ready">📦 Fundido / Terminación</span>';
+  if (r.estado_general === 'Fundido / En Terminación') return `<span class="pill pill-ready rt-click" style="cursor:pointer;" title="Tocá para ver la ruta de Terminación" onclick="event.stopPropagation(); window.rutaOpen && rutaOpen('${rowKey(r)}')">📦 Fundido / Terminación</span>${window.rutaExtra ? window.rutaExtra(r) : ''}`;
   if (r.estado_general === 'Cancelado') return `<span class="pill pill-danger">${r.area_actual}</span>`;
   return `<span class="pill pill-warning">⏳ En: ${r.area_actual}</span>`;
 }
@@ -5361,12 +5372,12 @@ function showToast(message, kind) {
       const totalKg = kgSum(DATA);
       const totalPedidos = new Set(DATA.map(r=>r.comprobante)).size;
       document.getElementById('kpi-total-items').textContent = totalItems;
-      document.getElementById('kpi-total-kg').textContent = `${totalKg.toLocaleString(undefined,{maximumFractionDigits:0})} Kg reales (${totalPedidos} pedidos)`;
+      document.getElementById('kpi-total-kg').textContent = `${totalKg.toLocaleString(undefined,{maximumFractionDigits:0})} Kg · ${totalPedidos} pedidos`;
 
       const moldeo = DATA.filter(r=>r.area_actual==='Moldeo / Fusión');
       const kgMoldeo = kgSum(moldeo);
       document.getElementById('kpi-moldeo').textContent = moldeo.length;
-      document.getElementById('kpi-moldeo-kg').textContent = `${kgMoldeo.toLocaleString(undefined,{maximumFractionDigits:0})} Kg en moldeo/fusión (etapa 2 de 4)`;
+      document.getElementById('kpi-moldeo-kg').textContent = `${kgMoldeo.toLocaleString(undefined,{maximumFractionDigits:0})} Kg`;
 
       const listas = DATA.filter(r=>r.estado_general==='Fundido / En Terminación');
       const kgListasTotal = kgSum(listas);
@@ -5376,14 +5387,14 @@ function showToast(message, kind) {
       const itemsPendientes = listas.length - itemsCompletos.length;
 
       document.getElementById('kpi-completed').textContent = itemsPendientes;
-      document.getElementById('kpi-listas-kg').textContent = `${kgRemain.toLocaleString(undefined,{maximumFractionDigits:0})} Kg que faltan preparar (etapa 3 de 4)`;
+      document.getElementById('kpi-listas-kg').textContent = `${kgRemain.toLocaleString(undefined,{maximumFractionDigits:0})} Kg por preparar`;
 
       const itemsConAvanceDisp = listas.filter(r=>prepPendienteDespacho(r) > 0);
       const kgPrepDisponible = itemsConAvanceDisp.reduce((s,r)=>s+prepPendienteDespachoKg(r),0);
       const itemsCompletosDisp = itemsConAvanceDisp.filter(r=>isPrepared(r));
       const itemsParcialesDisp = itemsConAvanceDisp.length - itemsCompletosDisp.length;
       document.getElementById('kpi-preparado').textContent = itemsConAvanceDisp.length;
-      document.getElementById('kpi-preparado-kg').textContent = `${kgPrepDisponible.toLocaleString(undefined,{maximumFractionDigits:0})} Kg preparados esperando despacho (${itemsCompletosDisp.length} completos, ${itemsParcialesDisp} parciales) — se restan de "En Terminación" arriba`;
+      document.getElementById('kpi-preparado-kg').textContent = `${kgPrepDisponible.toLocaleString(undefined,{maximumFractionDigits:0})} Kg · ${itemsCompletosDisp.length} completos, ${itemsParcialesDisp} parciales`;
 
       const kpiHojaEl = document.getElementById('kpi-armar-hoja');
       if (kpiHojaEl) kpiHojaEl.textContent = hojaDisponibleRows().length;
@@ -5397,49 +5408,29 @@ function showToast(message, kind) {
       const kpiDespKgEl = document.getElementById('kpi-despachado-kg');
       if (kpiDespKgEl) {
         kpiDespKgEl.textContent = cantDespHoy
-          ? `${kgDespHoy.toLocaleString(undefined,{maximumFractionDigits:0})} Kg despachados hoy — historial completo al tocar la tarjeta`
-          : 'Nada despachado hoy todavía — historial completo al tocar la tarjeta';
+          ? `${kgDespHoy.toLocaleString(undefined,{maximumFractionDigits:0})} Kg hoy`
+          : 'hoy: nada todavía';
       }
 
       const enfab = DATA.filter(r=>r.estado_general==='En Fabricación' && r.area_actual!=='Moldeo / Fusión');
       const kgEnfab = kgSum(enfab);
       document.getElementById('kpi-in-progress').textContent = enfab.length;
-      document.getElementById('kpi-progress-kg').textContent = `${kgEnfab.toLocaleString(undefined,{maximumFractionDigits:0})} Kg antes de moldeo (Comercial/Ing/Adm) (etapa 1 de 4)`;
-
-      const stockMap = computeStockMap();
-      const stockEntries = Object.values(stockMap);
-      const stockTotalU = stockEntries.reduce((s,d)=>s+d.cant,0);
-      const stockTotalKg = stockEntries.reduce((s,d)=>s+(d.kxu?d.kxu*d.cant:0),0);
-      const kpiStockEl = document.getElementById('kpi-stock');
-      if (kpiStockEl) kpiStockEl.textContent = stockTotalU.toLocaleString();
-      const kpiStockKgEl = document.getElementById('kpi-stock-kg');
-      if (kpiStockKgEl) {
-        kpiStockKgEl.textContent = stockTotalU
-          ? `${stockTotalKg.toLocaleString(undefined,{maximumFractionDigits:0})} Kg en ${stockEntries.length} código(s) — no suman al Total de arriba`
-          : 'Piezas fabricadas sin pedido — no suman al Total de arriba';
-      }
+      document.getElementById('kpi-progress-kg').textContent = `${kgEnfab.toLocaleString(undefined,{maximumFractionDigits:0})} Kg antes de moldeo`;
 
       const rep = DATA.filter(r=>r.es_repuesto);
       const kgRep = kgSum(rep);
       document.getElementById('kpi-repuestos').textContent = rep.length;
-      document.getElementById('kpi-rep-kg').textContent = `${kgRep.toLocaleString(undefined,{maximumFractionDigits:0})} Kg repuestos (Excluye R99) — ya incluidos arriba`;
+      document.getElementById('kpi-rep-kg').textContent = `${kgRep.toLocaleString(undefined,{maximumFractionDigits:0})} Kg`;
 
       const vencidas = DATA.filter(r=>r.alerta_entrega==='VENCIDA (FÁBRICA)');
       const kgVencidas = kgSum(vencidas);
       document.getElementById('kpi-urgent').textContent = vencidas.length;
-      const subVenc = document.querySelector('#card-vencidas .sub');
-      if (subVenc) subVenc.textContent = `${kgVencidas.toLocaleString(undefined,{maximumFractionDigits:0})} Kg vencidos — ya incluidos arriba, no suma aparte`;
-
       const vencidasTerm = DATA.filter(isVencidaTerminacion);
       const kgVencidasTerm = kgSum(vencidasTerm);
       const kpiUrgentTermEl = document.getElementById('kpi-urgent-term');
       if (kpiUrgentTermEl) kpiUrgentTermEl.textContent = vencidasTerm.length;
-      const subVencTerm = document.querySelector('#card-vencidas_term .sub');
-      if (subVencTerm) {
-        subVencTerm.textContent = vencidasTerm.length
-          ? `${kgVencidasTerm.toLocaleString(undefined,{maximumFractionDigits:0})} Kg — fundidas, esperando en Terminación, ya vencidas — ya contadas arriba, no suma aparte`
-          : 'Fundidas, esperando en Terminación, con fecha ya pasada — ya contadas arriba, no suma aparte';
-      }
+      const subVenc = document.getElementById('kpi-venc-kg');
+      if (subVenc) subVenc.textContent = `${kgVencidas.toLocaleString(undefined,{maximumFractionDigits:0})} Kg en Fabricación · ${kgVencidasTerm.toLocaleString(undefined,{maximumFractionDigits:0})} Kg en Terminación`;
 
       const prioritarios = DATA.filter(r => r.estado_general !== 'Cancelado' && getPriorityRow(r) === 'alta');
       const kgPrio = kgSum(prioritarios);
@@ -5458,11 +5449,12 @@ function showToast(message, kind) {
       const kpiPrioEl = document.getElementById('kpi-prioridad-kg');
       const kpiPrioMediaEl = document.getElementById('kpi-prioridad-media-kg');
       if (!prioritarios.length && !prioridadMedia.length && kpiPrioEl) {
-        kpiPrioEl.textContent = 'La fija Planeamiento — ya incluido arriba, no suma aparte';
+        kpiPrioEl.textContent = 'La fija Planeamiento';
       }
       if (kpiPrioEl && kpiPrioMediaEl) {
         kpiPrioEl.style.display = (prioritarios.length || !prioridadMedia.length) ? '' : 'none';
       }
+      if (window.cirCards && (document.getElementById('card-kanban') || {}).style?.display !== 'none') { try { window.cirCards(); } catch (e) { /* sin tarjetas de kanban */ } }
     }
 
     // ---- barra de scroll horizontal fija ----
@@ -5605,6 +5597,13 @@ function showToast(message, kind) {
   // stock virtual: Z = estantería + Terminación + moldeo/fusión − planificado sin entregar; K = estantería + planificado − pedidos
   function sv(u, c) { return u === 'sector_z' ? stock(c, 'sector_z') + stock(c, 'terminacion') + enMoldeo(c) - planSinEntregar(c) : stock(c, 'kanban') + planPend(c) - pedidosPend(c); }
   function svTxt(u, c) { return u === 'sector_z' ? `${stock(c, 'sector_z')} estantería + ${stock(c, 'terminacion')} terminación + ${enMoldeo(c)} moldeo/fusión − ${planSinEntregar(c)} planificado` : `${stock(c, 'kanban')} estantería + ${planPend(c)} planificado − ${pedidosPend(c)} en pedidos`; }
+  // stock virtual en filas (estantería / + planificados / − en pedido)
+  function svRows(u, c) {
+    const L = u === 'sector_z'
+      ? [['', stock(c, 'sector_z'), 'en estantería'], ['+', stock(c, 'terminacion'), 'en terminación'], ['+', enMoldeo(c), 'en moldeo/fusión'], ['−', planSinEntregar(c), 'planificado']]
+      : [['', stock(c, 'kanban'), 'en estantería'], ['+', planPend(c), 'planificados'], ['−', pedidosPend(c), 'en pedido']];
+    return '<div class="svr">' + L.map(([o, n, t]) => `<div><i>${o}</i><b>${n}</b> ${t}</div>`).join('') + '</div>';
+  }
   // lote sugerido = 2k − stock virtual + 2.5k (fórmula tal cual la definió el cliente; ver nota en el parche)
   function lote(u, c) { const k = kOf(u, c); return Math.max(0, Math.ceil(2 * k - sv(u, c) + 2.5 * k)); }
 
@@ -5772,8 +5771,8 @@ function showToast(message, kind) {
   A.entregar = async (pid, c) => { try { await rpc('mec_entregar', { p_plan: pid, p_codigo: c, p_cant: null }); await reload(); } catch (e) { alert(e.message); } };
   A.zaM = c => ask('Entregar a Mecanizado', esc(nombre(c)) + '<br>Entrega suelta, sin plan.', [{ id: 'n', label: 'Cantidad (máx. ' + stock(c, 'sector_z') + ')', value: Math.min(stock(c, 'sector_z'), 5), max: stock(c, 'sector_z') }], 'Entregar',
     v => rpc('mec_mover', { p_codigo: c, p_desde: 'sector_z', p_hasta: 'mecanizado', p_cant: v.n, p_motivo: 'entrega suelta a Mecanizado' }));
-  A.moldeo = (def, cod) => ask('Cargar moldeo / fusión para kanban', 'Piezas que se mandan a moldear y fundir para reponer kanban (pedidos internos que no vienen de SGA).', [
-    { type: 'pieza', id: 'c', label: 'Pieza', value: cod || '' }, { id: 'n', label: 'Cantidad', value: def || 10, max: 99999 }, { type: 'dec', id: 'kg', label: 'Kg por unidad (solo si la pieza todavía no lo tiene cargado)', ph: 'Ej: 12,5 — para que sume Kg al indicador de Fundido' }, { type: 'date', id: 'f', label: 'Fecha de moldeo / fusión (hoy por defecto; cambiala si fue otro día)', value: TODAY() }, { type: 'text', id: 'x', label: 'Nota (opcional)', ph: 'Ej: colada del viernes' }], 'Cargar',
+  A.moldeo = (def, cod, oi) => ask(oi ? 'Lanzar OI — ' + (nombre(cod) || cod) : 'Cargar moldeo / fusión para kanban', oi ? 'Orden interna de Terminación: se manda a moldear y fundir para reponer el kanban. La cantidad sugerida sale del stock virtual; podés cambiarla.' : 'Piezas que se mandan a moldear y fundir para reponer kanban (pedidos internos que no vienen de SGA).', [
+    { type: 'pieza', id: 'c', label: 'Pieza', value: cod || '' }, { id: 'n', label: oi ? 'Cantidad a lanzar' : 'Cantidad', value: def || 10, max: 99999 }, { type: 'dec', id: 'kg', label: 'Kg por unidad (solo si la pieza todavía no lo tiene cargado)', ph: 'Ej: 12,5 — para que sume Kg al indicador de Fundido' }, { type: 'date', id: 'f', label: 'Fecha de moldeo / fusión (hoy por defecto; cambiala si fue otro día)', value: TODAY() }, { type: 'text', id: 'x', label: 'Nota (opcional)', ph: 'Ej: colada del viernes' }], oi ? 'Lanzar OI' : 'Cargar',
     async v => { if (v.f > TODAY()) throw new Error('La fecha no puede ser futura.'); if (v.kg > 0) await rpc('mec_set_kg', { p_codigo: v.c, p_kg: v.kg }); await tbl(supabaseClient.from('mec_moldeos').insert({ codigo: v.c, cantidad: v.n, fecha: v.f, nota: v.x || null })); });
   A.deshacerPase = id => { const m = (C.pasos || []).find(x => x.id === id); if (!m) return;
     ask('Deshacer pase a Terminación', esc(nombre(m.codigo)) + ` — ${m.cantidad} u.<br>Se sacan de Terminación y vuelven a Moldeo / Fusión. Desde ahí las podés borrar con 🗑 si fue un error de carga.`, [], 'Deshacer pase',
@@ -5807,12 +5806,12 @@ function showToast(message, kind) {
         return rpc('mec_ajustar', { p_codigo: v.c, p_ubic: ub, p_delta: delta, p_motivo: v.x || 'ajuste' }); }); };
   A.ajustarMec = () => A.ajustar('mecanizado');
   A.ajustarTerm = () => A.ajustar('terminacion', '', ['terminacion', 'sector_z']);
-  A.nuevoPlan = (def, cod) => {
+  A.nuevoPlan = (def, cod, ot) => {
     if (!C.recetas.length) { alert('Primero cargá una receta (macho + hembra → aro armado) en la sección Recetas.'); return; }
     const rDe = cod ? C.recetas.find(r => r.salida === cod) : null;
     if (cod && !rDe) { alert('Esta pieza todavía no tiene receta (macho + hembra → aro armado). Cargala primero en Programación mecanizado → Recetas y después creá el plan.'); return; }
-    ask('Nuevo plan de armado', 'Cuántos aros arma Mecanizado y para qué día. Terminación entrega el día hábil anterior.', [
-      { type: 'select', id: 'r', label: 'Aro a armar', options: C.recetas.map(r => [r.id, r.nombre]), value: (rDe || C.recetas[0]).id }, { id: 'n', label: 'Cantidad de aros', value: def || 10, max: 9999 }, { type: 'date', id: 'f', label: 'Fecha en que Mecanizado lo arma', value: bizN(4) }], 'Crear plan',
+    ask(ot ? 'Lanzar OT — ' + (nombre(cod) || 'Mecanizado') : 'Nuevo plan de armado', ot ? 'Orden de trabajo de Mecanizado para reponer el kanban. La cantidad sugerida sale del stock virtual; podés cambiarla. Terminación entrega el día hábil anterior.' : 'Cuántos aros arma Mecanizado y para qué día. Terminación entrega el día hábil anterior.', [
+      { type: 'select', id: 'r', label: 'Aro a armar', options: C.recetas.map(r => [r.id, r.nombre]), value: (rDe || C.recetas[0]).id }, { id: 'n', label: ot ? 'Cantidad a lanzar' : 'Cantidad de aros', value: def || 10, max: 9999 }, { type: 'date', id: 'f', label: 'Fecha en que Mecanizado lo arma', value: bizN(4) }], ot ? 'Lanzar OT' : 'Crear plan',
       v => tbl(supabaseClient.from('mec_planes').insert({ receta: v.r, cantidad: v.n, fecha: v.f })));
   };
   A.cambiarFecha = pid => { const p = C.planes.find(x => x.id === pid);
@@ -5927,16 +5926,16 @@ function showToast(message, kind) {
   const btn = (txt, js, cls, dis) => `<button class="${cls || ''}" ${dis ? 'disabled' : ''} onclick="${js}">${txt}</button>`;
   function alertPanel(u, quien, conPlan) {
     return alertas(u).map(c => { const n = nivel(u, c), L = lote(u, c);
-      const b = L <= 0 ? '' : (u === 'sector_z' ? (puedePlanificar() ? btn(`Cargar moldeo de ${L}`, `cir_moldeo(${L},'${esc(c)}')`, 'pri') : '') : (conPlan && puedePlanificar() ? btn(`Crear plan de reposición de ${L}`, `cir_nuevoPlan(${L})`, 'pri') : ''));
-      return `<div class="alert"><div>${n === 'rojo' ? '🔴' : '🟡'} <b>${UBIC[u]} en ${n}</b> — ${esc(nombre(c))}: hay <b>${stock(c, u)}</b> (k = ${kOf(u, c)}). ${quien}<br><span class="code">Stock virtual ${sv(u, c)} = ${svTxt(u, c)}</span><br>${L > 0 ? `<b>Lote sugerido: ${L}</b>` : '<b>Ya hay suficiente en proceso: no hace falta pedir más.</b>'}</div>${b}</div>`; }).join('');
+      const b = L <= 0 ? '' : (u === 'sector_z' ? (puedePlanificar() ? btn(`Lanzar OI por ${L}`, `cir_moldeo(${L},'${esc(c)}',1)`, 'pri') : '') : (conPlan && puedePlanificar() ? btn(`Lanzar OT por ${L}`, `cir_nuevoPlan(${L},'${esc(c)}',1)`, 'pri') : ''));
+      return `<div class="alert"><div>${n === 'rojo' ? '🔴' : '🟡'} <b>${UBIC[u]} en ${n}</b> — ${esc(nombre(c))}: hay <b>${stock(c, u)}</b> (k = ${kOf(u, c)}). ${quien}<br><span class="code">Stock virtual <b>${sv(u, c)}</b></span>${svRows(u, c)}${L > 0 ? '' : '<b>Ya hay suficiente en proceso: no hace falta pedir más.</b>'}</div>${b}</div>`; }).join('');
   }
   function shelf(u, actions) {
     const cs = [...new Set([...Object.keys(C.stock[u] || {}).filter(c => stock(c, u) > 0), ...C.k.filter(r => r.ubicacion === u).map(r => r.codigo)])];
     const rows = cs.map(c => { const hk = kOf(u, c) != null, n = nivel(u, c);
-      return `<tr><td>${nameCell(c)}</td><td class="num"><b>${stock(c, u)}</b></td><td class="num">${hk ? kOf(u, c) : '—'}</td><td>${hk ? `<span class="${n === 'verde' ? 'ok' : n === 'rojo' ? 'rep' : 'soon'}">${NIV[n]}</span>` : '<span class="code">sin k</span>'}</td>
-        <td class="num">${hk ? `<b>${sv(u, c)}</b><div class="code">${svTxt(u, c)}</div>` : '—'}</td><td class="num">${hk && alertas(u).includes(c) ? (lote(u, c) > 0 ? `<b class="soon">${lote(u, c)}</b>` : '<span class="code">no hace falta</span>') : '—'}</td>
+      return `<tr><td>${nameCell(c)}</td><td class="num"><b>${stock(c, u)}</b></td><td>${hk ? `<span class="${n === 'verde' ? 'ok' : n === 'rojo' ? 'rep' : 'soon'}">${NIV[n]}</span><div class="code">k ${kOf(u, c)}</div>` : '<span class="code">sin k</span>'}</td>
+        <td class="num">${hk ? `<b>${sv(u, c)}</b>${svRows(u, c)}` : '—'}</td>
         <td><div class="row-actions">${actions(c)}${puedePlanificar() ? btn('k…', `cir_k('${u}','${esc(c)}')`) : ''}</div></td></tr>`; }).join('');
-    return rows ? `<table><tr><th>Pieza</th><th class="num">En estantería</th><th class="num">k</th><th>Nivel</th><th class="num">Stock virtual</th><th class="num">Lote sugerido</th><th></th></tr>${rows}</table>` : '<div class="empty">Todavía no hay piezas ni k definidos. Cargá el stock inicial con "Ajustar stock" y definí el k de cada pieza.</div>';
+    return rows ? `<table><tr><th>Pieza</th><th class="num">En estantería</th><th>Nivel</th><th class="num">Stock virtual</th><th></th></tr>${rows}</table>` : '<div class="empty">Todavía no hay piezas ni k definidos. Cargá el stock inicial con "Ajustar stock" y definí el k de cada pieza.</div>';
   }
   const shelfHead = (u, titulo) => `<div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>${titulo}</h2><div class="row-actions">${puedePlanificar() ? btn('+ Definir k', `cir_kNuevo('${u}')`) + btn('Ajustar stock', `cir_ajustar('${u}')`) : ''}</div></div>`;
 
@@ -5979,8 +5978,8 @@ function showToast(message, kind) {
       return `<tr><td>${nameCell(o.codigo)}${o.nota ? `<div class="code">${esc(o.nota)}</div>` : ''}${C.k.some(r => r.codigo === o.codigo && r.ubicacion === 'sector_z') ? '' : '<div class="code">sin kanban definido</div>'}<div>${kgTxt(o.codigo)}</div></td><td class="num"><b>${o.cantidad}</b></td>
         <td>${fmt(o.fecha)}<div class="code">${d === 0 ? 'cargado hoy' : 'hace ' + d + (d === 1 ? ' día' : ' días')}</div></td>
         <td><div class="row-actions">${puedeOperar() ? btn('Pasó a Terminación…', `cir_pasoTerm(${o.id})`, 'pri') : ''}${puedePlanificar() && !kgDe(o.codigo) ? btn('Cargar Kg/u', `cir_kg('${esc(o.codigo)}')`, 'pri') : ''}${puedePlanificar() ? btn('🗑', `cir_delMoldeo(${o.id})`) : ''}</div></td></tr>`; }).join('');
-    const sugRows = sug.map(x => `<tr><td>${nameCell(x.c)}</td><td class="num">${stock(x.c, 'sector_z')}</td><td class="num">${kOf('sector_z', x.c)}</td><td class="num">${sv('sector_z', x.c)}<div class="code">${svTxt('sector_z', x.c)}</div></td>
-      <td><span class="${x.n === 'rojo' ? 'rep' : 'soon'}">${NIV[x.n]}</span></td><td class="num"><b class="soon">${x.L}</b></td><td>${puedePlanificar() ? btn('Cargar moldeo de ' + x.L, `cir_moldeo(${x.L},'${esc(x.c)}')`, 'pri') : ''}</td></tr>`).join('');
+    const sugRows = sug.map(x => `<tr><td>${nameCell(x.c)}</td><td class="num">${stock(x.c, 'sector_z')}</td><td class="num">${sv('sector_z', x.c)}${svRows('sector_z', x.c)}</td>
+      <td><span class="${x.n === 'rojo' ? 'rep' : 'soon'}">${NIV[x.n]}</span><div class="code">k ${kOf('sector_z', x.c)}</div></td><td>${puedePlanificar() ? btn('Lanzar OI por ' + x.L, `cir_moldeo(${x.L},'${esc(x.c)}',1)`, 'pri') : ''}</td></tr>`).join('');
     return `<div class="dia-head"><div class="dia-tiles">
         <div class="tile"><div class="n">${n}</div><div class="l">cargas en moldeo / fusión</div></div>
         <div class="tile"><div class="n">${u}</div><div class="l">piezas en curso</div></div></div>
@@ -6003,7 +6002,7 @@ function showToast(message, kind) {
   function kanBar(k, f, v) {
     const max = 2.5 * k, pc = x => Math.max(0, Math.min(100, x / max * 100)).toFixed(1);
     const col = n => n === 'verde' ? 'var(--ok)' : n === 'rojo' ? 'var(--bad)' : 'var(--warn)';
-    return `<div class="kbar-wrap"><div class="kbar" title="Izquierda: físico ${f} · Derecha: virtual ${v} · k ${k} · 2k ${2 * k}"><i style="height:${pc(f)}%; background:${col(nivelV(k, f))}"></i><b style="height:${pc(v)}%; border-color:${col(nivelV(k, v))}"></b><s style="bottom:${pc(k)}%"></s><s style="bottom:${pc(2 * k)}%"></s></div><div class="kbar-lbl"><span style="bottom:${pc(k)}%">k</span><span style="bottom:${pc(2 * k)}%">2k</span></div></div>`;
+    return `<div class="kbar-wrap"><div class="kbar" title="Izquierda: físico ${f} · Derecha: virtual ${v} · k ${k} · 2k ${2 * k}"><i style="height:${pc(f)}%; background:${col(nivelV(k, f))}"></i><b style="height:${pc(v)}%; border-color:${col(nivelV(k, v))}"></b><s style="bottom:${pc(k)}%"></s><s style="bottom:${pc(2 * k)}%"></s></div><div class="kbar-lbl"><span style="bottom:${pc(k)}%">k ${k}</span><span style="bottom:${pc(2 * k)}%">2k ${2 * k}</span></div></div>`;
   }
   function vKan() {
     const u = C.kanTab, nom = u === 'sector_z' ? 'Kanban de Terminación (Sector Z)' : 'Kanban de Mecanizado (estantería post-mecanizado)';
@@ -6018,11 +6017,10 @@ function showToast(message, kind) {
     const fchip = (k, t) => `<button class="tab ${C.kanFilter === k ? 'on' : ''}" onclick="cirKanFilter('${k}')">${t}</button>`;
     const nivCell = n => `<span class="${n === 'verde' ? 'ok' : n === 'rojo' ? 'rep' : 'soon'}">${NIV[n]}</span>`;
     const rows = lista.map(x => { const alerta = x.nf === 'amarillo' || x.nf === 'rojo';
-      return `<tr><td>${nameCell(x.c)}</td><td class="num"><b>${x.f}</b></td><td class="num"><b>${x.v}</b><div class="code">${esc(svTxt(u, x.c))}</div></td><td class="num">${x.k}<div class="code">2k = ${2 * x.k}</div></td>
-        <td style="min-width:80px">${kanBar(x.k, x.f, x.v)}</td><td>${nivCell(x.nf)}</td><td>${nivCell(x.nv)}</td>
-        <td class="num">${alerta ? (x.L > 0 ? `<b class="soon">${x.L}</b>` : '<span class="code">no hace falta</span>') : '—'}</td>
+      return `<tr><td>${nameCell(x.c)}</td><td class="num"><b>${x.f}</b></td><td class="num"><b>${x.v}</b>${svRows(u, x.c)}</td>
+        <td style="min-width:110px">${kanBar(x.k, x.f, x.v)}</td><td>${nivCell(x.nf)}</td><td>${nivCell(x.nv)}</td>
         <td class="num">${kgTxt(x.c)}${puedePlanificar() ? '<div>' + btn(kgDe(x.c) ? 'Kg/u' : 'Cargar Kg/u', `cir_kg('${esc(x.c)}')`) + '</div>' : ''}</td>
-        <td><div class="row-actions">${puedePlanificar() ? btn('Cambiar k', `cir_k('${u}','${esc(x.c)}')`) + btn('Ajustar stock', `cir_ajustar('${u}','${esc(x.c)}')`) : ''}${u === 'sector_z' && alerta && x.L > 0 && puedePlanificar() ? btn('Cargar moldeo de ' + x.L, `cir_moldeo(${x.L},'${esc(x.c)}')`, 'pri') : ''}${u === 'kanban' && alerta && x.L > 0 && puedePlanificar() ? btn('Crear plan de ' + x.L, `cir_nuevoPlan(${x.L},'${esc(x.c)}')`, 'pri') : ''}</div></td></tr>`; }).join('');
+        <td><div class="row-actions">${puedePlanificar() ? btn('Cambiar k', `cir_k('${u}','${esc(x.c)}')`) + btn('Ajustar stock', `cir_ajustar('${u}','${esc(x.c)}')`) : ''}${u === 'sector_z' && alerta && x.L > 0 && puedePlanificar() ? btn('Lanzar OI por ' + x.L, `cir_moldeo(${x.L},'${esc(x.c)}',1)`, 'pri') : ''}${u === 'kanban' && alerta && x.L > 0 && puedePlanificar() ? btn('Lanzar OT por ' + x.L, `cir_nuevoPlan(${x.L},'${esc(x.c)}',1)`, 'pri') : ''}</div></td></tr>`; }).join('');
     return `<div class="tabs">${tabBtn('sector_z', '🗄️ Kanban de Terminación')}${tabBtn('kanban', '🏬 Kanban de Mecanizado')}</div>
       <div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:center;"><h2>${nom}</h2>
         <div class="row-actions">${puedePlanificar() ? btn('+ Agregar pieza al kanban', `cir_kNuevo('${u}')`, 'pri') + btn('Plazo: ' + (C.cfg[plazoKey] || '—') + ' días', `cir_plazo('${u}')`) : `<span class="code">Plazo de reposición: ${C.cfg[plazoKey] || '—'} días</span>`}</div></div>
@@ -6031,7 +6029,7 @@ function showToast(message, kind) {
         <div class="dia-tiles" style="margin:10px 0;"><div class="tile"><div class="n">${all.length}</div><div class="l">piezas con kanban</div></div><div class="tile ${cnt('rojo') ? 'rojo' : ''}"><div class="n">${cnt('rojo')}</div><div class="l">🔴 rojo</div></div><div class="tile ${cnt('amarillo') ? 'hoy' : ''}"><div class="n">${cnt('amarillo')}</div><div class="l">🟡 amarillo</div></div><div class="tile"><div class="n">${cnt('verde')}</div><div class="l">🟢 verde</div></div></div>
         <div class="tabs">${fchip('todos', 'Todas (' + all.length + ')')}${fchip('rojo', '🔴 Rojo (' + cnt('rojo') + ')')}${fchip('amarillo', '🟡 Amarillo (' + cnt('amarillo') + ')')}${fchip('verde', '🟢 Verde (' + cnt('verde') + ')')}
           <input id="kan-q" class="kq" placeholder="Buscar pieza…" value="${esc(C.kanQ)}" oninput="cirKanQ(this.value)"></div>
-        ${rows ? `<table><tr><th>Pieza</th><th class="num">Físico</th><th class="num">Virtual</th><th class="num">k</th><th>Físico ▮ · virtual ▯</th><th>Nivel físico</th><th>Nivel virtual</th><th class="num">Lote sugerido</th><th class="num">Kg/u</th><th></th></tr>${rows}</table>`
+        ${rows ? `<table><tr><th>Pieza</th><th class="num">Físico</th><th class="num">Virtual</th><th>Físico ▮ · virtual ▯</th><th>Nivel físico</th><th>Nivel virtual</th><th class="num">Kg/u</th><th></th></tr>${rows}</table>`
           : `<div class="empty">${all.length ? 'Ninguna pieza coincide con el filtro.' : 'Todavía no hay piezas con kanban acá. Tocá "+ Agregar pieza al kanban", elegí la pieza y definí su k.'}</div>`}</div>
       ${sinK.length ? `<div class="panel"><h2>Piezas con stock pero sin kanban definido (${sinK.length})</h2><div class="sub">Tienen stock en esta estantería pero no tienen k, así que no se controlan.</div><table>${sinK.map(c => `<tr><td>${nameCell(c)}</td><td class="num">${stock(c, u)}</td><td>${puedePlanificar() ? btn('Definir k', `cir_k('${u}','${esc(c)}')`, 'pri') : ''}</td></tr>`).join('')}</table></div>` : ''}`;
   }
@@ -6330,6 +6328,35 @@ function showToast(message, kind) {
   };
   window.cirMoldTab = t => { C.moldTab = t; render(); };
 
+  // ---------- tarjetas del tablero de pedidos: Kanban y En Mecanizado ----------
+  let cardsT = 0, cardsBusy = false;
+  function paintCards() {
+    const set = (id, t) => { const e = document.getElementById(id); if (e) e.textContent = t; };
+    const col = (id, c) => { const e = document.getElementById(id); if (e) e.style.color = c; };
+    if (!C.loaded || C.error) { ['kpi-kanban', 'kpi-mecanizado'].forEach(i => set(i, '—')); set('kpi-kanban-sub', C.error ? 'Sin datos de kanban todavía' : 'Cargando…'); set('kpi-mecanizado-sub', C.error ? 'Sin datos de mecanizado todavía' : 'Cargando…'); return; }
+    const cnt = { rojo: 0, amarillo: 0, verde: 0 };
+    C.k.forEach(r => { const n = nivel(r.ubicacion, r.codigo); if (n) cnt[n]++; });
+    set('kpi-kanban', cnt.rojo + cnt.amarillo); col('kpi-kanban', cnt.rojo ? '#f87171' : cnt.amarillo ? '#fbbf24' : '#34d399');
+    set('kpi-kanban-sub', C.k.length ? `piezas a reponer · 🔴 ${cnt.rojo} · 🟡 ${cnt.amarillo} · 🟢 ${cnt.verde}` : 'Todavía no hay piezas con kanban');
+    const piezas = Object.values(C.stock.mecanizado || {}).reduce((a, n) => a + (n > 0 ? n : 0), 0);
+    const act = C.planes.filter(p => pendPlan(p) > 0 && rec(p.receta)), aros = act.reduce((a, p) => a + pendPlan(p), 0);
+    const prox = act.map(p => p.fecha).filter(Boolean).sort()[0];
+    set('kpi-mecanizado', piezas);
+    set('kpi-mecanizado-sub', `piezas en Mecanizado · ${aros} aros por armar${act.length ? ' (' + act.length + (act.length === 1 ? ' plan' : ' planes') + (prox ? ', próximo ' + fmt(prox) : '') + ')' : ''}`);
+  }
+  async function cardsRefresh(force) {
+    if (cardsBusy) return; const stale = !C.loaded || force || Date.now() - cardsT > 300000;
+    if (stale) { cardsBusy = true; try { await load(); cardsT = Date.now(); } catch (e) { /* queda el último dato */ } cardsBusy = false; }
+    paintCards();
+  }
+  window.cirCards = force => cardsRefresh(!!force);
+  // al tocar la tarjeta: abre la vista que le corresponda a cada persona
+  window.cirCardOpen = which => {
+    const order = which === 'kan' ? ['kan', 'full'] : ['mec', 'full', 'kan'];
+    const v = order.map(k => VIEWS.find(x => x.key === k)).find(x => x && puede(x.sec));
+    return v ? (window.cirOpen(v.key), true) : false;
+  };
+
   const VIEWS = [
     { key: 'full', sec: 'circuito', label: '📅 Programación mecanizado', desc: 'Cronograma, planificación y kanban completos (jefe de planta / planificación)', title: '🔩 Programación mecanizado: Terminación → Sector Z → Mecanizado → Kanban' },
     { key: 'mec', sec: 'prog_mecanizado', label: '⚙️ Mecanizado — mi programa del día', desc: 'Solo lo que Mecanizado tiene que armar, resaltado por día', title: '⚙️ Mecanizado' },
@@ -6343,6 +6370,11 @@ function showToast(message, kind) {
     const b = document.getElementById('cir-btn');
     if (b) { const v = misVistas(); b.style.display = v.length ? '' : 'none'; b.textContent = v.length === 1 ? v[0].label : '🔩 Programación mecanizado ▾'; }
     [['mold-btn', 'kanban_moldeo'], ['kan-btn', 'kanban']].forEach(([id, sec]) => { const x = document.getElementById(id); if (x) x.style.display = puede(sec) ? '' : 'none'; });
+    const kc = document.getElementById('card-kanban'), mc = document.getElementById('card-mecanizado');
+    const vk = ['kanban', 'stock', 'circuito'].some(puede), vm = ['prog_mecanizado', 'circuito', 'kanban', 'stock', 'listas'].some(puede);
+    if (kc) kc.style.display = vk ? '' : 'none'; if (mc) mc.style.display = vm ? '' : 'none';
+    if ((vk || vm) && window.cirCards) { try { window.cirCards(); } catch (e) { /* sin tarjetas */ } }
+    if (window.tjAplicar) { try { window.tjAplicar(); } catch (e) { /* sin orden */ } }
   };
   window.cirMenu = () => { const v = misVistas(); if (!v.length) return; if (v.length === 1) { window.cirOpen(v[0].key); return; }
     ensureDom(); const m = document.getElementById('cir-modal');
@@ -6376,7 +6408,8 @@ function showToast(message, kind) {
   #cir-root .dia-tiles { display:flex; gap:8px; flex-wrap:wrap; } #cir-root .tile { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 14px; text-align:center; min-width:110px; }
   #cir-root .tile .n { font-size:1.7rem; font-weight:800; color:#fff; } #cir-root .tile .l { font-size:.72rem; color:var(--dim); }
   #cir-root .tile.hoy { border-color:var(--warn); background:rgba(251,191,36,.1); } #cir-root .tile.hoy .n { color:var(--warn); } #cir-root .tile.rojo { border-color:var(--bad); background:rgba(248,113,113,.1); } #cir-root .tile.rojo .n { color:var(--bad); }
-  #cir-root .kbar { position:relative; width:44px; height:84px; margin:0 auto; background:#0f172a; border:1px solid var(--line); border-radius:6px; overflow:hidden; } #cir-root .kbar i { position:absolute; left:0; bottom:0; width:50%; } #cir-root .kbar b { position:absolute; right:0; bottom:0; width:50%; border-top:3px solid; background:rgba(148,163,184,.35); } #cir-root .kbar s { position:absolute; left:0; right:0; height:1px; background:#e2e8f0; opacity:.7; } #cir-root .kbar-wrap { display:flex; align-items:flex-end; justify-content:center; gap:4px; font-size:.62rem; color:var(--dim); } #cir-root .kbar-lbl { position:relative; width:18px; height:84px; } #cir-root .kbar-lbl span { position:absolute; left:0; transform:translateY(50%); line-height:1; }
+  #cir-root .kbar { position:relative; width:44px; height:84px; margin:0 auto; background:#0f172a; border:1px solid var(--line); border-radius:6px; overflow:hidden; } #cir-root .kbar i { position:absolute; left:0; bottom:0; width:50%; } #cir-root .kbar b { position:absolute; right:0; bottom:0; width:50%; border-top:3px solid; background:rgba(148,163,184,.35); } #cir-root .kbar s { position:absolute; left:0; right:0; height:1px; background:#e2e8f0; opacity:.7; } #cir-root .kbar-wrap { display:flex; align-items:flex-end; justify-content:center; gap:4px; font-size:.62rem; color:var(--dim); } #cir-root .kbar-lbl { position:relative; width:46px; height:84px; } #cir-root .kbar-lbl span { position:absolute; left:0; transform:translateY(50%); line-height:1; }
+  #cir-root .svr { font-size:.72rem; color:var(--dim); text-align:left; margin-top:3px; line-height:1.35; } #cir-root .svr div { white-space:nowrap; } #cir-root .svr i { display:inline-block; width:11px; font-style:normal; color:#e2e8f0; } #cir-root .svr b { color:#e2e8f0; }
   #cir-root .kq { background:#0f172a; color:#fff; border:1px solid var(--line); border-radius:7px; padding:6px 9px; font-size:.85rem; margin-left:auto; min-width:160px; }
   #cir-root .ptiles { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; } @media (max-width:760px) { #cir-root .ptiles { grid-template-columns:repeat(2,1fr); } }
   #cir-root .ptile { position:relative; text-align:left; background:var(--card); border:2px solid var(--line); border-radius:14px; padding:12px 14px; color:inherit; cursor:pointer; font:inherit; min-height:128px; display:flex; flex-direction:column; gap:2px; }
@@ -6445,10 +6478,10 @@ function showToast(message, kind) {
     try { screen.innerHTML = { term: vTerm, z: vZ, k: vK, plan: vPlan, mec: vMec }[C.tab](); }
     catch (e) { console.error('Programación mecanizado:', e); screen.innerHTML = '<div class="err">Error al mostrar esta pantalla: ' + esc(e.message) + '</div>'; }
   }
-  async function reload() { await load(); render(); }
+  async function reload() { await load(); cardsT = Date.now(); render(); paintCards(); }
   window.cirTab = t => { C.tab = t; render(); };
   window.cirOpen = async mode => { C.tile = {}; C.moldTab = 'curso'; C.mode = (typeof mode === 'string' && VIEWS.some(v => v.key === mode)) ? mode : 'full'; ensureDom(); document.getElementById('cir-root').classList.add('on'); render(); await reload(); };
-  window.cirClose = () => { const r = document.getElementById('cir-root'); if (r) r.classList.remove('on'); };
+  window.cirClose = () => { const r = document.getElementById('cir-root'); if (r) r.classList.remove('on'); paintCards(); };
   window.__cir = { C, load, render, nivel, sv, lote, isBiz, prevBiz, FERIADOS };
 })();
 
@@ -6695,6 +6728,189 @@ function showToast(message, kind) {
   }
   window.venOpen = () => { if (!puede()) return; ensureDom(); document.getElementById('ven-root').classList.add('on'); document.body.style.overflow = 'hidden'; V.loaded ? render() : cargar(); };
   window.venClose = () => { const r = document.getElementById('ven-root'); if (r) r.classList.remove('on'); document.body.style.overflow = ''; };
+})();
+
+</script>
+<script>
+(function () {
+  // Ruta de Terminación: al tocar "Fundido / Terminación" se abre la ruta de la pieza y se va tildando paso a paso.
+  // Rutas y procesos: tomados del ABM del SGP (PROCESO / RUTA / PROCESO_RUTA). El avance se guarda en la tabla terminacion_ruta (parche 022).
+  const RT_PROC={"1": "ROTURA (ZZ)", "2": "GRANALLADO INICIAL (ZT)", "3": "CORTE ACEROS (ZT)", "4": "CORTE ACEROS (ZT)", "5": "CORTE INOXIDABLE (ZT)", "6": "CORTE NODULAR y GRIS (ZT)", "7": "CORTE ANILLOS", "8": "REBABADO (ZG)", "9": "REBABADO (ZM)", "10": "REBABADO (ZM)", "11": "REBABADO (ZC)", "12": "REBABADO (ZC)", "13": "AMOLADO (ZG)", "14": "AMOLADO (ZM)", "15": "AMOLADO (ZM)", "16": "AMOLADO (ZC)", "17": "AMOLADO (ZC)", "18": "GRANALLADO DE INSPECCION (ZN)", "19": "GRANALLADO DE INSPECCION (ZC)", "20": "SOLDADURA (ZT)", "21": "TRATAMIENTO TERMICO (ZT)", "22": "GRANALLADO FINAL (ZN)", "23": "GRANALLADO FINAL (ZC)", "24": "GRANALLADO ANILLOS", "25": "PASIVADO (ZT)", "26": "INSPECCION FINAL", "27": "EXPEDICION"};
+ const RT_RUTAS=[{"id": 1, "n": "Chicas (C) hasta 3 kg · Planas · sin TT", "p": [[1, 1, null, null], [2, 2, null, null], [3, 3, null, null], [11, 4, null, null], [16, 5, null, "A"], [17, 5, null, "B"], [19, 6, null, null], [20, 7, "s", null], [16, 8, "s", "A"], [17, 8, "s", "B"], [23, 9, "s", null], [25, 10, "i", null], [26, 11, null, null]]}, {"id": 2, "n": "Chicas (C) hasta 3 kg · Planas · con TT", "p": [[1, 1, null, null], [2, 2, null, null], [3, 3, null, null], [11, 4, null, null], [16, 5, null, "A"], [17, 5, null, "B"], [19, 6, null, null], [20, 7, "s", null], [16, 8, "s", "A"], [17, 8, "s", "B"], [21, 9, null, null], [23, 10, null, null], [25, 11, "i", null], [26, 12, null, null]]}, {"id": 3, "n": "Chicas (C) hasta 3 kg · Con Formas · con TT", "p": [[1, 1, null, null], [2, 2, null, null], [3, 3, null, null], [11, 4, null, null], [16, 5, null, "A"], [17, 5, null, "B"], [19, 6, null, null], [20, 7, "s", null], [16, 8, "s", "A"], [17, 8, "s", "B"], [21, 9, null, null], [22, 10, null, null], [25, 11, "i", null], [26, 12, null, null]]}, {"id": 4, "n": "Medianas (M) hasta 40 kg · sin TT · Gris y Nodular", "p": [[1, 1, null, null], [2, 2, null, null], [6, 3, null, null], [9, 4, null, null], [14, 5, null, "A"], [15, 5, null, "B"], [18, 6, null, null], [20, 7, "s", null], [14, 8, "s", "A"], [15, 8, "s", "B"], [22, 9, "s", null], [26, 10, null, null]]}, {"id": 5, "n": "Medianas (M) hasta 40 kg · con TT", "p": [[1, 1, null, null], [2, 2, null, null], [3, 3, null, null], [9, 4, null, null], [14, 5, null, "A"], [15, 5, null, "B"], [18, 6, null, null], [20, 7, "s", null], [14, 8, "s", "A"], [15, 8, "s", "B"], [21, 9, null, null], [22, 10, null, null], [25, 11, "i", null], [26, 12, null, null]]}, {"id": 6, "n": "Piezas Grandes (G) hasta 350 kg · sin TT · Gris y Nodular", "p": [[1, 1, null, null], [2, 2, null, null], [3, 3, null, null], [8, 4, null, null], [13, 5, null, null], [18, 6, null, null], [20, 7, "s", null], [13, 8, "s", null], [22, 9, "s", null], [26, 10, null, null]]}, {"id": 7, "n": "Piezas Grandes (G) hasta 350 kg · con TT", "p": [[1, 1, null, null], [2, 2, null, null], [3, 3, null, null], [8, 4, null, null], [13, 5, null, null], [18, 6, null, null], [20, 7, "s", null], [13, 8, "s", null], [21, 9, null, null], [22, 10, null, null], [25, 11, "i", null], [26, 12, null, null]]}, {"id": 8, "n": "Anillos Machos y Hembras", "p": [[1, 1, null, null], [22, 2, null, null], [26, 3, null, null]]}];
+  const RT = { av: {}, loaded: false, loading: false, error: null };
+  const rol = () => (typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE) ? CURRENT_PROFILE.rol : '';
+  const puedeOp = () => (typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE) && (CURRENT_PROFILE.es_admin || ['colaborador', 'editor'].includes(rol()));
+  const E = s => (typeof escHtml === 'function' ? escHtml(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
+  const rowOf = key => (typeof DATA !== 'undefined' ? DATA : []).find(r => rowKey(r) === key);
+  const rutaDe = id => RT_RUTAS.find(x => x.id === id);
+  const fmtTs = ts => { try { const d = new Date(ts); return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
+
+  // cajas de la ruta según soldadura / inox: los pasos condicionales solo aparecen si corresponde; A/B comparten caja (alternativas)
+  function cajas(rid, sold, inox) {
+    const ru = rutaDe(rid); if (!ru) return [];
+    const m = new Map();
+    ru.p.forEach(([p, i, c, alt]) => { if ((c === 's' && !sold) || (c === 'i' && !inox)) return; if (!m.has(i)) m.set(i, []); m.get(i).push({ p, alt }); });
+    return [...m.entries()].sort((a, b) => a[0] - b[0]).map(([i, opts]) => ({ i, opts }));
+  }
+  const nomPaso = p => RT_PROC[p] || ('Paso ' + p);
+  function estado(st) {
+    const cs = cajas(st.ruta_id, st.soldadura, st.inox), hechos = Array.isArray(st.hechos) ? st.hechos : [];
+    const hi = new Map(hechos.map(h => [h.i, h]));
+    const idx = cs.findIndex(c => !hi.has(c.i));
+    return { cs, hechos, hi, idx, completa: idx === -1 && cs.length > 0 };
+  }
+  async function cargar(force) {
+    if (RT.loading || (RT.loaded && !force)) return;
+    RT.loading = true;
+    try {
+      const out = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabaseClient.from('terminacion_ruta').select('*').range(from, from + 999);
+        if (error) throw error;
+        out.push(...(data || [])); if (!data || data.length < 1000) break;
+      }
+      RT.av = {}; out.forEach(r => { RT.av[r.row_key] = r; }); RT.error = null;
+    } catch (e) { RT.error = /terminacion_ruta|schema cache|does not exist|Could not find/i.test(e.message || '') ? 'Falta correr el parche 022 en Supabase (ver instrucciones).' : 'No se pudo cargar la ruta: ' + (e.message || e); }
+    RT.loaded = true; RT.loading = false;
+  }
+  // texto chico debajo de la etiqueta de estado de la tabla
+  window.rutaExtra = r => {
+    if (!RT.loaded && !RT.loading) { cargar().then(() => { if (!RT.error && Object.keys(RT.av).length && typeof applyFilters === 'function') { try { applyFilters(); } catch (e) { /* sin refresco */ } } }); }
+    const st = RT.av[rowKey(r)]; if (!st) return '<div class="rt-mini">🧭 Ver ruta</div>';
+    const es = estado(st);
+    if (es.completa) return '<div class="rt-mini ok">✅ Ruta completa</div>';
+    const c = es.cs[es.idx]; if (!c) return '<div class="rt-mini">🧭 Ver ruta</div>';
+    return '<div class="rt-mini">📍 ' + E(c.opts.length > 1 ? c.opts.map(o => nomPaso(o.p)).join(' / ') : nomPaso(c.opts[0].p)) + '</div>';
+  };
+  function guess(r) {
+    const kgu = r && r.cant > 0 ? r.kilos / r.cant : 0, mat = String((r && r.material) || '').toLowerCase(), gn = /gris|nodular/.test(mat);
+    if (/(^|[^a-z0-9])aro([^a-z0-9]|$)|anillo/i.test((r && r.descripcion) || '')) return 8;
+    if (kgu > 40) return gn ? 6 : 7;
+    if (kgu > 3) return gn ? 4 : 5;
+    return kgu > 0 ? 2 : 1;
+  }
+  const css = () => { if (document.getElementById('rt-css')) return; const s = document.createElement('style'); s.id = 'rt-css';
+    s.textContent = `.rt-mini{font-size:.68rem;color:#94a3b8;margin-top:3px;font-weight:600}.rt-mini.ok{color:#34d399}.pill-ready.rt-click{cursor:pointer}
+    .rt-box{border:1px solid #334155;border-radius:10px;padding:9px 12px;margin:0 0 4px;background:#111827;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;text-align:left}
+    .rt-box.done{border-color:#34d399;background:rgba(52,211,153,.08)}.rt-box.act{border-color:#38bdf8;background:rgba(56,189,248,.12);box-shadow:0 0 0 1px #38bdf8}.rt-box.pen{opacity:.55}
+    .rt-arr{text-align:center;color:#64748b;font-size:.8rem;line-height:1;margin:0 0 4px}.rt-n{font-size:.68rem;color:#94a3b8}.rt-b{font-weight:700;color:#f1f5f9;font-size:.88rem}
+    .rt-btn{background:#334155;color:#fff;border:none;border-radius:7px;padding:6px 11px;font-size:.78rem;cursor:pointer}.rt-btn.pri{background:#38bdf8;color:#0f172a;font-weight:700}.rt-btn:disabled{opacity:.5}
+    .rt-sel{background:#0f172a;color:#fff;border:1px solid #334155;border-radius:7px;padding:7px 9px;font-size:.85rem;width:100%}`;
+    document.head.appendChild(s); };
+  // ventana propia (la del tablero solo existe en el celular)
+  function rtShow(title, html) {
+    let ov = document.getElementById('rt-ov');
+    if (!ov) { ov = document.createElement('div'); ov.id = 'rt-ov'; ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:1200;display:flex;align-items:center;justify-content:center;padding:12px';
+      ov.onclick = e => { if (e.target === ov) ov.style.display = 'none'; };
+      ov.innerHTML = '<div style="background:#1e293b;border:1px solid #334155;border-radius:14px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto;padding:16px;color:#e2e8f0"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #334155"><b id="rt-title" style="font-size:1rem"></b><button class="rt-btn" onclick="document.getElementById(\'rt-ov\').style.display=\'none\'">✕</button></div><div id="rt-body" style="font-size:.85rem"></div></div>';
+      document.body.appendChild(ov); }
+    document.getElementById('rt-title').textContent = title; document.getElementById('rt-body').innerHTML = html; ov.style.display = 'flex';
+  }
+  async function guardar(key, patch) {
+    const base = RT.av[key] || {};
+    const row = Object.assign({ row_key: key, ruta_id: base.ruta_id, soldadura: !!base.soldadura, inox: !!base.inox, hechos: base.hechos || [] }, patch, { updated_at: new Date().toISOString() });
+    const { error } = await supabaseClient.from('terminacion_ruta').upsert(row, { onConflict: 'row_key' });
+    if (error) throw new Error(/schema cache|does not exist|Could not find/i.test(error.message || '') ? 'Falta correr el parche 022 en Supabase.' : error.message);
+    RT.av[key] = Object.assign({}, base, row);
+  }
+  function pintar(key) {
+    css(); const r = rowOf(key); if (!r) return;
+    const st = RT.av[key];
+    const head = `<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0 8px;border-bottom:1px solid #334155"><div style="color:#94a3b8;font-weight:600;font-size:.7rem;text-transform:uppercase">Pieza</div><div style="text-align:right;color:#f1f5f9">${E(r.descripcion)}<div style="color:#94a3b8;font-size:.72rem">${E(r.cliente)} · ${E(r.comprobante)} · ${(r.pend || 0).toLocaleString()} u. · ${(r.kilos || 0).toLocaleString(undefined, { maximumFractionDigits: 1 })} Kg</div></div></div>`;
+    let body;
+    if (RT.error) body = `<div style="color:#f87171;padding:10px 0">${E(RT.error)}</div>`;
+    else if (!st) {
+      const g = guess(r);
+      body = `<div style="padding:10px 0 4px;font-size:.85rem;color:#cbd5e1">Todavía no se definió la ruta de esta pieza. Elegí la que corresponde (tamaño / tratamiento térmico / material).</div>
+        <select id="rt-ruta" class="rt-sel">${RT_RUTAS.map(x => `<option value="${x.id}" ${x.id === g ? 'selected' : ''}>Ruta ${x.id} — ${E(x.n)}</option>`).join('')}</select>
+        <div style="display:flex;gap:16px;margin:10px 0;font-size:.85rem"><label><input type="checkbox" id="rt-sold"> Lleva soldadura</label><label><input type="checkbox" id="rt-inox"> Es inoxidable (pasivado)</label></div>
+        ${puedeOp() ? '<button class="rt-btn pri" onclick="rutaDefinir(\'' + E(key) + '\')">Confirmar ruta</button>' : '<div style="color:#94a3b8;font-size:.8rem">Solo Terminación / Planeamiento pueden definir la ruta.</div>'}`;
+    } else {
+      const es = estado(st), ru = rutaDe(st.ruta_id);
+      const op = puedeOp();
+      const bx = es.cs.map((c, n) => {
+        const h = es.hi.get(c.i);
+        const nombre = c.opts.length > 1 && !h ? c.opts.map(o => nomPaso(o.p)).join('  <span style="color:#94a3b8">o</span>  ') : nomPaso(h ? h.p : c.opts[0].p);
+        let cls = 'pen', right = '<span class="rt-n">pendiente</span>';
+        if (h) { cls = 'done'; right = `<span class="rt-n">✅ ${E(fmtTs(h.ts))}</span>`; }
+        else if (n === es.idx) {
+          cls = 'act';
+          right = op ? (c.opts.length > 1 ? c.opts.map(o => `<button class="rt-btn pri" onclick="rutaCheck('${E(key)}',${c.i},${o.p})">✔ ${E(nomPaso(o.p))}</button>`).join(' ') : `<button class="rt-btn pri" onclick="rutaCheck('${E(key)}',${c.i},${c.opts[0].p})">✔ Terminó este paso</button>`) : '<span class="rt-n">▶ está acá</span>';
+        }
+        return `<div class="rt-box ${cls}"><div><div class="rt-n">Paso ${n + 1} de ${es.cs.length}${n === es.idx ? ' · ▶ la pieza está acá' : ''}</div><div class="rt-b">${nombre}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap">${right}</div></div>` + (n < es.cs.length - 1 ? '<div class="rt-arr">▼</div>' : '');
+      }).join('');
+      body = `<div style="padding:8px 0 10px;font-size:.8rem;color:#cbd5e1"><b>Ruta ${ru.id}</b> — ${E(ru.n)}${st.soldadura ? ' · 🔥 con soldadura' : ''}${st.inox ? ' · inoxidable' : ''}</div>${bx}
+        ${es.completa ? '<div style="margin:10px 0;color:#34d399;font-weight:700">✅ Completó toda la ruta de Terminación.</div>' : ''}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">${op && es.hechos.length ? `<button class="rt-btn" onclick="rutaUndo('${E(key)}')">↩ Deshacer último paso</button>` : ''}${op && !es.hechos.length ? `<button class="rt-btn" onclick="rutaCambiar('${E(key)}')">Cambiar ruta</button>` : ''}</div>`;
+    }
+    rtShow('🧭 Ruta de Terminación', head + body);
+  }
+  window.rutaOpen = async key => { css(); rtShow('🧭 Ruta de Terminación', '<div style="padding:16px;color:#94a3b8">Cargando…</div>'); await cargar(true); pintar(key); };
+  window.rutaDefinir = async key => { try { const rid = Number(document.getElementById('rt-ruta').value); await guardar(key, { ruta_id: rid, soldadura: document.getElementById('rt-sold').checked, inox: document.getElementById('rt-inox').checked, hechos: [] }); pintar(key); refrescar(); } catch (e) { alert(e.message); } };
+  window.rutaCambiar = async key => { if (!confirm('¿Volver a elegir la ruta de esta pieza?')) return; delete RT.av[key]; try { const { error } = await supabaseClient.from('terminacion_ruta').delete().eq('row_key', key); if (error) throw error; } catch (e) { alert(e.message || e); } pintar(key); refrescar(); };
+  window.rutaCheck = async (key, i, p) => { const st = RT.av[key]; if (!st) return; const hs = (st.hechos || []).filter(h => h.i !== i).concat([{ i, p, ts: new Date().toISOString() }]);
+    try { await guardar(key, { hechos: hs }); pintar(key); refrescar(); } catch (e) { alert(e.message); } };
+  window.rutaUndo = async key => { const st = RT.av[key]; if (!st || !(st.hechos || []).length) return; if (!confirm('¿Deshacer el último paso marcado?')) return;
+    try { await guardar(key, { hechos: st.hechos.slice(0, -1) }); pintar(key); refrescar(); } catch (e) { alert(e.message); } };
+  function refrescar() { try { if (typeof applyFilters === 'function') applyFilters(); } catch (e) { /* sin refresco */ } }
+})();
+
+</script>
+<script>
+(function () {
+  // Orden de las tarjetas del tablero: cada persona las acomoda y oculta las que no usa. Se guarda en este navegador.
+  const KEY = () => 'amro_tarjetas_v1_' + ((typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE && (CURRENT_PROFILE.id || CURRENT_PROFILE.email)) || 'anon');
+  const S = { edit: false, order: [], hidden: [] };
+  const grid = () => document.querySelector('.kpi-grid');
+  const cards = () => grid() ? [...grid().children].filter(el => el.classList.contains('kpi-card') && el.id) : [];
+  function leer() { try { const j = JSON.parse(localStorage.getItem(KEY()) || 'null'); if (j) { S.order = Array.isArray(j.order) ? j.order : []; S.hidden = Array.isArray(j.hidden) ? j.hidden : []; return; } } catch (e) { /* sin guardado */ } S.order = []; S.hidden = []; }
+  function guardar() { try { localStorage.setItem(KEY(), JSON.stringify({ order: S.order, hidden: S.hidden })); } catch (e) { /* sin guardado */ } }
+  let leidoPara = null;
+  function css() {
+    if (document.getElementById('tj-css')) return; const s = document.createElement('style'); s.id = 'tj-css';
+    s.textContent = `.kpi-card.tj-oculta{display:none!important}.tj-editando .kpi-card.tj-oculta{display:block!important;opacity:.4}.tj-editando .kpi-card{cursor:default!important;outline:1px dashed #475569}
+    .tj-ctl{position:absolute;top:4px;right:4px;display:none;gap:3px;z-index:3}.tj-editando .tj-ctl{display:flex}.tj-ctl button{background:#334155;color:#fff;border:none;border-radius:6px;padding:2px 7px;font-size:.78rem;cursor:pointer}.tj-ctl button:hover{background:#38bdf8;color:#0f172a}
+    .tj-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-4px 0 8px;font-size:.78rem;color:#94a3b8;justify-content:flex-end}.tj-bar button{background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:5px 10px;font-size:.78rem;cursor:pointer}.tj-bar button.pri{background:#38bdf8;color:#0f172a;border-color:#38bdf8;font-weight:700}`;
+    document.head.appendChild(s);
+  }
+  function aplicar() {
+    const g = grid(); if (!g) return; css();
+    const uid = KEY(); if (leidoPara !== uid) { leer(); leidoPara = uid; }
+    const cs = cards(); const base = cs.map(c => c.id);
+    const ord = S.order.filter(id => base.includes(id)).concat(base.filter(id => !S.order.includes(id)));
+    cs.forEach(c => {
+      c.style.order = String(ord.indexOf(c.id));
+      c.classList.toggle('tj-oculta', S.hidden.includes(c.id));
+      if (!c.querySelector(':scope > .tj-ctl')) { const d = document.createElement('div'); d.className = 'tj-ctl'; d.dataset.id = c.id;
+        d.innerHTML = '<button data-a="l" title="Mover antes">◀</button><button data-a="r" title="Mover después">▶</button><button data-a="h" title="Ocultar / mostrar">👁</button>'; c.appendChild(d); }
+    });
+    g.classList.toggle('tj-editando', S.edit);
+    let bar = document.getElementById('tj-bar');
+    if (!bar) { bar = document.createElement('div'); bar.id = 'tj-bar'; bar.className = 'tj-bar'; g.parentNode.insertBefore(bar, g); }
+    const nOc = cs.filter(c => S.hidden.includes(c.id) && c.style.display !== 'none').length;
+    bar.innerHTML = S.edit
+      ? '<span>Usá ◀ ▶ para mover cada tarjeta y 👁 para ocultarla o mostrarla.</span><button onclick="tjReset()">Restablecer</button><button class="pri" onclick="tjEdit(false)">Listo</button>'
+      : `<button onclick="tjEdit(true)" title="Cambiar el orden y ocultar tarjetas">↕ Ordenar tarjetas${nOc ? ' (' + nOc + ' ocultas)' : ''}</button>`;
+  }
+  function mover(id, dir) {
+    const base = cards().filter(c => c.style.display !== 'none' || S.hidden.includes(c.id)).map(c => c.id);
+    const ord = S.order.filter(i => base.includes(i)).concat(base.filter(i => !S.order.includes(i)));
+    const i = ord.indexOf(id), j = i + dir; if (i < 0 || j < 0 || j >= ord.length) return;
+    [ord[i], ord[j]] = [ord[j], ord[i]];
+    // se conserva la posición de las tarjetas que esta persona no ve por permisos
+    S.order = ord.concat(S.order.filter(x => !ord.includes(x))); guardar(); aplicar();
+  }
+  document.addEventListener('click', e => {
+    const g = grid(); if (!g) return;
+    const b = e.target.closest && e.target.closest('.tj-ctl button');
+    if (b && g.contains(b)) { e.stopPropagation(); e.preventDefault(); const id = b.parentNode.dataset.id, a = b.dataset.a;
+      if (a === 'l') mover(id, -1); else if (a === 'r') mover(id, 1); else { S.hidden = S.hidden.includes(id) ? S.hidden.filter(x => x !== id) : S.hidden.concat([id]); guardar(); aplicar(); } return; }
+    if (S.edit && e.target.closest && e.target.closest('.kpi-card') && g.contains(e.target)) { e.stopPropagation(); e.preventDefault(); }
+  }, true);
+  window.tjEdit = on => { S.edit = !!on; aplicar(); };
+  window.tjReset = () => { S.order = []; S.hidden = []; guardar(); aplicar(); };
+  window.tjAplicar = aplicar;
+  [0, 1200, 3500, 9000].forEach(t => setTimeout(aplicar, t));
 })();
 
 </script>
