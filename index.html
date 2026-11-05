@@ -4088,6 +4088,7 @@ function applyFilters() {
     return true;
   });
   renderTable(filtered);
+  if (window.pfBusquedaBox) { try { window.pfBusquedaBox(search); } catch (e) { /* sin aviso */ } }
 }
 
 function sortTable(col) {
@@ -7026,25 +7027,54 @@ function showToast(message, kind) {
   const rutaTxt = l => { try { return window.rutaPaso ? window.rutaPaso(rKey(l)) : null; } catch (e) { return null; } };
 
   function estadoTxt(l) {
-    const out = [], p = pend(l), t = term(l);
+    const out = [`🧱 ${nf(l.cant, 0)} u. moldeadas${l.primera_carga ? ' el ' + fd(l.primera_carga) : ''}`], p = pend(l), t = term(l);
     if (p > 0) out.push(`⏳ ${nf(p, 0)} u. pendiente de fusión${l.fecha_parte && dif(hoy(), l.fecha_parte) > 2 ? ' (atrasada)' : ''}`);
     if (t > 0) { const rt = rutaTxt(l); out.push(`🔧 ${nf(t, 0)} u. en Terminación${rt ? ' · ' + rt : ''}`); }
     if (Number(l.terminado) > 0) out.push(`✅ ${nf(l.terminado, 0)} u. → ${DEST[l.destino] || l.destino || ''}`);
     if (Number(l.consumido) > 0) out.push(`🧾 ${nf(l.consumido, 0)} u. se usaron en un pedido`);
     return out;
   }
+  const sumEt = ls => ({ mold: ls.reduce((a, l) => a + l.cant, 0), pend: ls.reduce((a, l) => a + Math.max(0, pend(l)), 0), term: ls.reduce((a, l) => a + Math.max(0, term(l)), 0), out: ls.reduce((a, l) => a + Number(l.terminado), 0), used: ls.reduce((a, l) => a + Number(l.consumido), 0) });
+  const etTxt = (ls, rt) => { const e = sumEt(ls), o = [`🧱 ${nf(e.mold, 0)} moldeadas`];
+    if (e.pend > 0) o.push(`⏳ ${nf(e.pend, 0)} en fusión`);
+    if (e.term > 0) o.push(`🔧 ${nf(e.term, 0)} en Terminación${rt ? ' (' + rt + ')' : ''}`);
+    if (e.out > 0) o.push(`✅ ${nf(e.out, 0)} ${ls.every(l => !l.destino || l.destino === ls[0].destino) ? (DEST[ls[0].destino] || 'ya salieron') : 'ya salieron'}`);
+    if (e.used > 0) o.push(`🧾 ${nf(e.used, 0)} usadas en pedidos`);
+    return o; };
   window.pfExtra = r => {
     if (!P.loaded) { if (!P.loading && typeof supabaseClient !== 'undefined') load().then(() => { if (!P.error && P.L.length) refrescarTabla(); }); return ''; }
     if (P.error || !P.L.length) return '';
     const ls = vinc(r); if (!ls.length) return '';
-    const p = ls.reduce((a, l) => a + pend(l), 0), t = ls.reduce((a, l) => a + term(l), 0), o = ls.reduce((a, l) => a + Number(l.terminado), 0);
-    const parts = [];
-    if (p > 0) parts.push(`⏳ ${nf(p, 0)} pend. fusión`);
-    if (t > 0) { const l = ls.find(x => term(x) > 0), rt = l && rutaTxt(l); parts.push(`🔧 ${nf(t, 0)} en Terminación${rt ? ' (' + rt + ')' : ''}`); }
-    if (o > 0) parts.push(`✅ ${nf(o, 0)} ${ls.every(l => !l.destino || l.destino === ls[0].destino) ? (DEST[ls[0].destino] || '') : 'ya salieron'}`);
-    if (!parts.length) parts.push('🔥 en el parte de fusión');
-    const sgaAdel = r.estado_general === 'Fundido / En Terminación' && p > 0;
-    return `<div class="pf-mini" title="Parte de fusión${sgaAdel ? ' · SGA ya lo muestra fundido; en el parte falta confirmarlo' : ''}" onclick="event.stopPropagation();pfBuscar('${E(r.codigo)}')">🔥 ${parts.join(' · ')}${sgaAdel ? ' · SGA ya lo tiene fundido' : ''}</div>`;
+    const l = ls.find(x => term(x) > 0), rt = l && rutaTxt(l), e = sumEt(ls);
+    const sgaAdel = r.estado_general === 'Fundido / En Terminación' && e.pend > 0;
+    return `<div class="pf-mini" title="Parte de fusión · tocá para ver cada pieza${sgaAdel ? ' · SGA ya lo muestra fundido; en el parte falta confirmarlo' : ''}" onclick="event.stopPropagation();pfPedidoOpen('${E(rowKey(r))}')">🔥 Parte: ${etTxt(ls, rt).join(' · ')}${sgaAdel ? ' · SGA ya lo tiene fundido' : ''}</div>`;
+  };
+  // ventana del pedido: cada pieza del parte con sus etapas (moldeada → fusión → Terminación → destino)
+  const stg = (t, n, st) => `<div class="stg ${st}"><b>${nf(n, 0)}</b><span>${t}</span></div>`;
+  function lineaEtapas(l) {
+    const p = Math.max(0, pend(l)), t = Math.max(0, term(l)), o = Number(l.terminado), rt = t > 0 ? rutaTxt(l) : null;
+    return `<div class="stl"><div><span class="cola">Colada ${E(l.colada)}</span> ${chips(l)} <span class="mono">${E(l.codigo)}${l.fecha_parte ? ' · planificada ' + fd(l.fecha_parte) : ''}</span></div>
+      <div class="stgs">${stg('🧱 Moldeadas' + (l.primera_carga ? ' ' + fd(l.primera_carga) : ''), l.cant, 'done')}${stg('⏳ En fusión', p, p > 0 ? 'act' : 'done')}${stg('🔧 Terminación' + (rt ? ' · ' + E(rt) : ''), t, t > 0 ? 'act' : (o > 0 ? 'done' : 'pen'))}${stg('✅ ' + (l.destino ? E((DEST[l.destino] || '').replace(/^\S+\s/, '')) : 'Destino'), o, o > 0 ? 'done' : 'pen')}</div>
+      ${l.no_figura && p > 0 ? '<div class="mono" style="color:#fca5a5">No figura en el último parte cargado</div>' : ''}</div>`;
+  }
+  window.pfPedidoOpen = key => {
+    const r = typeof findRow === 'function' ? findRow(key) : null; if (!r) return; const ls = vinc(r);
+    dlg(`<b>${E(r.descripcion)}</b><div class="mono">${E(r.cliente)} · NV ${E(r.comprobante)} · OC ${E(r.oc)} · ${nf(r.pend, 0)} u. pedidas · SGA: ${E(r.estado_general || '')}</div>
+      <div class="mono" style="margin:6px 0">Proceso de las piezas cargadas desde el parte de fusión: ${etTxt(ls).join(' · ')}</div>${ls.map(lineaEtapas).join('')}
+      <div class="row">${puedeSec() || admin() ? `<button class="btn pri" onclick="pfDlgClose();pfBuscar('${E(r.codigo)}')">Abrir en Parte de fusión</button>` : ''}<button class="btn" onclick="pfDlgClose()">Cerrar</button></div>`, true);
+  };
+  // buscador del tablero de pedidos: también muestra las piezas del parte que todavía no tienen pedido en SGA (o son de kanban)
+  window.pfBusquedaBox = search => {
+    const q = nn(search || ''); let box = document.getElementById('pf-sbox');
+    if (!P.loaded) { if (!P.loading && typeof supabaseClient !== 'undefined' && q.length >= 3) load().then(() => { if (!P.error) window.pfBusquedaBox(search); }); return; }
+    const ls = (P.error || q.length < 3) ? [] : P.L.filter(l => !(l.tipo === 'pedido' && pedidoDe(l).length) && nn([l.colada, l.codigo, l.oc, l.cliente, l.descripcion, l.probeta].join(' ')).includes(q));
+    if (!ls.length) { if (box) box.style.display = 'none'; return; }
+    if (!box) { const ri = document.querySelector('.result-info'); if (!ri) return; box = document.createElement('div'); box.id = 'pf-sbox'; box.style.cssText = 'border:1px solid #f97316;background:rgba(249,115,22,.08);border-radius:10px;padding:10px 12px;margin:0 0 10px;font-size:.82rem'; ri.parentNode.insertBefore(box, ri); }
+    const g = new Map(); ls.forEach(l => { const k = l.codigo + '|' + l.oc_norm + '|' + nn(l.cliente); if (!g.has(k)) g.set(k, []); g.get(k).push(l); });
+    box.style.display = '';
+    box.innerHTML = `<div style="font-weight:700;color:#fdba74;margin-bottom:6px">🔥 En el parte de fusión (${ls.length} línea${ls.length === 1 ? '' : 's'}) — piezas que todavía no figuran como pedido en SGA, o son de kanban</div>` + [...g.values()].slice(0, 12).map(x => { const l0 = x[0], rt = (x.find(l => term(l) > 0) || {}).id ? rutaTxt(x.find(l => term(l) > 0)) : null;
+      return `<div style="padding:6px 0;border-top:1px solid #334155"><b>${E((l0.descripcion || '').slice(0, 80))}</b> <span style="color:#94a3b8">${E(l0.codigo)} · ${E(l0.cliente)} · OC ${E(l0.oc_norm || l0.oc)} · ${TIPO[l0.tipo][0]}${l0.tipo === 'pedido' ? ' · sin pedido en SGA todavía' : ''}</span><div style="color:#fdba74;font-weight:600;margin-top:2px">${etTxt(x, rt).join(' · ')}</div></div>`; }).join('')
+      + `<div style="margin-top:6px">${puedeSec() || admin() ? `<button class="hdr-btn" style="padding:4px 10px;font-size:.78rem" onclick="pfBuscar('${E(ls[0].codigo)}')">Abrir en Parte de fusión</button>` : ''}</div>`;
   };
   // probetas del parte para la hoja de pesada: [{probeta, n}] de las piezas ya fundidas del pedido
   window.pfProbetas = r => {
@@ -7147,6 +7177,11 @@ function showToast(message, kind) {
   #pf-dlg{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:80;display:none;align-items:center;justify-content:center;padding:12px}#pf-dlg.on{display:flex}
   #pf-dlg .box{background:#1e293b;border:1px solid #334155;border-radius:14px;width:100%;max-width:460px;max-height:90vh;overflow:auto;padding:16px;color:#e2e8f0;font-size:.88rem}
   #pf-dlg label{display:block;margin:10px 0 3px;font-size:.78rem;color:#94a3b8}#pf-dlg input,#pf-dlg select{width:100%;background:#0f172a;color:#fff;border:1px solid #334155;border-radius:7px;padding:8px;font-size:.9rem}
+  #pf-dlg .mono{font-size:.74rem;color:#94a3b8}#pf-dlg .cola{background:#0f172a;border:1px solid #334155;border-radius:6px;padding:1px 7px;font-family:ui-monospace,monospace;font-size:.78rem}
+  #pf-dlg .chip{display:inline-block;font-size:.68rem;padding:1px 7px;border-radius:99px;background:#334155;color:#cbd5e1}#pf-dlg .chip.prob{background:rgba(249,115,22,.2);color:#fdba74}#pf-dlg .chip.ped{background:rgba(56,189,248,.18);color:#7dd3fc}#pf-dlg .chip.kan{background:rgba(52,211,153,.18);color:#6ee7b7}#pf-dlg .chip.int{background:rgba(167,139,250,.2);color:#c4b5fd}
+  #pf-dlg .stl{border-top:1px solid #334155;margin-top:10px;padding-top:8px}#pf-dlg .stgs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:6px}
+  #pf-dlg .stg{border:1px solid #334155;border-radius:8px;padding:6px 8px;background:#0f172a;opacity:.5}#pf-dlg .stg b{display:block;font-size:1.15rem;color:#fff}#pf-dlg .stg span{font-size:.68rem;color:#94a3b8}
+  #pf-dlg .stg.done{opacity:1;border-color:#34d399}#pf-dlg .stg.act{opacity:1;border-color:#f97316;background:rgba(249,115,22,.12);box-shadow:0 0 0 1px #f97316}
   #pf-dlg .row{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}#pf-dlg .btn{background:#334155;color:#fff;border:1px solid #475569;border-radius:8px;padding:8px 14px;cursor:pointer}#pf-dlg .btn.pri{background:#f97316;color:#0f172a;border-color:#f97316;font-weight:700}
   .pf-mini{font-size:.68rem;color:#fdba74;margin-top:3px;font-weight:600;cursor:pointer}`;
   (function () { const st = document.createElement('style'); st.textContent = '.pf-mini{font-size:.68rem;color:#fdba74;margin-top:3px;font-weight:600;cursor:pointer}'; document.head.appendChild(st); })();
@@ -7156,7 +7191,7 @@ function showToast(message, kind) {
     const r = document.createElement('div'); r.id = 'pf-root'; r.innerHTML = '<div class="wrap" id="pf-wrap"></div>'; document.body.appendChild(r);
     const d = document.createElement('div'); d.id = 'pf-dlg'; d.onclick = e => { if (e.target === d) dlgClose(); }; d.innerHTML = '<div class="box" id="pf-box"></div>'; document.body.appendChild(d);
   }
-  const dlg = html => { ensureDom(); document.getElementById('pf-box').innerHTML = html; document.getElementById('pf-dlg').classList.add('on'); };
+  const dlg = (html, wide) => { ensureDom(); const bx = document.getElementById('pf-box'); bx.style.maxWidth = wide ? '680px' : '460px'; bx.innerHTML = html; document.getElementById('pf-dlg').classList.add('on'); };
   const dlgClose = () => { const d = document.getElementById('pf-dlg'); if (d) d.classList.remove('on'); };
   window.pfDlgClose = dlgClose;
 
@@ -7180,7 +7215,7 @@ function showToast(message, kind) {
     const base = ls.filter(l => !q || nn([l.colada, l.codigo, l.oc, l.cliente, l.descripcion, l.probeta].join(' ')).includes(q));
     const fb = (k, t) => `<button class="f ${P.filtro === k ? 'on' : ''}" onclick="pfFiltro('${k}')">${t} (${base.filter(F[k]).length})</button>`;
     const rows = base.filter(F[P.filtro]).sort((a, b) => (pend(b) > 0) - (pend(a) > 0) || String(a.fecha_parte || '').localeCompare(String(b.fecha_parte || '')) || Number(a.colada) - Number(b.colada)).slice(0, 400).map(l => {
-      const p = pend(l), t = term(l), d = l.fecha_parte ? dif(hoy(), l.fecha_parte) : 0, est = estadoTxt(l).filter(x => !x.startsWith('⏳'));
+      const p = pend(l), t = term(l), d = l.fecha_parte ? dif(hoy(), l.fecha_parte) : 0, est = estadoTxt(l).filter(x => !x.startsWith('⏳') && !x.startsWith('🧱'));
       const acc = [];
       if (p > 0 && puedeConf()) acc.push(`<button class="btn sm pri" onclick="pfFundir(${l.id})">Se fundió…</button>`);
       if (t > 0) { acc.push(`<button class="btn sm" onclick="rutaOpen('${rKey(l)}')">🧭 Ruta</button>`); if (puedeOp()) acc.push(`<button class="btn sm pri" onclick="pfTerminar(${l.id})">Terminó Terminación</button>`); }
@@ -7229,6 +7264,23 @@ function showToast(message, kind) {
     return `<div class="note" style="margin-top:0;margin-bottom:12px">El vínculo es artículo + OC + cliente (la OC se compara sin ceros a la izquierda). En el tablero de pedidos, cada pedido muestra debajo del estado el proceso de sus piezas en el parte.</div>
       ${sin.length ? `<div class="panel" style="border-color:var(--bad)"><h2 style="color:var(--bad)">Líneas del parte sin pedido en SGA (${sin.length})</h2><p class="sub">Puede que el pedido todavía no esté cargado en SGA o que la OC / el cliente estén escritos distinto.</p>${sin.map(l => `<div class="mono">Colada ${E(l.colada)} · ${E((l.descripcion || '').slice(0, 50))} · ${E(l.cliente)} · OC ${E(l.oc_norm)} · ${nf(l.cant, 0)} u.</div>`).join('')}</div>` : ''}${cards}`;
   }
+  const diaTxt = iso => { try { return new Date(iso + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: '2-digit' }); } catch (e) { return fd(iso); } };
+  function vMoldeo() {
+    if (P.error) return `<div class="err">${E(P.error)}</div>`;
+    if (!P.L.length) return '<div class="panel"><div class="mono">Todavía no se cargó ningún parte.</div></div>';
+    const m = new Map(); P.L.forEach(l => { const d = l.primera_carga || '—'; if (!m.has(d)) m.set(d, []); m.get(d).push(l); });
+    const dias = [...m.keys()].sort().reverse(), kgW = P.kg === 'bruto' ? 'bruto' : 'neto';
+    const body = dias.slice(0, 60).map(d => { const ls = m.get(d).slice().sort((a, b) => Number(a.colada) - Number(b.colada));
+      const u = sumL(ls, l => l.cant), kg = sumL(ls, l => l.cant * kgU(l)), fu = sumL(ls, l => l.fundido);
+      return `<div class="panel"><div class="row" style="justify-content:space-between"><div><h2 style="text-transform:capitalize">🧱 ${E(d === '—' ? 'Sin fecha' : diaTxt(d))}</h2><p class="sub">${ls.length} línea${ls.length === 1 ? '' : 's'} · <b>${nf(u, 0)} u. moldeadas</b> · ${nf(kg, 0)} kg ${kgW} · ya fundidas ${nf(fu, 0)} de ${nf(u, 0)}</p></div></div>
+        <div class="tblwrap"><table style="min-width:680px"><tr><th>Colada</th><th>Pieza</th><th class="num">Moldeadas</th><th class="num">Kg ${kgW}</th><th>Cómo sigue</th></tr>${ls.map(l => `<tr><td><span class="cola">${E(l.colada)}</span></td><td><b>${E((l.descripcion || '').slice(0, 60))}</b><div class="mono">${E(l.codigo)} · ${E(l.cliente)} · OC ${E(l.oc_norm || l.oc)}</div><div>${chips(l)}</div></td>
+          <td class="num"><b>${nf(l.cant, 0)}</b></td><td class="num">${kgTxt(l.cant, l)}</td><td>${estadoTxt(l).filter(x => !x.startsWith('🧱')).map(x => `<div>${E(x)}</div>`).join('') || '<span class="mono">—</span>'}</td></tr>`).join('')}</table></div></div>`; }).join('');
+    return `<div class="panel"><div class="row" style="justify-content:space-between"><div><h2>Moldeo por día</h2><p class="sub">Lo que entró en cada parte cargado, día por día (cada pieza se cuenta una sola vez, el día que apareció en el parte).</p></div><div class="row">${kgBtns()}<button class="btn" onclick="pfExportar()">⬇ Descargar Excel</button></div></div></div>` + body;
+  }
+  window.pfExportar = async () => {
+    try { await needXlsx(); const H = ['Fecha moldeo', 'Colada', 'Código', 'Descripción', 'Cliente', 'OC', 'Probeta', 'Tipo', 'Moldeadas', 'Kg neto', 'Kg bruto', 'Pend. fusión', 'En Terminación', 'Ya salieron', 'Destino'];
+      const rows = P.L.slice().sort((a, b) => String(b.primera_carga).localeCompare(String(a.primera_carga)) || Number(a.colada) - Number(b.colada)).map(l => [l.primera_carga, l.colada, l.codigo, l.descripcion, l.cliente, l.oc_norm || l.oc, l.probeta || '', TIPO[l.tipo][0], l.cant, Math.round(l.cant * l.peso_neto * 10) / 10, Math.round(l.cant * l.peso_bruto * 10) / 10, Math.max(0, pend(l)), Math.max(0, term(l)), Number(l.terminado), l.destino ? (DEST[l.destino] || l.destino) : '']);
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([H].concat(rows)), 'Moldeo por día'); XLSX.writeFile(wb, 'moldeo-por-dia.xlsx'); } catch (e) { alert(errTxt(e)); } };
   const RUTAS = () => (window.rutaLista ? window.rutaLista() : []);
   function vReglas() {
     if (P.error) return `<div class="err">${E(P.error)}</div>`;
@@ -7242,10 +7294,10 @@ function showToast(message, kind) {
         <td><select ${ed ? '' : 'disabled'} onchange="pfRegla('${E(l.codigo)}','ruta_id',this.value)">${RUTAS().map(x => `<option value="${x.id}" ${Number(rid) === x.id ? 'selected' : ''}>Ruta ${x.id} · ${E(x.n)}</option>`).join('')}</select></td></tr>`; }).join('');
     return `<div class="panel"><h2>Qué pasa después de Terminación</h2><p class="sub">Destino y ruta propuestos por artículo (pedidos con mecanizado → Mecanizado; manotas y piezas de kanban → estantería; machos y hembras de aros → Sector Z). Se corrige acá y rige desde ya.</p><div class="tblwrap"><table><tr><th>Artículo</th><th>Tipo</th><th>Destino al terminar</th><th>Ruta de Terminación</th></tr>${rows}</table></div></div>`;
   }
-  const TABS = [['seg', '📋 Seguimiento'], ['cargar', '⬆ Cargar parte'], ['vinculo', '🔗 Pedidos de SGA'], ['reglas', '⚙️ Destino y ruta']];
+  const TABS = [['seg', '📋 Seguimiento'], ['moldeo', '🧱 Moldeo por día'], ['cargar', '⬆ Cargar parte'], ['vinculo', '🔗 Pedidos de SGA'], ['reglas', '⚙️ Destino y ruta']];
   function pintar() {
     ensureDom(); const W = document.getElementById('pf-wrap');
-    const V = { seg: vSeg, cargar: vCargar, vinculo: vVinculo, reglas: vReglas };
+    const V = { seg: vSeg, moldeo: vMoldeo, cargar: vCargar, vinculo: vVinculo, reglas: vReglas };
     const foco = document.activeElement && document.activeElement.id === 'pf-q' ? document.activeElement.selectionStart : null;
     W.innerHTML = `<div class="top"><h1>🔥 Parte de fusión</h1><button class="btn" onclick="pfClose()">✕ Cerrar</button></div>
       <div class="tabs">${TABS.map(([k, t]) => `<button class="tab ${P.tab === k ? 'on' : ''}" onclick="pfTab('${k}')">${t}</button>`).join('')}</div>${!P.loaded ? '<div class="panel"><div class="mono">Cargando…</div></div>' : V[P.tab]()}`;
