@@ -451,6 +451,7 @@
       <button class="hdr-btn" id="mold-btn" style="display:none;" onclick="window.cirOpen && window.cirOpen('mold')">🏭 Moldeo / Fusión</button>
       <button class="hdr-btn" id="kan-btn" style="display:none;" onclick="window.cirOpen && window.cirOpen('kan')">🏬 Kanban</button>
       <button class="hdr-btn" id="ven-btn" style="display:none;" onclick="window.venOpen && window.venOpen()">💰 Ventas</button>
+      <button class="hdr-btn" id="pfm-btn" style="display:none;" onclick="window.pfMoldeoOpen && window.pfMoldeoOpen()">🧱 Moldeo por día</button>
       <button class="hdr-btn" id="pf-btn" style="display:none;" onclick="window.pfOpen && window.pfOpen()">🔥 Parte de fusión</button>
       <button class="hdr-btn" id="mec-btn" style="display:none;" onclick="openMecDialog()">📋 Artículos</button>
       <span class="badge-live" id="asof-badge">ACTUALIZADO</span>
@@ -7281,7 +7282,7 @@ function showToast(message, kind) {
     const cnt = new Map(); P.L.forEach(l => { if (l.primera_carga) cnt.set(l.primera_carga, (cnt.get(l.primera_carga) || 0) + l.cant); });
     if (!P.dia) P.dia = cnt.has(hoy()) ? hoy() : ([...cnt.keys()].sort().pop() || hoy());
     const kgW = P.kg === 'bruto' ? 'bruto' : 'neto', q = nn(P.q2);
-    const buscador = (P.msg ? `<div class="panel" style="border-color:var(--ok)">${P.msg}</div>` : '') + `<div class="panel"><div class="row" style="justify-content:space-between"><div><h2>🧱 Moldeo por día</h2><p class="sub">¿Qué se moldeó cada día? Elegí el día, o buscá una pieza para ver si se moldeó y cuándo.</p></div><div class="row">${kgBtns()}<button class="btn" onclick="pfExportar()">⬇ Descargar Excel</button></div></div>
+    const buscador = (P.msg ? `<div class="panel" style="border-color:var(--ok)">${P.msg}</div>` : '') + `<div class="panel"><div class="row" style="justify-content:space-between"><div>${P.solo ? '' : '<h2>🧱 Moldeo por día</h2>'}<p class="sub">¿Qué se moldeó cada día? Elegí el día, o buscá una pieza para ver si se moldeó y cuándo.</p></div><div class="row">${kgBtns()}<button class="btn" onclick="pfExportar()">⬇ Descargar Excel</button></div></div>
       <div class="row"><input type="text" id="pf-q2" placeholder="🔍 Buscar una pieza en todos los días (artículo, colada, OC, cliente, probeta, nombre)…" value="${E(P.q2)}" oninput="pfBusca2(this.value)" style="flex:1;min-width:260px"></div></div>`;
     if (q) {
       const rs = P.L.filter(l => nn([l.colada, l.codigo, l.oc, l.cliente, l.descripcion, l.probeta].join(' ')).includes(q)).sort((a, b) => String(b.primera_carga).localeCompare(String(a.primera_carga)) || Number(a.colada) - Number(b.colada));
@@ -7330,14 +7331,20 @@ function showToast(message, kind) {
     ensureDom(); const W = document.getElementById('pf-wrap');
     const V = { seg: vSeg, moldeo: vMoldeo, cargar: vCargar, vinculo: vVinculo, reglas: vReglas };
     const fid = document.activeElement && ['pf-q', 'pf-q2'].includes(document.activeElement.id) ? document.activeElement.id : null, foco = fid ? document.activeElement.selectionStart : null;
-    W.innerHTML = `<div class="top"><h1>🔥 Parte de fusión</h1><button class="btn" onclick="pfClose()">✕ Cerrar</button></div>
+    if (P.solo) { W.innerHTML = `<div class="top"><h1>🧱 Moldeo por día</h1><div class="row">${puedeSec() || admin() ? '<button class="btn" onclick="pfOpen(\'cargar\')">🔥 Cargar parte de fusión / seguimiento</button>' : ''}<button class="btn" onclick="pfClose()">✕ Cerrar</button></div></div>${!P.loaded ? '<div class="panel"><div class="mono">Cargando…</div></div>' : vMoldeo()}`; }
+    else W.innerHTML = `<div class="top"><h1>🔥 Parte de fusión</h1><button class="btn" onclick="pfClose()">✕ Cerrar</button></div>
       <div class="tabs">${TABS.map(([k, t]) => `<button class="tab ${P.tab === k ? 'on' : ''}" onclick="pfTab('${k}')">${t}</button>`).join('')}</div>${!P.loaded ? '<div class="panel"><div class="mono">Cargando…</div></div>' : V[P.tab]()}`;
     if (foco != null) { const i = document.getElementById(fid); if (i) { i.focus(); try { i.setSelectionRange(foco, foco); } catch (e) { /* sin cursor */ } } }
   }
   window.pfOpen = async (tab, q) => {
-    if (!puedeSec() && !admin()) return; ensureDom(); if (tab) P.tab = tab; if (q != null) { P.q = q; P.filtro = 'todas'; }
+    if (!puedeSec() && !admin()) return; ensureDom(); P.solo = false; if (tab) P.tab = tab; if (q != null) { P.q = q; P.filtro = 'todas'; }
     P.open = true; document.getElementById('pf-root').classList.add('on'); pintar();
     try { if (window.rutaPreload) await window.rutaPreload(); } catch (e) { /* sin ruta */ }
+    await load(true); pintar();
+  };
+  // "Moldeo por día" para todos (sin tener que conocer el parte de fusión): solo lectura
+  window.pfMoldeoOpen = async () => {
+    ensureDom(); P.solo = true; P.q2 = ''; P.fmol = 'todas'; P.open = true; document.getElementById('pf-root').classList.add('on'); pintar();
     await load(true); pintar();
   };
   window.pfBuscar = q => { if (puedeSec() || admin()) window.pfOpen('seg', q); };
@@ -7345,7 +7352,7 @@ function showToast(message, kind) {
   window.pfTab = k => { P.tab = k; if (k !== 'cargar') P.msg = null; pintar(); };
   window.pfFiltro = k => { P.filtro = k; pintar(); };
   window.pfBusca = v => { P.q = v; pintar(); };
-  window.pfRefreshBtn = () => { const b = document.getElementById('pf-btn'); if (b) b.style.display = (puedeSec() || admin()) ? '' : 'none'; };
+  window.pfRefreshBtn = () => { const b = document.getElementById('pf-btn'); if (b) b.style.display = (puedeSec() || admin()) ? '' : 'none'; const m = document.getElementById('pfm-btn'); if (m) m.style.display = (typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE) ? '' : 'none'; };
   setTimeout(window.pfRefreshBtn, 0); [1500, 4000, 9000, 20000].forEach(t => setTimeout(window.pfRefreshBtn, t));
 
   // ---------- acciones ----------
