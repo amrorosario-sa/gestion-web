@@ -2069,6 +2069,7 @@ function recomputeEffectiveStages() {
     const man = manualRankFor(row.id);
     let effRank = (man != null) ? Math.max(realRank, man) : realRank;
     if (row._stRank != null) effRank = Math.max(effRank, row._stRank);
+    if (window.pfRank) { const pr = window.pfRank(row); if (pr != null) effRank = Math.max(effRank, pr); }
     row.estado_general = effRank >= 5 ? 'Fundido / En Terminación' : 'En Fabricación';
     row.area_actual = STAGE_LABELS[effRank];
     row.alerta_entrega = computeAlerta(row.estado_general, row.fecha_entrega);
@@ -7016,6 +7017,8 @@ function showToast(message, kind) {
     } catch (e) { P.error = errTxt(e); P.L = []; P.idx = new Map(); }
     P.loaded = true; P.loading = false;
     try { if (window.pfReaplicarEventos) window.pfReaplicarEventos(); } catch (e) { /* sin indicadores */ }
+    // el estado de cada pedido toma la etapa del parte (moldeada → en fusión, fundida → Terminación)
+    if (!P.error && P.L.length) { try { if (typeof recomputeEffectiveStages === 'function') recomputeEffectiveStages(); } catch (e) { /* sin estado */ } refrescarTabla(); }
   }
   window.pfEnsure = async () => { try { await load(); } catch (e) { /* sin parte */ } };
   const recargar = async () => { await load(true); refrescarTabla(); if (P.open) pintar(); };
@@ -7025,6 +7028,14 @@ function showToast(message, kind) {
   const cliOk = (l, r) => { const a = nn(l.cliente), b = nn(r.cliente); return !a || !b || a === b || a.includes(b) || b.includes(a); };
   const vinc = r => (P.idx.get((r.codigo || '') + '|' + nOC(r.oc)) || []).filter(l => l.tipo === 'pedido' && cliOk(l, r));
   const pedidoDe = l => (typeof DATA === 'undefined' ? [] : DATA).filter(r => r.codigo === l.codigo && nOC(r.oc) === l.oc_norm && cliOk(l, r));
+  // etapa mínima que le corresponde a un pedido de SGA según el parte: 4 = Moldeo / Fusión (ya moldeada), 5 = En Terminación (todo fundido)
+  window.pfRank = row => {
+    if (!P.loaded || P.error || !P.L.length || !P.idx || row._stRank != null) return null;
+    const ls = vinc(row); if (!ls.length) return null;
+    const tot = DATA.filter(x => x.codigo === row.codigo && nOC(x.oc) === nOC(row.oc) && cliOk(ls[0], x)).reduce((a, x) => a + Number(x.pend || 0), 0) || Number(row.pend || 0);
+    const fund = ls.reduce((a, l) => a + Number(l.fundido), 0);
+    return fund > 0 && fund >= tot ? 5 : 4;
+  };
   const rKey = l => 'pf-' + l.id;
   const rutaTxt = l => { try { return window.rutaPaso ? window.rutaPaso(rKey(l)) : null; } catch (e) { return null; } };
 
