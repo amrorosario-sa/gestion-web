@@ -5632,7 +5632,7 @@ function showToast(message, kind) {
   function svRows(u, c) {
     const L = u === 'sector_z'
       ? [['', stock(c, 'sector_z'), 'en estantería'], ['+', stock(c, 'terminacion'), 'en terminación'], ['+', enMoldeo(c) + pfZ(c), 'en moldeo/fusión'], ['−', planSinEntregar(c), 'planificado']]
-      : [['', stock(c, 'kanban'), 'en estantería'], ['+', planPend(c), 'planificados']].concat(pfK(c).term ? [['+', pfK(c).term, 'en terminación']] : [], pfK(c).pend ? [['+', pfK(c).pend, 'pend. de fusión (parte)']] : [], [['−', pedidosPend(c), 'en pedido']]);
+      : [['', stock(c, 'kanban'), 'en estantería'], ['+', planPend(c), 'planificados']].concat(pfK(c).term ? [['+', pfK(c).term, 'en terminación']] : [], pfK(c).pend ? [['+', pfK(c).pend, 'moldeadas en el parte (sin fundir)']] : [], [['−', pedidosPend(c), 'en pedido']]);
     return '<div class="svr">' + L.map(([o, n, t]) => `<div><i>${o}</i><b>${n}</b> ${t}</div>`).join('') + '</div>';
   }
   // lote sugerido = 2k − stock virtual + 2.5k (fórmula tal cual la definió el cliente; ver nota en el parche)
@@ -5802,7 +5802,7 @@ function showToast(message, kind) {
   A.entregar = async (pid, c) => { try { await rpc('mec_entregar', { p_plan: pid, p_codigo: c, p_cant: null }); await reload(); } catch (e) { alert(e.message); } };
   A.zaM = c => ask('Entregar a Mecanizado', esc(nombre(c)) + '<br>Entrega suelta, sin plan.', [{ id: 'n', label: 'Cantidad (máx. ' + stock(c, 'sector_z') + ')', value: Math.min(stock(c, 'sector_z'), 5), max: stock(c, 'sector_z') }], 'Entregar',
     v => rpc('mec_mover', { p_codigo: c, p_desde: 'sector_z', p_hasta: 'mecanizado', p_cant: v.n, p_motivo: 'entrega suelta a Mecanizado' }));
-  A.moldeo = (def, cod, oi) => ask(oi ? 'Lanzar OI — ' + (nombre(cod) || cod) : 'Cargar moldeo / fusión para kanban', oi ? 'Orden interna de Terminación: se manda a moldear y fundir para reponer el kanban. La cantidad sugerida sale del stock virtual; podés cambiarla.' : 'Piezas que se mandan a moldear y fundir para reponer kanban (pedidos internos que no vienen de SGA).', [
+  A.moldeo = (def, cod, oi) => ask(oi ? 'Lanzar OI — ' + (nombre(cod) || cod) : 'Cargar moldeo / fusión para kanban', oi ? 'Orden interna de Terminación: se manda a moldear y fundir para reponer el kanban. La cantidad sugerida sale del stock virtual, que ya descuenta lo moldeado que entró por el parte de fusión (pendiente de fusión y en Terminación); podés cambiarla.' : 'Piezas que se mandan a moldear y fundir para reponer kanban (pedidos internos que no vienen de SGA).', [
     { type: 'pieza', id: 'c', label: 'Pieza', value: cod || '' }, { id: 'n', label: oi ? 'Cantidad a lanzar' : 'Cantidad', value: def || 10, max: 99999 }, { type: 'dec', id: 'kg', label: 'Kg por unidad (solo si la pieza todavía no lo tiene cargado)', ph: 'Ej: 12,5 — para que sume Kg al indicador de Fundido' }, { type: 'date', id: 'f', label: 'Fecha de moldeo / fusión (hoy por defecto; cambiala si fue otro día)', value: TODAY() }, { type: 'text', id: 'x', label: 'Nota (opcional)', ph: 'Ej: colada del viernes' }], oi ? 'Lanzar OI' : 'Cargar',
     async v => { if (v.f > TODAY()) throw new Error('La fecha no puede ser futura.'); if (v.kg > 0) await rpc('mec_set_kg', { p_codigo: v.c, p_kg: v.kg }); await tbl(supabaseClient.from('mec_moldeos').insert({ codigo: v.c, cantidad: v.n, fecha: v.f, nota: v.x || null })); });
   A.deshacerPase = id => { const m = (C.pasos || []).find(x => x.id === id); if (!m) return;
@@ -7408,7 +7408,7 @@ function showToast(message, kind) {
     const fecha = (document.getElementById('pf-fecha') && document.getElementById('pf-fecha').value) || P.fecha || hoy();
     try {
       const r = await rpc('pf_cargar', { p_fecha: fecha, p_archivo: P.archivo, p_lineas: P.rows });
-      P.msg = `<b>Parte cargado.</b> ${r.nuevas} líneas nuevas (empiezan el proceso, ${nf(r.moldeado, 0)} u. moldeadas), ${r.ya} ya estaban (no se cuentan otra vez), ${r.cambian} con cambio de cantidad, ${r.no_figuran} dejaron de figurar (solo aviso).`;
+      P.msg = `<b>Parte cargado.</b> ${r.nuevas} líneas nuevas (empiezan el proceso, ${nf(r.moldeado, 0)} u. moldeadas), ${r.ya} ya estaban (no se cuentan otra vez), ${r.cambian} con cambio de cantidad, ${r.no_figuran} dejaron de figurar (solo aviso).${Number(r.absorbidas) > 0 ? ` Se descontaron ${nf(r.absorbidas, 0)} u. que estaban cargadas a mano en Moldeo / Fusión (OI / OT) para no contarlas dos veces.` : ''}`;
       P.prev = null; P.rows = null; toast('Parte cargado'); P.tab = 'moldeo'; P.dia = fecha; P.q2 = ''; P.fmol = 'todas'; await recargar();
     } catch (e) { if (b) b.disabled = false; alert(errTxt(e)); }
   };
