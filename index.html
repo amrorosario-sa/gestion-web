@@ -6956,7 +6956,7 @@ function showToast(message, kind) {
   // Parte de Fusión: se carga el archivo del día, cada línea empieza su proceso (pendiente de fusión),
   // la fusión se confirma a mano (total o parcial) y después sigue Terminación → destino.
   // Datos: tablas pf_lineas / pf_movs / pf_reglas / pf_cargas y funciones pf_* (parche 023).
-  const P = { L: [], M: [], R: {}, K: [], loaded: false, loading: false, error: null, tab: 'seg', filtro: 'pend', q: '', kg: 'neto', prev: null, fecha: '', msg: null, idx: new Map(), archivo: '' };
+  const P = { L: [], M: [], R: {}, K: [], loaded: false, loading: false, error: null, tab: 'moldeo', dia: '', q2: '', fmol: 'todas', filtro: 'pend', q: '', kg: 'neto', prev: null, fecha: '', msg: null, idx: new Map(), archivo: '' };
   try { const v = localStorage.getItem('pf_kg'); if (v === 'bruto' || v === 'neto') P.kg = v; } catch (e) { /* sin guardado */ }
   const E = s => (typeof escHtml === 'function' ? escHtml(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
   const nf = (n, d) => Number(n || 0).toLocaleString('es-AR', { maximumFractionDigits: d == null ? 1 : d });
@@ -7011,6 +7011,7 @@ function showToast(message, kind) {
       const [L, R, K] = await Promise.all([fetchAll('pf_lineas', { col: 'id' }), fetchAll('pf_reglas'), supabaseClient.from('pf_cargas').select('*').order('id', { ascending: false }).limit(15).then(r => { if (r.error) throw r.error; return r.data || []; })]);
       P.L = L.map(l => Object.assign({}, l, { cant: Number(l.cant), fundido: Number(l.fundido), terminado: Number(l.terminado), consumido: Number(l.consumido), peso_neto: Number(l.peso_neto), peso_bruto: Number(l.peso_bruto) }));
       P.R = {}; R.forEach(r => { P.R[r.codigo] = r; }); P.K = K; P.error = null; indexar();
+      try { const mv = await supabaseClient.from('pf_movs').select('id,linea_id,tipo,cantidad,fecha,deshecho').eq('tipo', 'fusion').order('id', { ascending: false }).limit(5000); P.M = mv.error ? [] : (mv.data || []); } catch (e) { P.M = []; }
     } catch (e) { P.error = errTxt(e); P.L = []; P.idx = new Map(); }
     P.loaded = true; P.loading = false;
     try { if (window.pfReaplicarEventos) window.pfReaplicarEventos(); } catch (e) { /* sin indicadores */ }
@@ -7265,18 +7266,48 @@ function showToast(message, kind) {
       ${sin.length ? `<div class="panel" style="border-color:var(--bad)"><h2 style="color:var(--bad)">Líneas del parte sin pedido en SGA (${sin.length})</h2><p class="sub">Puede que el pedido todavía no esté cargado en SGA o que la OC / el cliente estén escritos distinto.</p>${sin.map(l => `<div class="mono">Colada ${E(l.colada)} · ${E((l.descripcion || '').slice(0, 50))} · ${E(l.cliente)} · OC ${E(l.oc_norm)} · ${nf(l.cant, 0)} u.</div>`).join('')}</div>` : ''}${cards}`;
   }
   const diaTxt = iso => { try { return new Date(iso + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: '2-digit' }); } catch (e) { return fd(iso); } };
+  const addDia = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+  function estadoCorto(l) { const p = Math.max(0, pend(l)), t = Math.max(0, term(l)), o = Number(l.terminado);
+    if (p > 0 && Number(l.fundido) === 0) return '<span class="chip warn">⏳ Sin fundir</span>';
+    if (p > 0) return `<span class="chip warn">⏳ Parcial: faltan ${nf(p, 0)}</span>`;
+    if (t > 0) return '<span class="chip ok">✅ Fundida · 🔧 en Terminación</span>';
+    if (o > 0) return '<span class="chip ok">✅ Fundida · ya salió</span>';
+    return '<span class="chip ok">✅ Fundida</span>'; }
+  const filaMold = (l, conDia) => `<tr><td><span class="cola">${E(l.colada)}</span></td><td><b>${E((l.descripcion || '').slice(0, 60))}</b><div class="mono">${E(l.codigo)} · ${E(l.cliente)} · OC ${E(l.oc_norm || l.oc)}</div><div>${chips(l)}</div></td>
+    ${conDia ? `<td>${l.primera_carga ? '<b>' + fd(l.primera_carga) + '</b>' : '—'}</td>` : ''}<td class="num"><b>${nf(l.cant, 0)}</b><div class="mono">${kgTxt(l.cant, l)} kg</div></td><td>${estadoCorto(l)}<div class="mono" style="margin-top:3px">${estadoTxt(l).filter(x => !x.startsWith('🧱') && !x.startsWith('⏳')).map(E).join('<br>')}</div></td></tr>`;
   function vMoldeo() {
     if (P.error) return `<div class="err">${E(P.error)}</div>`;
-    if (!P.L.length) return '<div class="panel"><div class="mono">Todavía no se cargó ningún parte.</div></div>';
-    const m = new Map(); P.L.forEach(l => { const d = l.primera_carga || '—'; if (!m.has(d)) m.set(d, []); m.get(d).push(l); });
-    const dias = [...m.keys()].sort().reverse(), kgW = P.kg === 'bruto' ? 'bruto' : 'neto';
-    const body = dias.slice(0, 60).map(d => { const ls = m.get(d).slice().sort((a, b) => Number(a.colada) - Number(b.colada));
-      const u = sumL(ls, l => l.cant), kg = sumL(ls, l => l.cant * kgU(l)), fu = sumL(ls, l => l.fundido);
-      return `<div class="panel"><div class="row" style="justify-content:space-between"><div><h2 style="text-transform:capitalize">🧱 ${E(d === '—' ? 'Sin fecha' : diaTxt(d))}</h2><p class="sub">${ls.length} línea${ls.length === 1 ? '' : 's'} · <b>${nf(u, 0)} u. moldeadas</b> · ${nf(kg, 0)} kg ${kgW} · ya fundidas ${nf(fu, 0)} de ${nf(u, 0)}</p></div></div>
-        <div class="tblwrap"><table style="min-width:680px"><tr><th>Colada</th><th>Pieza</th><th class="num">Moldeadas</th><th class="num">Kg ${kgW}</th><th>Cómo sigue</th></tr>${ls.map(l => `<tr><td><span class="cola">${E(l.colada)}</span></td><td><b>${E((l.descripcion || '').slice(0, 60))}</b><div class="mono">${E(l.codigo)} · ${E(l.cliente)} · OC ${E(l.oc_norm || l.oc)}</div><div>${chips(l)}</div></td>
-          <td class="num"><b>${nf(l.cant, 0)}</b></td><td class="num">${kgTxt(l.cant, l)}</td><td>${estadoTxt(l).filter(x => !x.startsWith('🧱')).map(x => `<div>${E(x)}</div>`).join('') || '<span class="mono">—</span>'}</td></tr>`).join('')}</table></div></div>`; }).join('');
-    return `<div class="panel"><div class="row" style="justify-content:space-between"><div><h2>Moldeo por día</h2><p class="sub">Lo que entró en cada parte cargado, día por día (cada pieza se cuenta una sola vez, el día que apareció en el parte).</p></div><div class="row">${kgBtns()}<button class="btn" onclick="pfExportar()">⬇ Descargar Excel</button></div></div></div>` + body;
+    if (!P.L.length) return '<div class="panel"><div class="mono">Todavía no se cargó ningún parte. Usá la pestaña "Cargar parte".</div></div>';
+    const cnt = new Map(); P.L.forEach(l => { if (l.primera_carga) cnt.set(l.primera_carga, (cnt.get(l.primera_carga) || 0) + l.cant); });
+    if (!P.dia) P.dia = cnt.has(hoy()) ? hoy() : ([...cnt.keys()].sort().pop() || hoy());
+    const kgW = P.kg === 'bruto' ? 'bruto' : 'neto', q = nn(P.q2);
+    const buscador = (P.msg ? `<div class="panel" style="border-color:var(--ok)">${P.msg}</div>` : '') + `<div class="panel"><div class="row" style="justify-content:space-between"><div><h2>🧱 Moldeo por día</h2><p class="sub">¿Qué se moldeó cada día? Elegí el día, o buscá una pieza para ver si se moldeó y cuándo.</p></div><div class="row">${kgBtns()}<button class="btn" onclick="pfExportar()">⬇ Descargar Excel</button></div></div>
+      <div class="row"><input type="text" id="pf-q2" placeholder="🔍 Buscar una pieza en todos los días (artículo, colada, OC, cliente, probeta, nombre)…" value="${E(P.q2)}" oninput="pfBusca2(this.value)" style="flex:1;min-width:260px"></div></div>`;
+    if (q) {
+      const rs = P.L.filter(l => nn([l.colada, l.codigo, l.oc, l.cliente, l.descripcion, l.probeta].join(' ')).includes(q)).sort((a, b) => String(b.primera_carga).localeCompare(String(a.primera_carga)) || Number(a.colada) - Number(b.colada));
+      return buscador + `<div class="panel"><h2>${rs.length ? rs.length + ' línea' + (rs.length === 1 ? '' : 's') + ' en el parte' : 'No figura en ningún parte cargado'}</h2><p class="sub">${rs.length ? 'La columna "Moldeada el" dice el día en que la pieza apareció en el parte.' : 'Esa pieza no se moldeó (o todavía no se cargó el parte donde viene). Probá con otra parte del nombre o con el código.'}</p>
+        ${rs.length ? `<div class="tblwrap"><table style="min-width:700px"><tr><th>Colada</th><th>Pieza</th><th>Moldeada el</th><th class="num">Cant.</th><th>Estado</th></tr>${rs.slice(0, 200).map(l => filaMold(l, true)).join('')}</table></div>` : ''}</div>`;
+    }
+    const strip = []; for (let i = 0; i < 10; i++) { const d = addDia(hoy(), -i), n = cnt.get(d) || 0; strip.push(`<button class="f ${P.dia === d ? 'on' : ''}" onclick="pfDia('${d}')">${i === 0 ? 'Hoy' : fd(d)} · ${n ? nf(n, 0) + ' u.' : 'nada'}</button>`); }
+    const del = P.L.filter(l => l.primera_carga === P.dia).sort((a, b) => Number(a.colada) - Number(b.colada));
+    const u = sumL(del, l => l.cant), kg = sumL(del, l => l.cant * kgU(l)), pe = sumL(del, l => Math.max(0, pend(l)));
+    const byId = new Map(P.L.map(l => [l.id, l])), fusDia = (P.M || []).filter(m => !m.deshecho && m.fecha === P.dia);
+    const fu = fusDia.reduce((a, m) => a + Number(m.cantidad), 0), fkg = fusDia.reduce((a, m) => { const l = byId.get(m.linea_id); return a + (l ? Number(m.cantidad) * kgU(l) : 0); }, 0);
+    const F = { todas: l => true, sin: l => pend(l) > 0, fun: l => pend(l) <= 0 };
+    const fb = (k, t) => `<button class="f ${P.fmol === k ? 'on' : ''}" onclick="pfFmol('${k}')">${t} (${del.filter(F[k]).length})</button>`;
+    const rows = del.filter(F[P.fmol]);
+    return buscador + `<div class="panel"><div class="row"><span class="mono">Día:</span>${strip.join('')}</div>
+      <div class="row" style="margin-top:8px"><button class="btn sm" onclick="pfDia('${addDia(P.dia, -1)}')">◀ Día anterior</button><input type="date" value="${E(P.dia)}" max="${hoy()}" onchange="pfDia(this.value)"><button class="btn sm" onclick="pfDia('${addDia(P.dia, 1)}')" ${P.dia >= hoy() ? 'disabled' : ''}>Día siguiente ▶</button></div></div>
+      <div class="kpis"><div class="kpi"><b>${nf(u, 0)}</b><span>🧱 moldeadas el ${fd(P.dia)} · ${nf(kg, 0)} kg ${kgW} · ${del.length} línea${del.length === 1 ? '' : 's'}</span></div>
+        <div class="kpi"><b>${nf(fu, 0)}</b><span>✅ fundidas (confirmadas) ese día · ${nf(fkg, 0)} kg ${kgW}</span></div>
+        <div class="kpi"><b>${nf(pe, 0)}</b><span>⏳ de lo moldeado ese día, siguen sin fundir</span></div></div>
+      <div class="panel"><h2 style="text-transform:capitalize">${E(diaTxt(P.dia))}</h2>
+        ${del.length ? `<div class="filters">${fb('todas', 'Todas')}${fb('sin', '⏳ Sin fundir')}${fb('fun', '✅ Fundidas')}</div><div class="tblwrap"><table style="min-width:640px"><tr><th>Colada</th><th>Pieza</th><th class="num">Moldeadas</th><th>Estado</th></tr>${rows.map(l => filaMold(l, false)).join('') || '<tr><td colspan="4" class="mono" style="padding:14px">Nada con este filtro.</td></tr>'}</table></div>`
+          : `<div class="mono" style="padding:10px 0">No se cargó ninguna pieza como moldeada este día (no hay un parte cargado con esa fecha).</div>`}</div>`;
   }
+  window.pfDia = d => { if (!d) return; P.dia = d; P.fmol = 'todas'; pintar(); };
+  window.pfFmol = k => { P.fmol = k; pintar(); };
+  window.pfBusca2 = v => { P.q2 = v; pintar(); };
   window.pfExportar = async () => {
     try { await needXlsx(); const H = ['Fecha moldeo', 'Colada', 'Código', 'Descripción', 'Cliente', 'OC', 'Probeta', 'Tipo', 'Moldeadas', 'Kg neto', 'Kg bruto', 'Pend. fusión', 'En Terminación', 'Ya salieron', 'Destino'];
       const rows = P.L.slice().sort((a, b) => String(b.primera_carga).localeCompare(String(a.primera_carga)) || Number(a.colada) - Number(b.colada)).map(l => [l.primera_carga, l.colada, l.codigo, l.descripcion, l.cliente, l.oc_norm || l.oc, l.probeta || '', TIPO[l.tipo][0], l.cant, Math.round(l.cant * l.peso_neto * 10) / 10, Math.round(l.cant * l.peso_bruto * 10) / 10, Math.max(0, pend(l)), Math.max(0, term(l)), Number(l.terminado), l.destino ? (DEST[l.destino] || l.destino) : '']);
@@ -7294,14 +7325,14 @@ function showToast(message, kind) {
         <td><select ${ed ? '' : 'disabled'} onchange="pfRegla('${E(l.codigo)}','ruta_id',this.value)">${RUTAS().map(x => `<option value="${x.id}" ${Number(rid) === x.id ? 'selected' : ''}>Ruta ${x.id} · ${E(x.n)}</option>`).join('')}</select></td></tr>`; }).join('');
     return `<div class="panel"><h2>Qué pasa después de Terminación</h2><p class="sub">Destino y ruta propuestos por artículo (pedidos con mecanizado → Mecanizado; manotas y piezas de kanban → estantería; machos y hembras de aros → Sector Z). Se corrige acá y rige desde ya.</p><div class="tblwrap"><table><tr><th>Artículo</th><th>Tipo</th><th>Destino al terminar</th><th>Ruta de Terminación</th></tr>${rows}</table></div></div>`;
   }
-  const TABS = [['seg', '📋 Seguimiento'], ['moldeo', '🧱 Moldeo por día'], ['cargar', '⬆ Cargar parte'], ['vinculo', '🔗 Pedidos de SGA'], ['reglas', '⚙️ Destino y ruta']];
+  const TABS = [['moldeo', '🧱 Moldeo por día'], ['seg', '📋 Fusión y Terminación'], ['cargar', '⬆ Cargar parte'], ['vinculo', '🔗 Pedidos de SGA'], ['reglas', '⚙️ Destino y ruta']];
   function pintar() {
     ensureDom(); const W = document.getElementById('pf-wrap');
     const V = { seg: vSeg, moldeo: vMoldeo, cargar: vCargar, vinculo: vVinculo, reglas: vReglas };
-    const foco = document.activeElement && document.activeElement.id === 'pf-q' ? document.activeElement.selectionStart : null;
+    const fid = document.activeElement && ['pf-q', 'pf-q2'].includes(document.activeElement.id) ? document.activeElement.id : null, foco = fid ? document.activeElement.selectionStart : null;
     W.innerHTML = `<div class="top"><h1>🔥 Parte de fusión</h1><button class="btn" onclick="pfClose()">✕ Cerrar</button></div>
       <div class="tabs">${TABS.map(([k, t]) => `<button class="tab ${P.tab === k ? 'on' : ''}" onclick="pfTab('${k}')">${t}</button>`).join('')}</div>${!P.loaded ? '<div class="panel"><div class="mono">Cargando…</div></div>' : V[P.tab]()}`;
-    if (foco != null) { const i = document.getElementById('pf-q'); if (i) { i.focus(); try { i.setSelectionRange(foco, foco); } catch (e) { /* sin cursor */ } } }
+    if (foco != null) { const i = document.getElementById(fid); if (i) { i.focus(); try { i.setSelectionRange(foco, foco); } catch (e) { /* sin cursor */ } } }
   }
   window.pfOpen = async (tab, q) => {
     if (!puedeSec() && !admin()) return; ensureDom(); if (tab) P.tab = tab; if (q != null) { P.q = q; P.filtro = 'todas'; }
@@ -7371,7 +7402,7 @@ function showToast(message, kind) {
     try {
       const r = await rpc('pf_cargar', { p_fecha: fecha, p_archivo: P.archivo, p_lineas: P.rows });
       P.msg = `<b>Parte cargado.</b> ${r.nuevas} líneas nuevas (empiezan el proceso, ${nf(r.moldeado, 0)} u. moldeadas), ${r.ya} ya estaban (no se cuentan otra vez), ${r.cambian} con cambio de cantidad, ${r.no_figuran} dejaron de figurar (solo aviso).`;
-      P.prev = null; P.rows = null; toast('Parte cargado'); P.tab = 'seg'; P.filtro = 'pend'; await recargar();
+      P.prev = null; P.rows = null; toast('Parte cargado'); P.tab = 'moldeo'; P.dia = fecha; P.q2 = ''; P.fmol = 'todas'; await recargar();
     } catch (e) { if (b) b.disabled = false; alert(errTxt(e)); }
   };
   window.pfStateForTest = () => P;
