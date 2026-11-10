@@ -3262,6 +3262,21 @@ function renderIndicadoresPanel() {
 
 // ---- Rechazos: carga desde Terminación ----
 let rz = null;
+let rzKanbanLineas = [];
+async function rzCargarKanban() {
+  try {
+    const { data, error } = await supabaseClient.from('pf_lineas')
+      .select('id,colada,codigo,oc,oc_norm,cliente,descripcion,material,probeta,tipo,peso_neto,peso_bruto,fundido,terminado,consumido')
+      .in('tipo', ['kanban', 'interno']).gt('fundido', 0).order('id', { ascending: false }).range(0, 4999);
+    if (error) throw error;
+    rzKanbanLineas = (data || [])
+      .map(l => ({ ...l, disp: (Number(l.fundido) || 0) - (Number(l.terminado) || 0) - (Number(l.consumido) || 0) }))
+      .filter(l => l.disp > 0.0001);
+  } catch (e) {
+    console.warn('No se pudieron cargar las piezas de kanban/stock para rechazo:', e && e.message);
+    rzKanbanLineas = [];
+  }
+}
 function puedeCargarRechazo() { return puedeVer('rechazo') && puedeDividir(); }
 function renderRechazoPanel() {
   const nuevo = document.getElementById('rz-nuevo-btn');
@@ -3306,21 +3321,49 @@ function rzBuscar(q) {
   const box = document.getElementById('rz-results');
   if (!box) return;
   const t = q.trim().toLowerCase();
-  if (t.length < 2) { box.innerHTML = '<div class="text-dim" style="padding:6px 2px; font-size:0.75rem;">Escribí cliente, NV, código o descripción (mínimo 2 letras).</div>'; return; }
-  const res = BASE.filter(r => r.estado_general !== 'Cancelado' && [r.cliente, r.comprobante, r.codigo, r.descripcion, r.oc].some(x => String(x || '').toLowerCase().includes(t))).slice(0, 25);
-  box.innerHTML = res.length ? res.map(r => `
+  if (t.length < 2) { box.innerHTML = '<div class="text-dim" style="padding:6px 2px; font-size:0.75rem;">Escribí cliente, NV, código o descripción (mínimo 2 letras). Las piezas de kanban/stock se buscan por código, colada o descripción.</div>'; return; }
+  const res = BASE.filter(r => r.estado_general !== 'Cancelado' && [r.cliente, r.comprobante, r.codigo, r.descripcion, r.oc].some(x => String(x || '').toLowerCase().includes(t))).slice(0, 20);
+  const resPf = rzKanbanLineas.filter(l => [l.codigo, l.descripcion, l.cliente, l.oc, l.colada].some(x => String(x || '').toLowerCase().includes(t))).slice(0, 10);
+  const htmlBase = res.map(r => `
     <button type="button" onclick="rzElegir(${r.id})" style="display:block; width:100%; text-align:left; background:${rz.sel === r.id ? '#1e3a5f' : '#0f172a'}; border:1px solid var(--card-border); color:#e2e8f0; border-radius:8px; padding:7px 9px; margin-bottom:5px; font-size:0.78rem; cursor:pointer;">
       <b>${escHtml(r.descripcion)}</b><br><span class="text-dim">${escHtml(r.cliente)} · NV ${escHtml(r.comprobante)} · Cód ${escHtml(r.codigo)} · pend. ${fmtN(r.pend)}</span>
-    </button>`).join('') : '<div class="text-dim" style="padding:6px 2px; font-size:0.75rem;">Sin resultados.</div>';
+    </button>`).join('');
+  const htmlPf = resPf.map(l => `
+    <button type="button" onclick="rzElegirPf(${l.id})" style="display:block; width:100%; text-align:left; background:${rz.selPf === l.id ? '#1e3a5f' : '#0f172a'}; border:1px solid #a855f7; color:#e2e8f0; border-radius:8px; padding:7px 9px; margin-bottom:5px; font-size:0.78rem; cursor:pointer;">
+      <b>${escHtml(l.descripcion || l.codigo)}</b><br><span class="text-dim">📋 Kanban / stock · Cód ${escHtml(l.codigo)}${l.colada ? ' · Colada ' + escHtml(l.colada) : ''} · en Terminación: ${fmtN(l.disp)}</span>
+    </button>`).join('');
+  const html = htmlBase + htmlPf;
+  box.innerHTML = html || '<div class="text-dim" style="padding:6px 2px; font-size:0.75rem;">Sin resultados.</div>';
 }
 function rzKgAuto() {
-  const b = rz.sel ? baseRow(rz.sel) : null;
   const c = Number(rz.cant) || 0;
-  if (!b || c <= 0) return 0;
+  if (c <= 0) return 0;
+  if (rz.selPf) {
+    const l = rzKanbanLineas.find(x => x.id === rz.selPf);
+    return l ? Math.round((l.peso_neto || 0) * c * 10) / 10 : 0;
+  }
+  const b = rz.sel ? baseRow(rz.sel) : null;
+  if (!b) return 0;
   return Math.round((b.kxu > 0 ? b.kxu * c : (b.cant > 0 ? b.kilos * c / b.cant : 0)) * 10) / 10;
+}
+function rzElegirPf(id) {
+  const l = rzKanbanLineas.find(x => x.id === id);
+  if (!l) return;
+  rz.selPf = id;
+  rz.sel = null;
+  rz.probeta = l.probeta || '';
+  const lbl = document.getElementById('rz-sel');
+  if (lbl) lbl.innerHTML = `✔ <b style="color:#fff;">${escHtml(l.descripcion || l.codigo)}</b> <span class="text-dim">— 📋 Kanban / stock · Cód ${escHtml(l.codigo)}${l.colada ? ' · Colada ' + escHtml(l.colada) : ''} · en Terminación: ${fmtN(l.disp)}</span>`;
+  const pi = document.getElementById('rz-probeta'); if (pi) pi.value = rz.probeta;
+  rz.traza = l.probeta ? 'si' : '';
+  const tz = document.getElementById('rz-traza'); if (tz) tz.value = rz.traza;
+  rzTrazaUI();
+  rzBuscar(rz.q || '');
+  rzActualizarKg();
 }
 function rzElegir(id) {
   rz.sel = id;
+  rz.selPf = null;
   rz.probeta = '';
   const b = baseRow(id);
   const lbl = document.getElementById('rz-sel');
@@ -3345,7 +3388,7 @@ function rzActualizarKg() {
 }
 function openRechazoDialog() {
   if (!puedeCargarRechazo()) { alert('Tu usuario no tiene permiso para registrar rechazos.'); return; }
-  rz = { q: '', sel: null, cant: '', traza: '', probeta: '', motivo: '', otro: '', detalle: '', kg: 0, kgTocado: false };
+  rz = { q: '', sel: null, selPf: null, cant: '', traza: '', probeta: '', motivo: '', otro: '', detalle: '', kg: 0, kgTocado: false };
   const activos = motivosList.filter(m => m.activo !== false);
   const motivoHtml = activos.length ? `
     <div class="stock-field"><label>Motivo</label>
@@ -3379,9 +3422,11 @@ function openRechazoDialog() {
       <button class="stock-btn-primary" id="rz-save-btn" onclick="saveRechazo()">Registrar rechazo</button>
     </div>`);
   rzBuscar('');
+  rzCargarKanban().then(() => rzBuscar(rz.q || ''));
   setTimeout(() => { const i = document.getElementById('rz-buscar'); if (i) i.focus(); }, 50);
 }
 async function saveRechazo() {
+  if (rz.selPf) return saveRechazoKanban();
   const b = rz.sel ? baseRow(rz.sel) : null;
   if (!b) { alert('Elegí la pieza rechazada.'); return; }
   const cant = Number(rz.cant);
@@ -3406,6 +3451,36 @@ async function saveRechazo() {
     console.error('No se pudo registrar el rechazo:', e);
     let msg = 'No se pudo registrar el rechazo.';
     if (e && (e.code === 'PGRST205' || e.code === '42P01')) msg = 'La base todavía no tiene la tabla de rechazos. Avisale a quien administra el tablero (falta correr el SQL 006).';
+    else if (e && e.code === '42501') msg = 'Tu usuario no tiene permiso para registrar rechazos (hace falta Colaborador o Editor y la sección Rechazos).';
+    else if (e && e.message) msg += ' ' + e.message;
+    alert(msg);
+    if (btn) { btn.disabled = false; btn.textContent = 'Registrar rechazo'; }
+  }
+}
+
+async function saveRechazoKanban() {
+  const l = rzKanbanLineas.find(x => x.id === rz.selPf);
+  if (!l) { alert('Elegí la pieza rechazada.'); return; }
+  const cant = Number(rz.cant);
+  if (!(cant > 0)) { alert('Poné la cantidad rechazada.'); return; }
+  if (cant > l.disp) { alert('No puede ser más que lo que está en Terminación: ' + fmtN(l.disp) + ' u.'); return; }
+  const motivo = (rz.motivo === '__otro__' || (!rz.motivo && rz.otro)) ? (rz.otro || '').trim() : (rz.motivo || '').trim();
+  if (!motivo) { alert('Elegí o escribí el motivo del rechazo.'); return; }
+  const btn = document.getElementById('rz-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+  try {
+    const { error } = await supabaseClient.rpc('pf_rechazar', {
+      p_linea: l.id, p_cant: cant, p_motivo: motivo,
+      p_detalle: (rz.detalle || '').trim() || null,
+      p_probeta: (rz.probeta || '').trim() || null,
+    });
+    if (error) throw error;
+    closeStockDialog();
+    showToast('Rechazo registrado — se descontó de Terminación y pasa a Planificación', 'success');
+  } catch (e) {
+    console.error('No se pudo registrar el rechazo (kanban/stock):', e);
+    let msg = 'No se pudo registrar el rechazo.';
+    if (e && (e.code === '42883' || e.code === 'PGRST202' || /pf_rechazar/i.test(e.message || ''))) msg = 'La base todavía no tiene el rechazo de piezas de kanban/stock. Avisale a quien administra el tablero (falta correr el SQL 026).';
     else if (e && e.code === '42501') msg = 'Tu usuario no tiene permiso para registrar rechazos (hace falta Colaborador o Editor y la sección Rechazos).';
     else if (e && e.message) msg += ' ' + e.message;
     alert(msg);
