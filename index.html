@@ -3248,6 +3248,32 @@ function renderIndicadoresPanel() {
   ];
   const etapasChart = barChartSvg({ labels: etapas.map(e => e[0]), series: [{ name: 'Kg', color: '#38bdf8', colors: etapas.map(e => e[2]), values: etapas.map(e => e[1]) }] });
 
+  // 7) A despachar por mes, según fecha de entrega (todo lo pendiente, lo atrasado se suma en el mes actual)
+  const HORIZONTE_DESP_FUT = 5; // meses además del actual
+  const mesesDespFut = [];
+  for (let o = 0; o <= HORIZONTE_DESP_FUT; o++) {
+    const r = mesRango(o);
+    const mm = Number(r.ini.slice(5, 7));
+    mesesDespFut.push({ r, label: MESES_CORTO[mm - 1] + (mm === 1 ? ' ' + r.ini.slice(2, 4) : '') });
+  }
+  const finHorizonteDespFut = mesesDespFut[mesesDespFut.length - 1].r.fin;
+  const kgPorMesDespFut = mesesDespFut.map(() => 0);
+  let kgDespMasAdelante = 0, kgDespSinFecha = 0;
+  vivos.forEach(r => {
+    const u = Math.max(0, (r.pend || 0) - despRowCant(r));
+    if (u <= 0) return;
+    const kg = r.pend > 0 ? r.kilos * (u / r.pend) : 0;
+    if (!r.fecha_entrega) { kgDespSinFecha += kg; return; }
+    if (r.fecha_entrega > finHorizonteDespFut) { kgDespMasAdelante += kg; return; }
+    const idx = mesesDespFut.findIndex(m => r.fecha_entrega <= m.r.fin);
+    if (idx >= 0) kgPorMesDespFut[idx] += kg;
+  });
+  const totalDespFutKg = kgPorMesDespFut.reduce((a, b) => a + b, 0) + kgDespMasAdelante + kgDespSinFecha;
+  const labelsDespFut = [...mesesDespFut.map(m => m.label), 'Más adelante', 'Sin fecha'];
+  const valoresDespFut = [...kgPorMesDespFut, kgDespMasAdelante, kgDespSinFecha];
+  const coloresDespFut = [...mesesDespFut.map((m, i) => i === 0 ? '#ef4444' : '#38bdf8'), '#64748b', '#94a3b8'];
+  const despPorMesChart = barChartSvg({ labels: labelsDespFut, series: [{ name: 'Kg', color: '#38bdf8', colors: coloresDespFut, values: valoresDespFut }], rotate: true });
+
   const card = (titulo, sub, cuerpo, extra) => `
     <div style="background:#0f172a; border:1px solid var(--card-border); border-radius:12px; padding:12px 12px 8px; min-width:0;">
       <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
@@ -3281,6 +3307,7 @@ function renderIndicadoresPanel() {
       ${hayMoldeado ? card('🧱 Moldeado por semana', `Kg ${indState.kgTipo === 'bruto' ? 'brutos' : 'netos'} cargados desde el parte de fusión · total ${tot8('molKg')} Kg`, semChart('molKg', 'Moldeado', '#38bdf8')) : ''}
       ${card('❌ Rechazo por semana', `Kg · total ${tot8('recKg')} Kg`, semChart('recKg', 'Rechazo', '#ef4444'))}
       ${card('📥 Ingresado vs despachado por mes', 'Kg · últimos 6 meses · <span style="color:#38bdf8;">■</span> ingresado <span style="color:#c084fc;">■</span> despachado', ingDes + (hayIngresos ? '<div class="text-dim" style="font-size:0.66rem; padding:2px 2px 6px;">Los meses anteriores a la activación solo incluyen lo que sigue pendiente en SGA, así que quedan incompletos.</div>' : '<div class="text-dim" style="font-size:0.66rem; padding:2px 2px 6px;">Falta correr el SQL 007 para cargar los ingresos.</div>'))}
+      ${card('📅 A despachar por mes (según fecha de entrega)', `Todo lo que falta despachar de los pedidos abiertos, agrupado por el mes de entrega · lo atrasado se suma en <b style="color:#ef4444;">${mesesDespFut[0].label}</b> · total ${fmtN(totalDespFutKg)} Kg`, despPorMesChart)}
       ${card('📉 Pareto de rechazos por motivo', `Total del período: ${fmtN(totalP, med === 'kg' ? 1 : 0)} ${med === 'kg' ? 'Kg' : 'u.'} · línea amarilla = % acumulado`, pareto, medBtns)}
       ${card('🏭 Kg en cada etapa, hoy', 'Lo que hay ahora en el circuito', etapasChart)}
     </div>`;
