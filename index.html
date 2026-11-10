@@ -3463,7 +3463,7 @@ function renderIndicadoresPanel() {
       ${hayMoldeado ? card('🧱 Moldeado por semana', `Kg ${indState.kgTipo === 'bruto' ? 'brutos' : 'netos'} cargados desde el parte de fusión · total ${tot8('molKg')} Kg`, semChart('molKg', 'Moldeado', '#38bdf8')) : ''}
       ${card('❌ Rechazo por semana', `Kg · total ${tot8('recKg')} Kg`, semChart('recKg', 'Rechazo', '#ef4444'))}
       ${card('📥 Ingresado vs despachado por mes', 'Kg · últimos 6 meses · <span style="color:#38bdf8;">■</span> ingresado <span style="color:#c084fc;">■</span> despachado', ingDes + (hayIngresos ? '<div class="text-dim" style="font-size:0.66rem; padding:2px 2px 6px;">Los meses anteriores a la activación solo incluyen lo que sigue pendiente en SGA, así que quedan incompletos.</div>' : '<div class="text-dim" style="font-size:0.66rem; padding:2px 2px 6px;">Falta correr el SQL 007 para cargar los ingresos.</div>'))}
-      ${card('📅 A despachar por mes (según fecha de entrega)', `Todo lo que falta despachar de los pedidos abiertos, agrupado por el mes de entrega · lo atrasado se suma en <b style="color:#ef4444;">${mesesDespFut[0].label}</b> · pedidos ${fmtN(totalDespFutKg)} Kg${EST ? ` · <b style="color:#7dd3fc;">+ ${fmtN(totalEstKg)} Kg estimados</b> (rayado: sale del promedio de ventas de las piezas de kanban, no son pedidos)` : ''}`, despPorMesChart)}
+      ${card('📅 A despachar por mes (según fecha de entrega)', `Todo lo que falta despachar de los pedidos abiertos, agrupado por el mes de entrega · lo atrasado se suma en <b style="color:#ef4444;">${mesesDespFut[0].label}</b> · pedidos ${fmtN(totalDespFutKg)} Kg${EST ? ` · <b style="color:#7dd3fc;">+ ${fmtN(totalEstKg)} Kg estimados</b> (rayado: sale del promedio de ventas de las piezas de kanban, no son pedidos)` : ''}`, despPorMesChart, (window.cirConciliar && typeof puedeDividir === 'function' && (puedeDividir() || (CURRENT_PROFILE && CURRENT_PROFILE.es_admin))) ? `<button class="chip" title="Remitos de SGA que el tablero no tiene como despachados" onclick="cirConciliar()">🧾 Conciliar remitos</button>` : '')}
       ${card('📉 Pareto de rechazos por motivo', `Total del período: ${fmtN(totalP, med === 'kg' ? 1 : 0)} ${med === 'kg' ? 'Kg' : 'u.'} · línea amarilla = % acumulado`, pareto, medBtns)}
       ${card('🏭 Kg en cada etapa, hoy', 'Lo que hay ahora en el circuito', etapasChart)}
     </div>`;
@@ -6667,6 +6667,104 @@ function showToast(message, kind) {
     });
     return { items, meses: M.meses.length, hasta: M.info.hasta };
   };
+  // ---------- Conciliar remitos (SGA) con los despachos del tablero ----------
+  // Lo que salió con remito pero no figura en despachos_log (ventas que nacieron y salieron entre dos actualizaciones del tablero).
+  const CONC = { dias: 30, q: '', lines: [], ign: new Set(), rows: [], sel: new Set(), desde: null, nota: '', cargando: false };
+  const concNorm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  const concRef = l => l.comprobante + '|' + l.linea;
+  async function concLoad() {
+    CONC.cargando = true; concDraw();
+    try {
+      if (!C.loaded) await load();
+      const hasta = C.ventasInfo && C.ventasInfo.hasta;
+      if (!C.ventasOK || !hasta) { CONC.lines = []; CONC.nota = 'Todavía no hay remitos cargados (parche 029 + Excel en Kanban).'; return; }
+      const logs = (typeof despachosLog !== 'undefined') ? despachosLog : [];
+      const minLog = logs.reduce((m, d) => (d.dia && (!m || d.dia < m)) ? d.dia : m, null);
+      let desde = new Date(kvUTC(hasta) - CONC.dias * 864e5).toISOString().slice(0, 10);
+      CONC.nota = '';
+      if (minLog && desde < minLog) { desde = minLog; CONC.nota = 'Se compara desde ' + kvFecha(minLog) + ': antes de esa fecha el tablero no tiene despachos registrados.'; }
+      CONC.desde = desde; CONC.hasta = hasta;
+      const out = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabaseClient.from('kanban_ventas').select('comprobante,linea,fecha,codigo,descripcion,cantidad,kilos,cliente').gte('fecha', desde).order('id').range(from, from + 999);
+        if (error) throw error; out.push(...(data || [])); if (!data || data.length < 1000) break;
+      }
+      CONC.lines = out;
+      try { const r = await supabaseClient.from('remitos_ignorados').select('remito_ref'); CONC.ign = new Set(r.error ? [] : (r.data || []).map(x => x.remito_ref)); CONC.ignOK = !r.error; } catch (e) { CONC.ign = new Set(); CONC.ignOK = false; }
+    } catch (e) { CONC.lines = []; CONC.nota = 'No se pudo cargar: ' + (e.message || e); }
+    finally { CONC.cargando = false; concCompute(); concDraw(); }
+  }
+  // Para cada línea de remito, se descuentan unidades de los despachos del tablero del mismo código (±10 días, primero el mismo cliente). Lo que sobra es lo que falta registrar.
+  function concCompute() {
+    const logs = (typeof despachosLog !== 'undefined') ? despachosLog : [], DIA = 864e5, VENT = 10 * DIA, pool = {}, yaRef = new Set();
+    logs.forEach(l => { if (l.remito_ref) { yaRef.add(l.remito_ref); return; } (pool[l.codigo] = pool[l.codigo] || []).push({ rem: Number(l.cantidad) || 0, t: kvUTC(l.dia), cli: concNorm(l.cliente) }); });
+    const rows = [];
+    CONC.lines.slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || a.comprobante.localeCompare(b.comprobante) || a.linea - b.linea).forEach(l => {
+      const ref = concRef(l); if (yaRef.has(ref) || CONC.ign.has(ref)) return;
+      let need = Number(l.cantidad) || 0; if (need <= 0) return;
+      const t = kvUTC(l.fecha), cli = concNorm(l.cliente);
+      (pool[l.codigo] || []).filter(p => p.rem > 0 && Math.abs(p.t - t) <= VENT)
+        .sort((a, b) => ((b.cli === cli) - (a.cli === cli)) || (Math.abs(a.t - t) - Math.abs(b.t - t)))
+        .forEach(p => { if (need <= 0) return; const take = Math.min(need, p.rem); p.rem -= take; need -= take; });
+      if (need > 1e-9) rows.push({ ref, l, falta: need, kg: l.kilos != null && l.cantidad ? Number(l.kilos) * need / Number(l.cantidad) : 0 });
+    });
+    CONC.rows = rows; CONC.sel = new Set([...CONC.sel].filter(r => rows.some(x => x.ref === r)));
+  }
+  const concVisibles = () => { const toks = concNorm(CONC.q).split(' ').filter(Boolean); return CONC.rows.filter(x => !toks.length || toks.every(t => concNorm([x.l.cliente, x.l.comprobante, x.l.codigo, x.l.descripcion].join(' ')).includes(t))); };
+  function concDraw() {
+    let ov = document.getElementById('cir-conc-ov');
+    if (!ov) { ov = document.createElement('div'); ov.id = 'cir-conc-ov'; ov.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,.65); z-index:1600; display:flex; align-items:center; justify-content:center; padding:12px;'; ov.onclick = e => { if (e.target === ov) cirConcClose(); }; document.body.appendChild(ov); }
+    ov.style.display = 'flex';
+    const sc0 = ov.querySelector('.conc-sc'), st0 = sc0 ? sc0.scrollTop : 0;
+    const vis = concVisibles(), tk = vis.reduce((a, x) => a + x.kg, 0), tu = vis.reduce((a, x) => a + x.falta, 0), nsel = CONC.sel.size;
+    const th = 'text-align:left; padding:6px 8px; font-size:.66rem; text-transform:uppercase; color:#94a3b8; border-bottom:1px solid #334155; white-space:nowrap; position:sticky; top:0; background:#0f172a;';
+    const td = 'padding:5px 8px; font-size:.76rem; border-bottom:1px solid #1e293b;';
+    const body = CONC.cargando ? '<tr><td colspan="8" style="padding:16px; color:#94a3b8;">Cargando remitos…</td></tr>'
+      : !vis.length ? `<tr><td colspan="8" style="padding:16px; color:#94a3b8;">${CONC.rows.length ? 'Ninguna línea coincide con la búsqueda.' : '✔ No hay remitos sin registrar en este período: todo lo que salió figura en los despachos del tablero.'}</td></tr>`
+      : vis.map(x => `<tr><td style="${td}"><input type="checkbox" ${CONC.sel.has(x.ref) ? 'checked' : ''} onchange="cirConcSel('${esc(x.ref)}',this.checked)"></td><td style="${td}">${kvFecha(x.l.fecha)}</td><td style="${td}">${esc(x.l.comprobante)}</td><td style="${td}">${esc(x.l.cliente || '')}</td><td style="${td}">${esc(x.l.codigo)}</td><td style="${td}">${esc(x.l.descripcion || '')}</td><td style="${td} text-align:right;">${fmtN(x.falta, x.falta % 1 ? 1 : 0)}${x.falta < Number(x.l.cantidad) ? `<div class="code">de ${fmtN(x.l.cantidad)}</div>` : ''}</td><td style="${td} text-align:right;">${fmtN(x.kg, 1)}</td></tr>`).join('');
+    const chip = n => `<button class="chip ${CONC.dias === n ? 'active' : ''}" onclick="cirConcDias(${n})">${n} días</button>`;
+    ov.innerHTML = `<div style="background:#0f172a; border:1px solid var(--card-border); border-radius:14px; width:min(1040px,100%); max-height:90vh; display:flex; flex-direction:column;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--card-border);"><div style="font-weight:700; color:#fff;">🧾 Remitos que no figuran como despachados en el tablero</div><button onclick="cirConcClose()" style="background:transparent; border:1px solid var(--card-border); color:#cbd5e1; border-radius:8px; padding:3px 10px; cursor:pointer;">✕</button></div>
+      <div style="padding:10px 16px 0;">
+        <div class="text-dim" style="font-size:.74rem; line-height:1.45;">Compara el Informe de Remitos cargado${CONC.hasta ? ` (hasta el ${kvFecha(CONC.hasta)})` : ''} contra los despachos del tablero: mismo código, mismas unidades, con hasta 10 días de diferencia. Lo que queda acá salió con remito y el tablero no lo sabe: al registrarlo suma a Despachado (indicadores) con la fecha del remito.${CONC.nota ? `<br>ℹ ${esc(CONC.nota)}` : ''}${CONC.ignOK === false ? '<br>⚠ Falta correr el parche 030 en Supabase para registrar o ignorar.' : ''}</div>
+        <div class="quick-chips" style="margin:8px 0;">${chip(15)}${chip(30)}${chip(60)}${chip(90)}<input type="search" placeholder="🔎 Buscar cliente, remito, código…" value="${esc(CONC.q)}" oninput="cirConcQ(this.value)" style="flex:1; min-width:180px; background:#0b1220; border:1px solid var(--card-border); color:#fff; border-radius:8px; padding:6px 10px; font-size:.8rem;"></div>
+      </div>
+      <div class="conc-sc" style="padding:0 16px; overflow:auto; flex:1; min-height:0;"><table style="width:100%; border-collapse:collapse;"><thead><tr><th style="${th}"><input type="checkbox" onchange="cirConcTodos(this.checked)" ${vis.length && vis.every(x => CONC.sel.has(x.ref)) ? 'checked' : ''}></th><th style="${th}">Fecha</th><th style="${th}">Remito</th><th style="${th}">Cliente</th><th style="${th}">Código</th><th style="${th}">Descripción</th><th style="${th} text-align:right;">Sin registrar (u)</th><th style="${th} text-align:right;">Kg</th></tr></thead><tbody>${body}</tbody></table></div>
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 16px; border-top:1px solid var(--card-border);"><div class="text-dim" style="font-size:.76rem;">${vis.length} línea${vis.length === 1 ? '' : 's'} · ${fmtN(tu)} u. · ${fmtN(tk, 1)} Kg · ${nsel} seleccionada${nsel === 1 ? '' : 's'}</div>
+        <div class="row-actions">${btn('No es un despacho del tablero', 'cirConcIgnorar()', '', !nsel)}${btn('✅ Registrar como despachado', 'cirConcRegistrar()', 'pri', !nsel)}</div></div></div>`;
+    const sc1 = ov.querySelector('.conc-sc'); if (sc1) sc1.scrollTop = st0;
+  }
+  window.cirConciliar = () => { CONC.sel = new Set(); concLoad(); };
+  window.cirConcClose = () => { const ov = document.getElementById('cir-conc-ov'); if (ov) ov.style.display = 'none'; };
+  window.cirConcDias = n => { CONC.dias = n; concLoad(); };
+  window.cirConcQ = v => { CONC.q = v; const pos = v.length; concDrawKeepFocus(pos); };
+  function concDrawKeepFocus(pos) { concDraw(); const i = document.querySelector('#cir-conc-ov input[type=search]'); if (i) { i.focus(); try { i.setSelectionRange(pos, pos); } catch (e) { /* sin cursor */ } } }
+  window.cirConcSel = (ref, on) => { if (on) CONC.sel.add(ref); else CONC.sel.delete(ref); concDraw(); };
+  window.cirConcTodos = on => { concVisibles().forEach(x => { if (on) CONC.sel.add(x.ref); else CONC.sel.delete(x.ref); }); concDraw(); };
+  window.cirConcRegistrar = async () => {
+    const sel = CONC.rows.filter(x => CONC.sel.has(x.ref)); if (!sel.length) return;
+    const u = sel.reduce((a, x) => a + x.falta, 0), kg = sel.reduce((a, x) => a + x.kg, 0);
+    if (!confirm(`Se van a registrar ${sel.length} línea${sel.length === 1 ? '' : 's'} (${fmtN(u)} u. · ${fmtN(kg, 1)} Kg) como despachadas, con la fecha de cada remito. ¿Confirmás?`)) return;
+    try {
+      const { data, error } = await supabaseClient.rpc('remitos_registrar_despachos', { p_lineas: sel.map(x => ({ comprobante: x.l.comprobante, linea: x.l.linea, fecha: x.l.fecha, cliente: x.l.cliente, codigo: x.l.codigo, descripcion: x.l.descripcion, cantidad: x.falta, kg: x.kg })) });
+      if (error) throw error;
+      if (typeof despachosLog !== 'undefined') sel.forEach(x => despachosLog.push({ id: 'rem-' + x.ref, itemId: 0, cliente: x.l.cliente, comprobante: 'REM ' + x.l.comprobante, codigo: x.l.codigo, descripcion: x.l.descripcion, cantidad: x.falta, kg: Math.round(x.kg * 10) / 10, dia: x.l.fecha, remito_ref: x.ref }));
+      CONC.sel = new Set(); concCompute(); concDraw();
+      try { if (typeof showToast === 'function') showToast('Registrados ' + (data == null ? sel.length : data) + ' despachos desde remitos', 'success'); } catch (e) { /* sin aviso */ }
+      try { if (typeof renderIndicadoresPanel === 'function' && typeof currentFilter !== 'undefined' && currentFilter === 'indicadores') renderIndicadoresPanel(); } catch (e) { /* sin refrescar */ }
+    } catch (e) { alert(/Could not find the function|schema cache/i.test(e.message || '') ? 'Falta correr el parche 030 en Supabase.' : 'No se pudo registrar: ' + (e.message || e)); }
+  };
+  window.cirConcIgnorar = async () => {
+    const sel = CONC.rows.filter(x => CONC.sel.has(x.ref)); if (!sel.length) return;
+    const motivo = prompt(`${sel.length} línea${sel.length === 1 ? '' : 's'} no se van a contar como despacho del tablero y salen de esta lista para siempre.\nMotivo (opcional):`, '');
+    if (motivo === null) return;
+    try {
+      const { error } = await supabaseClient.rpc('remitos_ignorar', { p_refs: sel.map(x => x.ref), p_motivo: motivo });
+      if (error) throw error;
+      sel.forEach(x => CONC.ign.add(x.ref)); CONC.sel = new Set(); concCompute(); concDraw();
+    } catch (e) { alert(/Could not find the function|schema cache/i.test(e.message || '') ? 'Falta correr el parche 030 en Supabase.' : 'No se pudo guardar: ' + (e.message || e)); }
+  };
+
   function kvPanel(u, nRev) {
     const M = kvModelo(), i = C.ventasInfo, up = puedePlanificar() ? `<input type="file" id="kv-file" accept=".xls,.xlsx" style="display:none" onchange="cirVentasFile(this)">${btn(M ? '⬆ Actualizar ventas (Excel)' : '⬆ Cargar informe de remitos', `document.getElementById('kv-file').click()`, 'pri')}` : '';
     if (!C.ventasOK) return `<div class="alert"><div>📈 <b>K sugerido según ventas</b> — falta correr el parche 029 en Supabase para poder usarlo.</div></div>`;
