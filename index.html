@@ -6530,6 +6530,15 @@ function showToast(message, kind) {
       }
       const inf = await supabaseClient.from('kanban_ventas_info').select('*').maybeSingle(); if (inf.error) throw inf.error;
       C.ventas = vm; C.ventasInfo = inf.data; C.ventasOK = true;
+      // últimos 30 días corridos hasta la última fecha cargada (para darle más peso a lo que se viene despachando)
+      C.u30 = {}; C.u30Desde = null;
+      if (inf.data && inf.data.hasta) {
+        C.u30Desde = new Date(kvUTC(inf.data.hasta) - 29 * 864e5).toISOString().slice(0, 10);
+        for (let from = 0; ; from += 1000) {
+          const { data, error } = await supabaseClient.from('kanban_ventas').select('codigo,cantidad').gte('fecha', C.u30Desde).order('id').range(from, from + 999);
+          if (error) throw error; (data || []).forEach(r => { C.u30[r.codigo] = (C.u30[r.codigo] || 0) + Number(r.cantidad); }); if (!data || data.length < 1000) break;
+        }
+      }
     } catch (e) { C.ventas = []; C.ventasInfo = null; C.ventasOK = false; }
     C._vm = null;
   }
@@ -6558,9 +6567,14 @@ function showToast(message, kind) {
     let cods = [c]; if (u === 'sector_z') C.recetas.forEach(r => { if (r.macho === c || r.hembra === c) cods.push(r.salida); });
     cods = [...new Set(cods)];
     let tot = 0, act = 0; M.meses.forEach(mk => { let s = 0; cods.forEach(cc => { s += (M.ven[cc] && M.ven[cc][mk]) || 0; }); tot += s; if (s > 0) act++; });
-    const n = M.meses.length, cm = tot / n;
-    return { cm, n, act, tr, ks: Math.ceil(cm * tr / 30 * 2 / 3 - 1e-9), esp: n >= 6 && act > 0 && act <= n / 4, via: cods.length - 1 };
+    const n = M.meses.length, prom = tot / n;
+    let u30 = 0; cods.forEach(cc => { u30 += (C.u30 && C.u30[cc]) || 0; });
+    const w = Math.max(0, Math.min(100, C.cfg.k_peso_ult30 == null ? 50 : Number(C.cfg.k_peso_ult30))) / 100;   // peso de los últimos 30 días
+    const cm = w * u30 + (1 - w) * prom, raw = Math.ceil(cm * tr / 30 * 2 / 3 - 1e-9);
+    return { cm, prom, u30, w, n, act, tr, raw, ks: kvRedondeo(raw), esp: n >= 6 && act > 0 && act <= n / 4, via: cods.length - 1 };
   }
+  // los pallets se arman de a 10: si el k calculado queda cerca de un múltiplo de 10 (±2) se redondea; con k chicos no se toca
+  function kvRedondeo(k) { if (k < 8) return k; const m = Math.round(k / 10) * 10; return (m >= 10 && Math.abs(m - k) <= 2) ? m : k; }
   // aviso (no bloqueante): el K sugerido se aparta del actual más que el umbral, para arriba o para abajo
   function kRev(u, c) {
     const s = kSug(u, c), k = kOf(u, c); if (!s || !(s.ks > 0) || !(k > 0)) return null;
@@ -6600,14 +6614,14 @@ function showToast(message, kind) {
     } catch (e) { alert('No se pudo leer el archivo: ' + (e.message || e)); }
   };
   window.cirAplicarK = (u, c) => { const s = kSug(u, c); if (!s) return; const k = kOf(u, c);
-    ask('Usar el K sugerido — ' + UBIC[u], esc(nombre(c)) + `<br>k actual <b>${k == null ? '—' : k}</b> → k sugerido <b>${s.ks}</b>.<br><span class="code">Ventas ${fmtN(s.cm, 1)} u/mes (promedio de ${s.n} meses) × plazo ${s.tr} d / 30 × 2/3${s.via ? ' · incluye las ventas de los aros que usan esta pieza' : ''}.</span>`, [], 'Usar ' + s.ks,
+    ask('Usar el K sugerido — ' + UBIC[u], esc(nombre(c)) + `<br>k actual <b>${k == null ? '—' : k}</b> → k sugerido <b>${s.ks}</b>.<br><span class="code">Ventas ${fmtN(s.cm, 0)} u/mes (${Math.round(s.w * 100)} % últimos 30 días = ${fmtN(s.u30, 0)} + ${Math.round((1 - s.w) * 100)} % promedio de ${s.n} meses = ${fmtN(s.prom, 0)}) × plazo ${s.tr} d / 30 × 2/3${s.raw !== s.ks ? ' = ' + s.raw + ', redondeado a ' + s.ks + ' (pallets de 10)' : ''}${s.via ? ' · incluye las ventas de los aros que usan esta pieza' : ''}.</span>`, [], 'Usar ' + s.ks,
       () => tbl(supabaseClient.from('mec_k').upsert({ ubicacion: u, codigo: c, k: s.ks }, { onConflict: 'ubicacion,codigo' }))); };
   function kvPanel(u, nRev) {
     const M = kvModelo(), i = C.ventasInfo, up = puedePlanificar() ? `<input type="file" id="kv-file" accept=".xls,.xlsx" style="display:none" onchange="cirVentasFile(this)">${btn(M ? '⬆ Actualizar ventas (Excel)' : '⬆ Cargar informe de remitos', `document.getElementById('kv-file').click()`, 'pri')}` : '';
     if (!C.ventasOK) return `<div class="alert"><div>📈 <b>K sugerido según ventas</b> — falta correr el parche 029 en Supabase para poder usarlo.</div></div>`;
     if (!M) return `<div class="alert"><div>📈 <b>K sugerido según ventas</b> — todavía no hay ventas cargadas${i && i.desde ? ' (o no alcanzan para un mes cerrado)' : ''}. Subí el <b>Informe Diario de Remitos</b> (Excel) y la pantalla calcula el k que correspondería a cada pieza.</div>${up}</div>`;
     const viejo = (kvUTC(TODAY()) - kvUTC(i.hasta)) / 864e5 > 45;
-    return `<div class="alert" style="${nRev ? '' : 'opacity:.85'}"><div>📈 <b>K sugerido según ventas</b> — ventas del ${kvFecha(i.desde)} al ${kvFecha(i.hasta)} (${i.remitos} remitos). Se promedian <b>${M.meses.length}</b> meses cerrados (${kvMes(M.meses[0])} a ${kvMes(M.meses[M.meses.length - 1])}); K = ventas por mes × plazo (${C.cfg[u === 'sector_z' ? 'plazo_sector_z' : 'plazo_kanban']} d) / 30 × 2/3.
+    return `<div class="alert" style="${nRev ? '' : 'opacity:.85'}"><div>📈 <b>K sugerido según ventas</b> — ventas del ${kvFecha(i.desde)} al ${kvFecha(i.hasta)} (${i.remitos} remitos). Se promedian <b>${M.meses.length}</b> meses cerrados (${kvMes(M.meses[0])} a ${kvMes(M.meses[M.meses.length - 1])}); Ventas por mes = ${C.cfg.k_peso_ult30 == null ? 50 : C.cfg.k_peso_ult30} % últimos 30 días (${kvFecha(C.u30Desde)} a ${kvFecha(i.hasta)}) + resto promedio de esos meses. K = ventas por mes × plazo (${C.cfg[u === 'sector_z' ? 'plazo_sector_z' : 'plazo_kanban']} d) / 30 × 2/3, redondeado a múltiplo de 10 cuando queda cerca (k de 8 para arriba).
       ${M.meses.length < 3 ? '<br>⚠ Hay pocos meses de historia: tomalo como orientativo.' : ''}${viejo ? '<br>Las ventas están cargadas hasta hace más de un mes: conviene subir un informe más nuevo.' : ''}
       ${nRev ? `<br>⚠ <b>${nRev}</b> pieza${nRev === 1 ? '' : 's'} con K sugerido distinto del actual en más de ${C.cfg.k_umbral_pct == null ? 20 : C.cfg.k_umbral_pct} % (para arriba o para abajo). Es solo un aviso: no se cambió nada. ${btn('Ver solo esas', `cirKanFilter('krev')`)}` : '<br>✔ Ningún k se aparta del sugerido más del umbral.'}</div>${up}</div>`;
   }
@@ -6637,8 +6651,8 @@ function showToast(message, kind) {
       return `<tr><td>${nameCell(x.c)}</td><td class="num"><b>${x.f}</b></td><td class="num"><b>${x.v}</b>${svRows(u, x.c)}</td>
         <td style="min-width:110px">${kanBar(x.k, x.f, x.v)}</td><td>${nivCell(x.nf)}</td><td>${nivCell(x.nv)}</td>
         <td class="num">${kgTxt(x.c)}${puedePlanificar() ? '<div>' + btn(kgDe(x.c) ? 'Kg/u' : 'Cargar Kg/u', `cir_kg('${esc(x.c)}')`) + '</div>' : ''}</td>
-        <td class="num">${x.s ? `<b>${fmtN(x.s.cm, 1)}</b><div class="code">en ${x.s.n} meses${x.s.esp ? ' · esporádica' : ''}</div>` : '—'}</td>
-        <td class="num">${!x.s ? '—' : x.s.ks <= 0 ? '<span class="code">sin ventas</span>' : `<b>${x.s.ks}</b>${x.rev ? `<div><span class="${x.rev.d > 0 ? 'rep' : 'soon'}" title="Aviso: no bloquea nada">⚠ ${x.rev.d > 0 ? 'subir' : 'bajar'} ${Math.abs(Math.round(x.rev.d))} %</span></div>` : ''}${puedePlanificar() && x.s.ks !== x.k ? '<div>' + btn('Usar ' + x.s.ks, `cirAplicarK('${u}','${esc(x.c)}')`) + '</div>' : ''}`}</td>
+        <td class="num">${x.s ? `<b>${fmtN(x.s.cm, 0)}</b><div class="code">30 d: ${fmtN(x.s.u30, 0)} · prom. ${fmtN(x.s.prom, 0)}${x.s.esp ? ' · esporádica' : ''}</div>` : '—'}</td>
+        <td class="num">${!x.s ? '—' : x.s.ks <= 0 ? '<span class="code">sin ventas</span>' : `<b title="${x.s.raw !== x.s.ks ? 'Calculado ' + x.s.raw + ', redondeado a múltiplo de 10 (pallets)' : ''}">${x.s.ks}</b>${x.rev ? `<div><span class="${x.rev.d > 0 ? 'rep' : 'soon'}" title="Aviso: no bloquea nada">⚠ ${x.rev.d > 0 ? 'subir' : 'bajar'} ${Math.abs(Math.round(x.rev.d))} %</span></div>` : ''}${puedePlanificar() && x.s.ks !== x.k ? '<div>' + btn('Usar ' + x.s.ks, `cirAplicarK('${u}','${esc(x.c)}')`) + '</div>' : ''}`}</td>
         <td><div class="row-actions">${puedePlanificar() ? btn('Cambiar k', `cir_k('${u}','${esc(x.c)}')`) + btn('Ajustar stock', `cir_ajustar('${u}','${esc(x.c)}')`) : ''}${u === 'sector_z' && alerta && x.L > 0 && puedePlanificar() ? btn('Lanzar OI por ' + x.L, `cir_moldeo(${x.L},'${esc(x.c)}',1)`, 'pri') : ''}${u === 'kanban' && alerta && x.L > 0 && puedePlanificar() ? btn('Lanzar OT por ' + x.L, `cir_nuevoPlan(${x.L},'${esc(x.c)}',1)`, 'pri') : ''}</div></td></tr>`; }).join('');
     return `<div class="tabs">${tabBtn('sector_z', '🗄️ Kanban de Terminación')}${tabBtn('kanban', '🏬 Kanban de Mecanizado')}</div>
       <div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:center;"><h2>${nom}</h2>
