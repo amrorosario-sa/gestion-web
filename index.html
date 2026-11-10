@@ -3354,15 +3354,21 @@ function rechazoCardHtml(r, conBoton) {
     </div>`;
 }
 
+function rzMatch(fields, q) {
+  const toks = q.split(/\s+/).filter(Boolean);
+  if (!toks.length) return false;
+  const hay = fields.map(x => String(x || '').toLowerCase()).join(' ');
+  return toks.every(tok => hay.includes(tok));
+}
 function rzBuscar(q) {
   rz.q = q;
   const box = document.getElementById('rz-results');
   if (!box) return;
   const t = q.trim().toLowerCase();
-  if (t.length < 2) { box.innerHTML = '<div class="text-dim" style="padding:6px 2px; font-size:0.75rem;">Escribí cliente, NV, código o descripción (mínimo 2 letras). Las piezas de kanban/stock se buscan por código, colada o descripción.</div>'; return; }
-  const res = BASE.filter(r => r.estado_general !== 'Cancelado' && [r.cliente, r.comprobante, r.codigo, r.descripcion, r.oc].some(x => String(x || '').toLowerCase().includes(t))).slice(0, 20);
-  const resPf = rzKanbanLineas.filter(l => [l.codigo, l.descripcion, l.cliente, l.oc, l.colada].some(x => String(x || '').toLowerCase().includes(t))).slice(0, 10);
-  const resSuelto = rzKanbanSueltos.filter(x => [x.codigo, x.descripcion, x.material].some(v => String(v || '').toLowerCase().includes(t))).slice(0, 10);
+  if (t.length < 2) { box.innerHTML = '<div class="text-dim" style="padding:6px 2px; font-size:0.75rem;">Escribí cliente, NV, código o descripción (mínimo 2 letras, se puede escribir más de una palabra suelta). Las piezas de kanban/stock se buscan por código, colada o descripción.</div>'; return; }
+  const res = BASE.filter(r => r.estado_general !== 'Cancelado' && rzMatch([r.cliente, r.comprobante, r.codigo, r.descripcion, r.oc], t)).slice(0, 20);
+  const resPf = rzKanbanLineas.filter(l => rzMatch([l.codigo, l.descripcion, l.cliente, l.oc, l.colada], t)).slice(0, 10);
+  const resSuelto = rzKanbanSueltos.filter(x => rzMatch([x.codigo, x.descripcion, x.material], t)).slice(0, 10);
   const htmlBase = res.map(r => `
     <button type="button" onclick="rzElegir(${r.id})" style="display:block; width:100%; text-align:left; background:${rz.sel === r.id ? '#1e3a5f' : '#0f172a'}; border:1px solid var(--card-border); color:#e2e8f0; border-radius:8px; padding:7px 9px; margin-bottom:5px; font-size:0.78rem; cursor:pointer;">
       <b>${escHtml(r.descripcion)}</b><br><span class="text-dim">${escHtml(r.cliente)} · NV ${escHtml(r.comprobante)} · Cód ${escHtml(r.codigo)} · pend. ${fmtN(r.pend)}</span>
