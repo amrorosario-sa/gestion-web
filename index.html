@@ -3263,18 +3263,56 @@ function renderIndicadoresPanel() {
 // ---- Rechazos: carga desde Terminación ----
 let rz = null;
 let rzKanbanLineas = [];
+let rzKanbanSueltos = [];
 async function rzCargarKanban() {
   try {
-    const { data, error } = await supabaseClient.from('pf_lineas')
+    const lineasQ = supabaseClient.from('pf_lineas')
       .select('id,colada,codigo,oc,oc_norm,cliente,descripcion,material,probeta,tipo,peso_neto,peso_bruto,fundido,terminado,consumido')
       .in('tipo', ['kanban', 'interno']).gt('fundido', 0).order('id', { ascending: false }).range(0, 4999);
-    if (error) throw error;
-    rzKanbanLineas = (data || [])
+    // libro de movimientos en Terminación (de ahí sale el stock real): paginado por si crece mucho
+    const movsAll = [];
+    const movsLoop = (async () => {
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabaseClient.from('mec_movimientos').select('codigo,cantidad').eq('ubicacion', 'terminacion').range(from, from + 999);
+        if (error) throw error;
+        movsAll.push(...(data || []));
+        if (!data || data.length < 1000) break;
+      }
+    })();
+    const [lineasRes] = await Promise.all([lineasQ, movsLoop]);
+    if (lineasRes.error) throw lineasRes.error;
+    const lineas = (lineasRes.data || [])
       .map(l => ({ ...l, disp: (Number(l.fundido) || 0) - (Number(l.terminado) || 0) - (Number(l.consumido) || 0) }))
       .filter(l => l.disp > 0.0001);
+    rzKanbanLineas = lineas;
+    // stock real en Terminación por código (siempre es kanban/interno: un ítem de pedido nunca usa este libro)
+    const stockReal = {};
+    movsAll.forEach(m => { stockReal[m.codigo] = (stockReal[m.codigo] || 0) + (Number(m.cantidad) || 0); });
+    // lo que ya está cubierto por alguna colada del Parte de fusión
+    const cubierto = {};
+    lineas.forEach(l => { cubierto[l.codigo] = (cubierto[l.codigo] || 0) + l.disp; });
+    // lo que hay de más (cargado a mano con "Contar / ajustar stock", sin colada del parte)
+    const sueltos = Object.keys(stockReal)
+      .map(codigo => ({ codigo, disp: Math.round((stockReal[codigo] - (cubierto[codigo] || 0)) * 10000) / 10000 }))
+      .filter(x => x.disp > 0.0001);
+    if (sueltos.length) {
+      const codigos = sueltos.map(x => x.codigo);
+      const catInfo = {};
+      for (let i = 0; i < codigos.length; i += 100) {
+        const { data } = await supabaseClient.from('catalogo_articulos').select('codigo,descripcion,material,kg_unitario').in('codigo', codigos.slice(i, i + 100));
+        (data || []).forEach(c => { catInfo[c.codigo] = c; });
+      }
+      rzKanbanSueltos = sueltos.map(x => {
+        const c = catInfo[x.codigo] || {};
+        return { codigo: x.codigo, disp: x.disp, descripcion: c.descripcion || x.codigo, material: c.material || null, kg_unitario: Number(c.kg_unitario) || 0 };
+      });
+    } else {
+      rzKanbanSueltos = [];
+    }
   } catch (e) {
     console.warn('No se pudieron cargar las piezas de kanban/stock para rechazo:', e && e.message);
     rzKanbanLineas = [];
+    rzKanbanSueltos = [];
   }
 }
 function puedeCargarRechazo() { return puedeVer('rechazo') && puedeDividir(); }
@@ -3324,15 +3362,20 @@ function rzBuscar(q) {
   if (t.length < 2) { box.innerHTML = '<div class="text-dim" style="padding:6px 2px; font-size:0.75rem;">Escribí cliente, NV, código o descripción (mínimo 2 letras). Las piezas de kanban/stock se buscan por código, colada o descripción.</div>'; return; }
   const res = BASE.filter(r => r.estado_general !== 'Cancelado' && [r.cliente, r.comprobante, r.codigo, r.descripcion, r.oc].some(x => String(x || '').toLowerCase().includes(t))).slice(0, 20);
   const resPf = rzKanbanLineas.filter(l => [l.codigo, l.descripcion, l.cliente, l.oc, l.colada].some(x => String(x || '').toLowerCase().includes(t))).slice(0, 10);
+  const resSuelto = rzKanbanSueltos.filter(x => [x.codigo, x.descripcion, x.material].some(v => String(v || '').toLowerCase().includes(t))).slice(0, 10);
   const htmlBase = res.map(r => `
     <button type="button" onclick="rzElegir(${r.id})" style="display:block; width:100%; text-align:left; background:${rz.sel === r.id ? '#1e3a5f' : '#0f172a'}; border:1px solid var(--card-border); color:#e2e8f0; border-radius:8px; padding:7px 9px; margin-bottom:5px; font-size:0.78rem; cursor:pointer;">
       <b>${escHtml(r.descripcion)}</b><br><span class="text-dim">${escHtml(r.cliente)} · NV ${escHtml(r.comprobante)} · Cód ${escHtml(r.codigo)} · pend. ${fmtN(r.pend)}</span>
     </button>`).join('');
   const htmlPf = resPf.map(l => `
     <button type="button" onclick="rzElegirPf(${l.id})" style="display:block; width:100%; text-align:left; background:${rz.selPf === l.id ? '#1e3a5f' : '#0f172a'}; border:1px solid #a855f7; color:#e2e8f0; border-radius:8px; padding:7px 9px; margin-bottom:5px; font-size:0.78rem; cursor:pointer;">
-      <b>${escHtml(l.descripcion || l.codigo)}</b><br><span class="text-dim">📋 Kanban / stock · Cód ${escHtml(l.codigo)}${l.colada ? ' · Colada ' + escHtml(l.colada) : ''} · en Terminación: ${fmtN(l.disp)}</span>
+      <b>${escHtml(l.descripcion || l.codigo)}</b><br><span class="text-dim">📋 Kanban / stock (parte de fusión) · Cód ${escHtml(l.codigo)}${l.colada ? ' · Colada ' + escHtml(l.colada) : ''} · en Terminación: ${fmtN(l.disp)}</span>
     </button>`).join('');
-  const html = htmlBase + htmlPf;
+  const htmlSuelto = resSuelto.map(x => `
+    <button type="button" onclick="rzElegirSuelto('${escHtml(x.codigo)}')" style="display:block; width:100%; text-align:left; background:${rz.selSuelto === x.codigo ? '#1e3a5f' : '#0f172a'}; border:1px solid #2dd4bf; color:#e2e8f0; border-radius:8px; padding:7px 9px; margin-bottom:5px; font-size:0.78rem; cursor:pointer;">
+      <b>${escHtml(x.descripcion || x.codigo)}</b><br><span class="text-dim">📦 Stock en Terminación (sin colada del parte) · Cód ${escHtml(x.codigo)} · en Terminación: ${fmtN(x.disp)}</span>
+    </button>`).join('');
+  const html = htmlBase + htmlPf + htmlSuelto;
   box.innerHTML = html || '<div class="text-dim" style="padding:6px 2px; font-size:0.75rem;">Sin resultados.</div>';
 }
 function rzKgAuto() {
@@ -3341,6 +3384,10 @@ function rzKgAuto() {
   if (rz.selPf) {
     const l = rzKanbanLineas.find(x => x.id === rz.selPf);
     return l ? Math.round((l.peso_neto || 0) * c * 10) / 10 : 0;
+  }
+  if (rz.selSuelto) {
+    const x = rzKanbanSueltos.find(v => v.codigo === rz.selSuelto);
+    return x ? Math.round((x.kg_unitario || 0) * c * 10) / 10 : 0;
   }
   const b = rz.sel ? baseRow(rz.sel) : null;
   if (!b) return 0;
@@ -3351,11 +3398,28 @@ function rzElegirPf(id) {
   if (!l) return;
   rz.selPf = id;
   rz.sel = null;
+  rz.selSuelto = null;
   rz.probeta = l.probeta || '';
   const lbl = document.getElementById('rz-sel');
-  if (lbl) lbl.innerHTML = `✔ <b style="color:#fff;">${escHtml(l.descripcion || l.codigo)}</b> <span class="text-dim">— 📋 Kanban / stock · Cód ${escHtml(l.codigo)}${l.colada ? ' · Colada ' + escHtml(l.colada) : ''} · en Terminación: ${fmtN(l.disp)}</span>`;
+  if (lbl) lbl.innerHTML = `✔ <b style="color:#fff;">${escHtml(l.descripcion || l.codigo)}</b> <span class="text-dim">— 📋 Kanban / stock (parte de fusión) · Cód ${escHtml(l.codigo)}${l.colada ? ' · Colada ' + escHtml(l.colada) : ''} · en Terminación: ${fmtN(l.disp)}</span>`;
   const pi = document.getElementById('rz-probeta'); if (pi) pi.value = rz.probeta;
   rz.traza = l.probeta ? 'si' : '';
+  const tz = document.getElementById('rz-traza'); if (tz) tz.value = rz.traza;
+  rzTrazaUI();
+  rzBuscar(rz.q || '');
+  rzActualizarKg();
+}
+function rzElegirSuelto(codigo) {
+  const x = rzKanbanSueltos.find(v => v.codigo === codigo);
+  if (!x) return;
+  rz.selSuelto = codigo;
+  rz.sel = null;
+  rz.selPf = null;
+  rz.probeta = '';
+  const lbl = document.getElementById('rz-sel');
+  if (lbl) lbl.innerHTML = `✔ <b style="color:#fff;">${escHtml(x.descripcion || x.codigo)}</b> <span class="text-dim">— 📦 Stock en Terminación (sin colada del parte) · Cód ${escHtml(x.codigo)} · en Terminación: ${fmtN(x.disp)}</span>`;
+  const pi = document.getElementById('rz-probeta'); if (pi) pi.value = '';
+  rz.traza = 'no';
   const tz = document.getElementById('rz-traza'); if (tz) tz.value = rz.traza;
   rzTrazaUI();
   rzBuscar(rz.q || '');
@@ -3364,6 +3428,7 @@ function rzElegirPf(id) {
 function rzElegir(id) {
   rz.sel = id;
   rz.selPf = null;
+  rz.selSuelto = null;
   rz.probeta = '';
   const b = baseRow(id);
   const lbl = document.getElementById('rz-sel');
@@ -3388,7 +3453,7 @@ function rzActualizarKg() {
 }
 function openRechazoDialog() {
   if (!puedeCargarRechazo()) { alert('Tu usuario no tiene permiso para registrar rechazos.'); return; }
-  rz = { q: '', sel: null, selPf: null, cant: '', traza: '', probeta: '', motivo: '', otro: '', detalle: '', kg: 0, kgTocado: false };
+  rz = { q: '', sel: null, selPf: null, selSuelto: null, cant: '', traza: '', probeta: '', motivo: '', otro: '', detalle: '', kg: 0, kgTocado: false };
   const activos = motivosList.filter(m => m.activo !== false);
   const motivoHtml = activos.length ? `
     <div class="stock-field"><label>Motivo</label>
@@ -3427,6 +3492,7 @@ function openRechazoDialog() {
 }
 async function saveRechazo() {
   if (rz.selPf) return saveRechazoKanban();
+  if (rz.selSuelto) return saveRechazoStock();
   const b = rz.sel ? baseRow(rz.sel) : null;
   if (!b) { alert('Elegí la pieza rechazada.'); return; }
   const cant = Number(rz.cant);
@@ -3481,6 +3547,36 @@ async function saveRechazoKanban() {
     console.error('No se pudo registrar el rechazo (kanban/stock):', e);
     let msg = 'No se pudo registrar el rechazo.';
     if (e && (e.code === '42883' || e.code === 'PGRST202' || /pf_rechazar/i.test(e.message || ''))) msg = 'La base todavía no tiene el rechazo de piezas de kanban/stock. Avisale a quien administra el tablero (falta correr el SQL 026).';
+    else if (e && e.code === '42501') msg = 'Tu usuario no tiene permiso para registrar rechazos (hace falta Colaborador o Editor y la sección Rechazos).';
+    else if (e && e.message) msg += ' ' + e.message;
+    alert(msg);
+    if (btn) { btn.disabled = false; btn.textContent = 'Registrar rechazo'; }
+  }
+}
+
+async function saveRechazoStock() {
+  const x = rzKanbanSueltos.find(v => v.codigo === rz.selSuelto);
+  if (!x) { alert('Elegí la pieza rechazada.'); return; }
+  const cant = Number(rz.cant);
+  if (!(cant > 0)) { alert('Poné la cantidad rechazada.'); return; }
+  if (cant > x.disp) { alert('No puede ser más que lo que está en Terminación: ' + fmtN(x.disp) + ' u.'); return; }
+  const motivo = (rz.motivo === '__otro__' || (!rz.motivo && rz.otro)) ? (rz.otro || '').trim() : (rz.motivo || '').trim();
+  if (!motivo) { alert('Elegí o escribí el motivo del rechazo.'); return; }
+  const btn = document.getElementById('rz-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+  try {
+    const { error } = await supabaseClient.rpc('pf_rechazar_stock', {
+      p_codigo: x.codigo, p_cant: cant, p_motivo: motivo,
+      p_detalle: (rz.detalle || '').trim() || null,
+      p_probeta: (rz.probeta || '').trim() || null,
+    });
+    if (error) throw error;
+    closeStockDialog();
+    showToast('Rechazo registrado — se descontó de Terminación y pasa a Planificación', 'success');
+  } catch (e) {
+    console.error('No se pudo registrar el rechazo (stock suelto):', e);
+    let msg = 'No se pudo registrar el rechazo.';
+    if (e && (e.code === '42883' || e.code === 'PGRST202' || /pf_rechazar_stock/i.test(e.message || ''))) msg = 'La base todavía no tiene el rechazo de stock suelto de Terminación. Avisale a quien administra el tablero (falta correr el SQL 027).';
     else if (e && e.code === '42501') msg = 'Tu usuario no tiene permiso para registrar rechazos (hace falta Colaborador o Editor y la sección Rechazos).';
     else if (e && e.message) msg += ' ' + e.message;
     alert(msg);
