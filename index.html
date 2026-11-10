@@ -5442,13 +5442,13 @@ function showToast(message, kind) {
       const totalItems = DATA.length;
       const totalKg = kgSum(DATA);
       const totalPedidos = new Set(DATA.map(r=>r.comprobante)).size;
-      document.getElementById('kpi-total-items').textContent = totalItems;
-      document.getElementById('kpi-total-kg').textContent = `${totalKg.toLocaleString(undefined,{maximumFractionDigits:0})} Kg · ${totalPedidos} pedidos`;
+      document.getElementById('kpi-total-items').textContent = `${totalKg.toLocaleString(undefined,{maximumFractionDigits:0})} Kg`;
+      document.getElementById('kpi-total-kg').textContent = `${totalItems} ítems · ${totalPedidos} pedidos`;
 
       const moldeo = DATA.filter(r=>r.area_actual==='Moldeo / Fusión');
       const kgMoldeo = kgSum(moldeo);
-      document.getElementById('kpi-moldeo').textContent = moldeo.length;
-      document.getElementById('kpi-moldeo-kg').textContent = `${kgMoldeo.toLocaleString(undefined,{maximumFractionDigits:0})} Kg`;
+      document.getElementById('kpi-moldeo').textContent = `${kgMoldeo.toLocaleString(undefined,{maximumFractionDigits:0})} Kg`;
+      document.getElementById('kpi-moldeo-kg').textContent = `${moldeo.length} ítems`;
 
       const listas = DATA.filter(r=>r.estado_general==='Fundido / En Terminación');
       const kgListasTotal = kgSum(listas);
@@ -5457,15 +5457,15 @@ function showToast(message, kind) {
       const itemsCompletos = listas.filter(r=>isPrepared(r));
       const itemsPendientes = listas.length - itemsCompletos.length;
 
-      document.getElementById('kpi-completed').textContent = itemsPendientes;
-      document.getElementById('kpi-listas-kg').textContent = `${kgRemain.toLocaleString(undefined,{maximumFractionDigits:0})} Kg por preparar`;
+      document.getElementById('kpi-completed').textContent = `${kgRemain.toLocaleString(undefined,{maximumFractionDigits:0})} Kg`;
+      document.getElementById('kpi-listas-kg').textContent = `${itemsPendientes} ítems por preparar`;
 
       const itemsConAvanceDisp = listas.filter(r=>prepPendienteDespacho(r) > 0);
       const kgPrepDisponible = itemsConAvanceDisp.reduce((s,r)=>s+prepPendienteDespachoKg(r),0);
       const itemsCompletosDisp = itemsConAvanceDisp.filter(r=>isPrepared(r));
       const itemsParcialesDisp = itemsConAvanceDisp.length - itemsCompletosDisp.length;
-      document.getElementById('kpi-preparado').textContent = itemsConAvanceDisp.length;
-      document.getElementById('kpi-preparado-kg').textContent = `${kgPrepDisponible.toLocaleString(undefined,{maximumFractionDigits:0})} Kg · ${itemsCompletosDisp.length} completos, ${itemsParcialesDisp} parciales`;
+      document.getElementById('kpi-preparado').textContent = `${kgPrepDisponible.toLocaleString(undefined,{maximumFractionDigits:0})} Kg`;
+      document.getElementById('kpi-preparado-kg').textContent = `${itemsConAvanceDisp.length} ítems · ${itemsCompletosDisp.length} completos, ${itemsParcialesDisp} parciales`;
 
       const kpiHojaEl = document.getElementById('kpi-armar-hoja');
       if (kpiHojaEl) kpiHojaEl.textContent = hojaDisponibleRows().length;
@@ -5475,18 +5475,18 @@ function showToast(message, kind) {
       const cantDespHoy = despachosHoy.reduce((s,d)=>s+(d.cantidad||0),0);
       const kgDespHoy = despachosHoy.reduce((s,d)=>s+(d.kg||0),0);
       const kpiDespEl = document.getElementById('kpi-despachado');
-      if (kpiDespEl) kpiDespEl.textContent = cantDespHoy.toLocaleString();
+      if (kpiDespEl) kpiDespEl.textContent = `${kgDespHoy.toLocaleString(undefined,{maximumFractionDigits:0})} Kg`;
       const kpiDespKgEl = document.getElementById('kpi-despachado-kg');
       if (kpiDespKgEl) {
         kpiDespKgEl.textContent = cantDespHoy
-          ? `${kgDespHoy.toLocaleString(undefined,{maximumFractionDigits:0})} Kg hoy`
+          ? `${cantDespHoy.toLocaleString()} piezas hoy`
           : 'hoy: nada todavía';
       }
 
       const enfab = DATA.filter(r=>r.estado_general==='En Fabricación' && r.area_actual!=='Moldeo / Fusión');
       const kgEnfab = kgSum(enfab);
-      document.getElementById('kpi-in-progress').textContent = enfab.length;
-      document.getElementById('kpi-progress-kg').textContent = `${kgEnfab.toLocaleString(undefined,{maximumFractionDigits:0})} Kg antes de moldeo`;
+      document.getElementById('kpi-in-progress').textContent = `${kgEnfab.toLocaleString(undefined,{maximumFractionDigits:0})} Kg`;
+      document.getElementById('kpi-progress-kg').textContent = `${enfab.length} ítems antes de moldeo`;
 
       const rep = DATA.filter(r=>r.es_repuesto);
       const kgRep = kgSum(rep);
@@ -5495,26 +5495,26 @@ function showToast(message, kind) {
 
       const vencidas = DATA.filter(r=>r.alerta_entrega==='VENCIDA (FÁBRICA)');
       const kgVencidas = kgSum(vencidas);
-      document.getElementById('kpi-urgent').textContent = vencidas.length;
+      document.getElementById('kpi-urgent').textContent = `${kgVencidas.toLocaleString(undefined,{maximumFractionDigits:0})} Kg`;
       const vencidasTerm = DATA.filter(isVencidaTerminacion);
       const kgVencidasTerm = kgSum(vencidasTerm);
       const kpiUrgentTermEl = document.getElementById('kpi-urgent-term');
-      if (kpiUrgentTermEl) kpiUrgentTermEl.textContent = vencidasTerm.length;
+      if (kpiUrgentTermEl) kpiUrgentTermEl.textContent = `${kgVencidasTerm.toLocaleString(undefined,{maximumFractionDigits:0})} Kg`;
       const subVenc = document.getElementById('kpi-venc-kg');
-      if (subVenc) subVenc.textContent = `${kgVencidas.toLocaleString(undefined,{maximumFractionDigits:0})} Kg en Fabricación · ${kgVencidasTerm.toLocaleString(undefined,{maximumFractionDigits:0})} Kg en Terminación`;
+      if (subVenc) subVenc.textContent = `${vencidas.length} en Fabricación · ${vencidasTerm.length} en Terminación`;
 
       const prioritarios = DATA.filter(r => r.estado_general !== 'Cancelado' && getPriorityRow(r) === 'alta');
       const kgPrio = kgSum(prioritarios);
-      document.getElementById('kpi-prioridad').textContent = prioritarios.length;
+      document.getElementById('kpi-prioridad').textContent = `${kgPrio.toLocaleString(undefined,{maximumFractionDigits:0})} Kg`;
       document.getElementById('kpi-prioridad-kg').textContent = prioritarios.length
-        ? `🔴 ${kgPrio.toLocaleString(undefined,{maximumFractionDigits:0})} Kg en Alta`
+        ? `${prioritarios.length} piezas en Alta`
         : '';
 
       const prioridadMedia = DATA.filter(r => r.estado_general !== 'Cancelado' && getPriorityRow(r) === 'media');
       const kgPrioMedia = kgSum(prioridadMedia);
-      document.getElementById('kpi-prioridad-media').textContent = prioridadMedia.length;
+      document.getElementById('kpi-prioridad-media').textContent = `${kgPrioMedia.toLocaleString(undefined,{maximumFractionDigits:0})} Kg`;
       document.getElementById('kpi-prioridad-media-kg').textContent = prioridadMedia.length
-        ? `🟡 ${kgPrioMedia.toLocaleString(undefined,{maximumFractionDigits:0})} Kg en Media`
+        ? `${prioridadMedia.length} piezas en Media`
         : '';
 
       const kpiPrioEl = document.getElementById('kpi-prioridad-kg');
@@ -7260,12 +7260,16 @@ function showToast(message, kind) {
   function vSeg() {
     if (P.error) return `<div class="err">${E(P.error)}</div>`;
     const ls = P.L, kgW = P.kg === 'bruto' ? 'bruto' : 'neto';
-    const mol = sumL(ls, l => l.cant), molKg = sumL(ls, l => l.cant * kgU(l)), fun = sumL(ls, l => l.fundido), funKg = sumL(ls, l => l.fundido * kgU(l));
-    const kpis = `<div class="kpis"><div class="kpi"><b>${nf(mol, 0)}</b><span>piezas moldeadas (se cuentan una sola vez) · ${nf(molKg, 0)} kg ${kgW}</span></div>
-      <div class="kpi"><b>${nf(sumL(ls, pend), 0)}</b><span>pendientes de fusión</span></div>
-      <div class="kpi"><b>${nf(fun, 0)}</b><span>fundidas confirmadas · <b style="display:inline;font-size:.8rem;color:var(--ok)">${nf(funKg, 0)} kg ${kgW}</b></span></div>
-      <div class="kpi"><b>${nf(sumL(ls, l => Math.max(0, term(l))), 0)}</b><span>en Terminación</span></div>
-      <div class="kpi"><b>${nf(sumL(ls, l => Number(l.terminado)), 0)}</b><span>ya salieron a su destino</span></div></div>`;
+    const mol = sumL(ls, l => l.cant), molKg = sumL(ls, l => l.cant * kgU(l));
+    const pendCant = sumL(ls, pend), pendKg = sumL(ls, l => pend(l) * kgU(l));
+    const fun = sumL(ls, l => l.fundido), funKg = sumL(ls, l => l.fundido * kgU(l));
+    const termCant = sumL(ls, l => Math.max(0, term(l))), termKg = sumL(ls, l => Math.max(0, term(l)) * kgU(l));
+    const salioCant = sumL(ls, l => Number(l.terminado)), salioKg = sumL(ls, l => Number(l.terminado) * kgU(l));
+    const kpis = `<div class="kpis"><div class="kpi"><b>${nf(molKg, 0)} kg ${kgW}</b><span>moldeadas · ${nf(mol, 0)} piezas (se cuentan una sola vez)</span></div>
+      <div class="kpi"><b>${nf(pendKg, 0)} kg ${kgW}</b><span>pendientes de fusión · ${nf(pendCant, 0)} piezas</span></div>
+      <div class="kpi"><b>${nf(funKg, 0)} kg ${kgW}</b><span>fundidas confirmadas · ${nf(fun, 0)} piezas</span></div>
+      <div class="kpi"><b>${nf(termKg, 0)} kg ${kgW}</b><span>en Terminación · ${nf(termCant, 0)} piezas</span></div>
+      <div class="kpi"><b>${nf(salioKg, 0)} kg ${kgW}</b><span>ya salieron a su destino · ${nf(salioCant, 0)} piezas</span></div></div>`;
     const F = { todas: l => true, pend: l => pend(l) > 0, atr: l => pend(l) > 0 && l.fecha_parte && dif(hoy(), l.fecha_parte) > 2, term: l => term(l) > 0, out: l => Number(l.terminado) > 0, nofig: l => l.no_figura && pend(l) > 0 };
     const q = nn(P.q);
     const base = ls.filter(l => !q || nn([l.colada, l.codigo, l.oc, l.cliente, l.descripcion, l.probeta].join(' ')).includes(q));
