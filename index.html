@@ -3355,7 +3355,8 @@ function renderIndicadoresPanel() {
     detDespFut.forEach((arr, i) => arr.forEach(f => { (pedU[f.r.codigo] = pedU[f.r.codigo] || mesesDespFut.map(() => 0))[i] += f.u; }));
     const rM0 = mesRango(0);
     EST.items.forEach(it => {
-      const ya0 = despachosLog.filter(d => d.codigo === it.codigo && enRango(d.dia, rM0)).reduce((a, d) => a + (Number(d.cantidad) || 0), 0);
+      // ya despachado este mes = lo mayor entre lo registrado en el tablero y lo que figura en los remitos cargados (no se suman: es lo mismo visto de dos lados)
+      const ya0 = Math.max(it.yaRem || 0, despachosLog.filter(d => d.codigo === it.codigo && enRango(d.dia, rM0)).reduce((a, d) => a + (Number(d.cantidad) || 0), 0));
       mesesDespFut.forEach((m, i) => {
         const ped = (pedU[it.codigo] || [])[i] || 0, ya = i === 0 ? ya0 : 0, u = Math.max(0, it.cm - ya - ped);
         if (u < 0.5) return;
@@ -6660,7 +6661,9 @@ function showToast(message, kind) {
     [...new Set(C.k.map(r => r.codigo))].forEach(c => {
       let tot = 0; M.meses.forEach(mk => { tot += (M.ven[c] && M.ven[c][mk]) || 0; });
       const cm = w * ((C.u30 && C.u30[c]) || 0) + (1 - w) * tot / M.meses.length;
-      if (cm > 0) items.push({ codigo: c, nombre: nombre(c), cm, kgu: kgDe(c) || 0 });
+      // lo que ya salió en el mes en curso según los remitos cargados (SGA): cubre ventas que salieron antes de que el tablero se actualizara
+      const yaRem = (M.ven[c] && M.ven[c][TODAY().slice(0, 7)]) || 0;
+      if (cm > 0) items.push({ codigo: c, nombre: nombre(c), cm, kgu: kgDe(c) || 0, yaRem });
     });
     return { items, meses: M.meses.length, hasta: M.info.hasta };
   };
