@@ -3152,9 +3152,10 @@ function barChartSvg(o) {
   const W = 360, H = o.h || 210, padL = 34, padR = o.line ? 30 : 8, padT = 16, padB = o.rotate ? 62 : 26;
   const innerW = W - padL - padR, innerH = H - padT - padB;
   const n = o.labels.length, ns = o.series.length;
-  const maxV = niceMax(Math.max(0, ...o.series.flatMap(s => s.values.map(v => Number(v) || 0))));
+  const estV = i => o.est ? (Number(o.est[i]) || 0) : 0;
+  const maxV = niceMax(Math.max(0, ...o.series.flatMap(s => s.values.map((v, i) => (Number(v) || 0) + estV(i)))));
   const groupW = innerW / Math.max(1, n), barW = Math.min(30, (groupW * 0.74) / ns);
-  let g = '';
+  let g = o.est ? `<defs><pattern id="estHatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="5" height="5" fill="#0c4a6e" fill-opacity=".55"/><line x1="0" y1="0" x2="0" y2="5" stroke="#7dd3fc" stroke-width="2"/></pattern></defs>` : '';
   for (let k = 0; k <= 4; k++) {
     const y = padT + innerH - innerH * k / 4;
     g += `<line x1="${padL}" x2="${W - padR}" y1="${y}" y2="${y}" stroke="#1e293b"/><text x="${padL - 4}" y="${y + 3}" text-anchor="end" font-size="8" fill="#64748b">${fmtK(maxV * k / 4)}</text>`;
@@ -3172,7 +3173,9 @@ function barChartSvg(o) {
       const color = sr.colors ? sr.colors[i] : sr.color;
       const op = (o.fadeOld && !ultimo) ? 0.55 : 1;
       g += `<rect x="${x.toFixed(1)}" y="${(padT + innerH - bh).toFixed(1)}" width="${(barW - 1).toFixed(1)}" height="${Math.max(bh, v > 0 ? 1 : 0).toFixed(1)}" fill="${color}" opacity="${op}" rx="2"${clk}><title>${escHtml(lab)} — ${escHtml(sr.name)}: ${fmtN(v, 1)}</title></rect>`;
-      if (v > 0 && (ns === 1 || n <= 7)) g += `<text x="${(x + (barW - 1) / 2).toFixed(1)}" y="${(padT + innerH - bh - 3).toFixed(1)}" text-anchor="middle" font-size="8" fill="#e2e8f0">${fmtK(v)}</text>`;
+      const ev = jx === 0 ? estV(i) : 0, eh = innerH * ev / maxV;
+      if (ev > 0) g += `<rect x="${x.toFixed(1)}" y="${(padT + innerH - bh - eh).toFixed(1)}" width="${(barW - 1).toFixed(1)}" height="${Math.max(eh, 1).toFixed(1)}" fill="url(#estHatch)" stroke="#7dd3fc" stroke-width=".8" stroke-dasharray="2 2" rx="2"${clk}><title>${escHtml(lab)} — estimado (no son pedidos): ${fmtN(ev, 1)}</title></rect>`;
+      if ((v + ev) > 0 && (ns === 1 || n <= 7)) g += `<text x="${(x + (barW - 1) / 2).toFixed(1)}" y="${(padT + innerH - bh - eh - 3).toFixed(1)}" text-anchor="middle" font-size="8" fill="#e2e8f0">${fmtK(v + ev)}</text>`;
     });
     const txt = escHtml(String(lab).length > 13 ? String(lab).slice(0, 12) + '…' : lab);
     const ly = padT + innerH + 12;
@@ -3339,7 +3342,30 @@ function renderIndicadoresPanel() {
   const labelsDespFut = [...mesesDespFut.map(m => m.label), 'Más adelante', 'Sin fecha'];
   const valoresDespFut = [...kgPorMesDespFut, kgDespMasAdelante, kgDespSinFecha];
   const coloresDespFut = [...mesesDespFut.map((m, i) => i === 0 ? '#ef4444' : '#38bdf8'), '#64748b', '#94a3b8'];
-  const despPorMesChart = barChartSvg({ labels: labelsDespFut, series: [{ name: 'Kg', color: '#38bdf8', colors: coloresDespFut, values: valoresDespFut }], rotate: true, det: 'despmes' });
+  // Estimación (NO son pedidos): para cada pieza de kanban que se vende, lo que falta para llegar a su venta mensual esperada
+  // = max(0, venta mensual − ya despachado este mes − pedidos cargados para ese mes). Sale del informe de remitos cargado en Kanban.
+  const EST = (window.cirEstimado && window.cirEstimado()) || null;
+  if (!EST && window.cirEstimadoEnsure && !window._cirEstAsk) {
+    window._cirEstAsk = true;
+    window.cirEstimadoEnsure().then(() => { try { if (typeof currentFilter !== 'undefined' && currentFilter === 'indicadores') renderIndicadoresPanel(); } catch (e) { /* sin estimación */ } }).catch(() => {});
+  }
+  const estKgMes = mesesDespFut.map(() => 0), estDetMes = mesesDespFut.map(() => []);
+  if (EST) {
+    const pedU = {};
+    detDespFut.forEach((arr, i) => arr.forEach(f => { (pedU[f.r.codigo] = pedU[f.r.codigo] || mesesDespFut.map(() => 0))[i] += f.u; }));
+    const rM0 = mesRango(0);
+    EST.items.forEach(it => {
+      const ya0 = despachosLog.filter(d => d.codigo === it.codigo && enRango(d.dia, rM0)).reduce((a, d) => a + (Number(d.cantidad) || 0), 0);
+      mesesDespFut.forEach((m, i) => {
+        const ped = (pedU[it.codigo] || [])[i] || 0, ya = i === 0 ? ya0 : 0, u = Math.max(0, it.cm - ya - ped);
+        if (u < 0.5) return;
+        const kg = u * (it.kgu || 0); estKgMes[i] += kg; estDetMes[i].push({ it, u, ped, ya, kg });
+      });
+    });
+  }
+  const totalEstKg = estKgMes.reduce((a, b) => a + b, 0);
+  const despPorMesChart = barChartSvg({ labels: labelsDespFut, series: [{ name: 'Kg', color: '#38bdf8', colors: coloresDespFut, values: valoresDespFut }], est: EST ? [...estKgMes, 0, 0] : null, rotate: true, det: 'despmes' })
+    + (EST ? `<div class="text-dim" style="font-size:0.68rem; margin:2px 0 4px; display:flex; gap:12px; flex-wrap:wrap;"><span><span style="display:inline-block;width:10px;height:10px;background:#38bdf8;border-radius:2px;vertical-align:-1px;"></span> Pedidos cargados</span><span><span style="display:inline-block;width:10px;height:10px;border:1px dashed #7dd3fc;background:repeating-linear-gradient(45deg,#0c4a6e,#0c4a6e 2px,#7dd3fc 2px,#7dd3fc 3px);border-radius:2px;vertical-align:-1px;"></span> Estimado según ventas (no son pedidos)</span></div>` : '');
 
   // Detalle de cada barra (se abre al tocarla)
   {
@@ -3389,9 +3415,18 @@ function renderIndicadoresPanel() {
         rows: s.map(x => [E(x.r.cliente || ''), E(x.r.comprobante || ''), E(x.r.codigo || ''), E(x.r.descripcion || ''),
           x.r.fecha_entrega ? E(formatDate(x.r.fecha_entrega)) + (x.r.fecha_entrega < TODAY_ISO ? ' <span style="color:#ef4444;">⚠ atrasado</span>' : '') : '—', fmtN(x.u), fmtN(x.kg, 1)]) };
     };
-    IND_DET.despmes = labelsDespFut.map((lab, i) => ({
-      titulo: '📅 A despachar · ' + lab + (i === 0 ? ' (incluye lo atrasado)' : ''),
-      secs: [secDf(i < mesesDespFut.length ? detDespFut[i] : i === mesesDespFut.length ? detDespMas : detDespSin)] }));
+    const COLS_EST = [{ h: 'Código' }, { h: 'Descripción' }, { h: 'Venta mensual', num: 1 }, { h: 'Ya despachado', num: 1 }, { h: 'Pedidos cargados', num: 1 }, { h: 'Estimado (u)', num: 1 }, { h: 'Kg', num: 1 }];
+    const secEst = (lista) => {
+      const s = lista.slice().sort((a, b) => b.kg - a.kg || b.u - a.u);
+      return { raw: s.map(x => [x.u, x.kg]), titulo: '〰 Estimado según ventas — NO son pedidos', cols: COLS_EST,
+        rows: s.map(x => [E(x.it.codigo), E(x.it.nombre || ''), fmtN(x.it.cm, 0), fmtN(x.ya), fmtN(x.ped), fmtN(x.u), x.it.kgu ? fmtN(x.kg, 1) : '<span style="color:#f59e0b;">sin Kg/u</span>']) };
+    };
+    IND_DET.despmes = labelsDespFut.map((lab, i) => {
+      const hayEst = i < mesesDespFut.length && estDetMes[i].length;
+      const sd = secDf(i < mesesDespFut.length ? detDespFut[i] : i === mesesDespFut.length ? detDespMas : detDespSin);
+      if (hayEst) sd.titulo = '📋 Pedidos cargados';
+      return { titulo: '📅 A despachar · ' + lab + (i === 0 ? ' (incluye lo atrasado)' : ''), secs: hayEst ? [sd, secEst(estDetMes[i])] : [sd] };
+    });
   }
 
   const card = (titulo, sub, cuerpo, extra) => `
@@ -3427,7 +3462,7 @@ function renderIndicadoresPanel() {
       ${hayMoldeado ? card('🧱 Moldeado por semana', `Kg ${indState.kgTipo === 'bruto' ? 'brutos' : 'netos'} cargados desde el parte de fusión · total ${tot8('molKg')} Kg`, semChart('molKg', 'Moldeado', '#38bdf8')) : ''}
       ${card('❌ Rechazo por semana', `Kg · total ${tot8('recKg')} Kg`, semChart('recKg', 'Rechazo', '#ef4444'))}
       ${card('📥 Ingresado vs despachado por mes', 'Kg · últimos 6 meses · <span style="color:#38bdf8;">■</span> ingresado <span style="color:#c084fc;">■</span> despachado', ingDes + (hayIngresos ? '<div class="text-dim" style="font-size:0.66rem; padding:2px 2px 6px;">Los meses anteriores a la activación solo incluyen lo que sigue pendiente en SGA, así que quedan incompletos.</div>' : '<div class="text-dim" style="font-size:0.66rem; padding:2px 2px 6px;">Falta correr el SQL 007 para cargar los ingresos.</div>'))}
-      ${card('📅 A despachar por mes (según fecha de entrega)', `Todo lo que falta despachar de los pedidos abiertos, agrupado por el mes de entrega · lo atrasado se suma en <b style="color:#ef4444;">${mesesDespFut[0].label}</b> · total ${fmtN(totalDespFutKg)} Kg`, despPorMesChart)}
+      ${card('📅 A despachar por mes (según fecha de entrega)', `Todo lo que falta despachar de los pedidos abiertos, agrupado por el mes de entrega · lo atrasado se suma en <b style="color:#ef4444;">${mesesDespFut[0].label}</b> · pedidos ${fmtN(totalDespFutKg)} Kg${EST ? ` · <b style="color:#7dd3fc;">+ ${fmtN(totalEstKg)} Kg estimados</b> (rayado: sale del promedio de ventas de las piezas de kanban, no son pedidos)` : ''}`, despPorMesChart)}
       ${card('📉 Pareto de rechazos por motivo', `Total del período: ${fmtN(totalP, med === 'kg' ? 1 : 0)} ${med === 'kg' ? 'Kg' : 'u.'} · línea amarilla = % acumulado`, pareto, medBtns)}
       ${card('🏭 Kg en cada etapa, hoy', 'Lo que hay ahora en el circuito', etapasChart)}
     </div>`;
@@ -6616,6 +6651,19 @@ function showToast(message, kind) {
   window.cirAplicarK = (u, c) => { const s = kSug(u, c); if (!s) return; const k = kOf(u, c);
     ask('Usar el K sugerido — ' + UBIC[u], esc(nombre(c)) + `<br>k actual <b>${k == null ? '—' : k}</b> → k sugerido <b>${s.ks}</b>.<br><span class="code">Ventas ${fmtN(s.cm, 0)} u/mes (${Math.round(s.w * 100)} % últimos 30 días = ${fmtN(s.u30, 0)} + ${Math.round((1 - s.w) * 100)} % promedio de ${s.n} meses = ${fmtN(s.prom, 0)}) × plazo ${s.tr} d / 30 × 2/3${s.raw !== s.ks ? ' = ' + s.raw + ', redondeado a ' + s.ks + ' (pallets de 10)' : ''}${s.via ? ' · incluye las ventas de los aros que usan esta pieza' : ''}.</span>`, [], 'Usar ' + s.ks,
       () => tbl(supabaseClient.from('mec_k').upsert({ ubicacion: u, codigo: c, k: s.ks }, { onConflict: 'ubicacion,codigo' }))); };
+  // Para el indicador "A despachar por mes": venta mensual esperada de cada pieza de kanban que se vende directo (mismo criterio ponderado que el K).
+  window.cirEstimadoEnsure = async () => { if (!C.loaded) await load(); return C.loaded; };
+  window.cirEstimado = () => {
+    if (!C.loaded || !C.ventasOK) return null;
+    const M = kvModelo(); if (!M || !M.meses.length) return null;
+    const w = Math.max(0, Math.min(100, C.cfg.k_peso_ult30 == null ? 50 : Number(C.cfg.k_peso_ult30))) / 100, items = [];
+    [...new Set(C.k.map(r => r.codigo))].forEach(c => {
+      let tot = 0; M.meses.forEach(mk => { tot += (M.ven[c] && M.ven[c][mk]) || 0; });
+      const cm = w * ((C.u30 && C.u30[c]) || 0) + (1 - w) * tot / M.meses.length;
+      if (cm > 0) items.push({ codigo: c, nombre: nombre(c), cm, kgu: kgDe(c) || 0 });
+    });
+    return { items, meses: M.meses.length, hasta: M.info.hasta };
+  };
   function kvPanel(u, nRev) {
     const M = kvModelo(), i = C.ventasInfo, up = puedePlanificar() ? `<input type="file" id="kv-file" accept=".xls,.xlsx" style="display:none" onchange="cirVentasFile(this)">${btn(M ? '⬆ Actualizar ventas (Excel)' : '⬆ Cargar informe de remitos', `document.getElementById('kv-file').click()`, 'pri')}` : '';
     if (!C.ventasOK) return `<div class="alert"><div>📈 <b>K sugerido según ventas</b> — falta correr el parche 029 en Supabase para poder usarlo.</div></div>`;
