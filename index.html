@@ -6149,6 +6149,7 @@ function showToast(message, kind) {
       C.stock = {}; st.forEach(r => { (C.stock[r.ubicacion] = C.stock[r.ubicacion] || {})[r.codigo] = Number(r.cantidad); });
       C.planes = planes; C.moldeos = moldeos; C.k = k; C.exc = exc; C.recetas = recetas; C.movs = movs;
       C.cfg = {}; cfg.forEach(r => { C.cfg[r.clave] = r.valor; });
+      await kvLoad();
       try { const rr = await supabaseClient.from('mec_rechazos').select('*').order('id', { ascending: false }).limit(30); C.rechazos = rr.error ? [] : (rr.data || []); } catch (e) { C.rechazos = []; }
       C.error = null; C.loaded = true; await resolveNames(); await loadKg(); await loadPasos(); if (window.pfEnsure) await window.pfEnsure();
     } catch (e) {
@@ -6515,6 +6516,102 @@ function showToast(message, kind) {
     return tabs + (tab === 'plan' ? vPlanMold() : vMoldCurso());
   }
 
+  // ---------- K sugerido según ventas (carga manual del Informe Diario de Remitos) ----------
+  // K = ceil( ventas por mes × plazo de reposición / 30 × 2/3 ). Solo sugiere y avisa: nunca cambia un k por sí solo.
+  const kvFecha = s => s ? String(s).slice(0, 10).split('-').reverse().join('/') : '—';
+  const kvMes = mk => mk.slice(5) + '/' + mk.slice(2, 4);
+  const kvUTC = s => { const [y, m, d] = String(s).slice(0, 10).split('-').map(Number); return Date.UTC(y, m - 1, d); };
+  const kvXlsx = () => new Promise((ok, no) => { if (window.XLSX) return ok(); const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; s.onload = ok; s.onerror = () => no(new Error('No se pudo cargar el lector de Excel (¿hay internet?)')); document.head.appendChild(s); });
+  async function kvLoad() {
+    try {
+      const vm = []; for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabaseClient.from('kanban_ventas_mes').select('codigo,mes,cantidad').order('codigo').order('mes').range(from, from + 999);
+        if (error) throw error; vm.push(...(data || [])); if (!data || data.length < 1000) break;
+      }
+      const inf = await supabaseClient.from('kanban_ventas_info').select('*').maybeSingle(); if (inf.error) throw inf.error;
+      C.ventas = vm; C.ventasInfo = inf.data; C.ventasOK = true;
+    } catch (e) { C.ventas = []; C.ventasInfo = null; C.ventasOK = false; }
+    C._vm = null;
+  }
+  // meses cerrados sobre los que se promedia (hasta 12) + ventas por pieza y mes
+  function kvModelo() {
+    if (C._vm) return C._vm.v;
+    let v = null; const i = C.ventasInfo;
+    if (C.ventasOK && i && i.desde && i.hasta && C.ventas.length) {
+      const DIA = 864e5, desde = kvUTC(i.desde), hasta = kvUTC(i.hasta), hoy = kvUTC(TODAY());
+      let [y, m] = i.desde.slice(0, 7).split('-').map(Number); const meses = [];
+      for (let g = 0; g < 60; g++) {
+        const ini = Date.UTC(y, m - 1, 1), fin = Date.UTC(y, m, 0);
+        if (fin > hasta + 4 * DIA || fin >= hoy) break;      // mes que los datos no cubren entero, o el mes en curso
+        if (desde <= ini + 7 * DIA) meses.push(y + '-' + String(m).padStart(2, '0'));  // el primer mes se descarta si arranca a mitad
+        if (++m > 12) { m = 1; y++; }
+      }
+      const ven = {}; C.ventas.forEach(r => { const k = String(r.mes).slice(0, 7); (ven[r.codigo] = ven[r.codigo] || {})[k] = (ven[r.codigo][k] || 0) + Number(r.cantidad); });
+      v = { meses: meses.slice(-12), ven, info: i };
+    }
+    C._vm = { v }; return v;
+  }
+  // Terminación: ventas directas + las de cada aro cuya receta usa esa pieza como macho/hembra. Mecanizado: ventas directas.
+  function kSug(u, c) {
+    const M = kvModelo(); if (!M || !M.meses.length) return null;
+    const tr = Number(C.cfg[u === 'sector_z' ? 'plazo_sector_z' : 'plazo_kanban']); if (!(tr > 0)) return null;
+    let cods = [c]; if (u === 'sector_z') C.recetas.forEach(r => { if (r.macho === c || r.hembra === c) cods.push(r.salida); });
+    cods = [...new Set(cods)];
+    let tot = 0, act = 0; M.meses.forEach(mk => { let s = 0; cods.forEach(cc => { s += (M.ven[cc] && M.ven[cc][mk]) || 0; }); tot += s; if (s > 0) act++; });
+    const n = M.meses.length, cm = tot / n;
+    return { cm, n, act, tr, ks: Math.ceil(cm * tr / 30 * 2 / 3 - 1e-9), esp: n >= 6 && act > 0 && act <= n / 4, via: cods.length - 1 };
+  }
+  // aviso (no bloqueante): el K sugerido se aparta del actual más que el umbral, para arriba o para abajo
+  function kRev(u, c) {
+    const s = kSug(u, c), k = kOf(u, c); if (!s || !(s.ks > 0) || !(k > 0)) return null;
+    const um = C.cfg.k_umbral_pct == null ? 20 : Number(C.cfg.k_umbral_pct), d = (s.ks - k) / k * 100;
+    return Math.abs(d) > um ? { s, d } : null;
+  }
+  function kvParse(rows) {
+    const fechaDe = v => { if (v instanceof Date) return v.toISOString().slice(0, 10);
+      const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(String(v == null ? '' : v)); return m ? m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0') : null; };
+    const out = new Map(), rem = new Set(); let hdr = null, linea = 0, items = false, ign = 0;
+    for (const r of rows) {
+      const f0 = typeof r[0] === 'number' ? null : fechaDe(r[0]);
+      if (String(r[0]).trim() === 'Kilos') { items = true; continue; }
+      if (f0 && String(r[4]).trim() !== '') {        // cabecera de remito
+        hdr = { fecha: f0, comp: [r[2], r[3], r[4]].map(x => String(x).trim()).join('-'), cliente: String(r[5] || '').trim() }; linea = 0; items = false; continue; }
+      if (!items || !hdr) continue;
+      const cant = Number(r[1]); let cod = typeof r[3] === 'number' ? String(r[3]).padStart(12, '0') : String(r[3] == null ? '' : r[3]).trim();
+      if (!cod || !isFinite(cant) || r[1] === '') { if (cod || r[0] !== '') ign++; continue; }
+      linea++; if (!cant) continue;
+      const kg = Number(r[0]);
+      out.set(hdr.comp + '|' + linea, { fecha: hdr.fecha, comprobante: hdr.comp, linea, codigo: cod, descripcion: String(r[5] || '').trim(), cantidad: cant, kilos: isFinite(kg) && r[0] !== '' ? kg : null, cliente: hdr.cliente });
+      rem.add(hdr.comp);
+    }
+    const arr = [...out.values()]; arr.sort((a, b) => a.fecha.localeCompare(b.fecha));
+    return { items: arr, remitos: rem.size, ign };
+  }
+  window.cirVentasFile = async inp => {
+    const f = inp.files && inp.files[0]; inp.value = ''; if (!f) return;
+    try {
+      await kvXlsx();
+      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' }), ws = wb.Sheets[wb.SheetNames[0]];
+      const P = kvParse(XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' }));
+      if (!P.items.length) { alert('No encontré remitos con ítems en ese archivo. ¿Es el "Informe Diario de Remitos"?'); return; }
+      const d1 = P.items[0].fecha, d2 = P.items[P.items.length - 1].fecha;
+      ask('Cargar ventas para el K sugerido', `Se leyeron <b>${P.remitos}</b> remitos (${P.items.length} líneas) del <b>${kvFecha(d1)}</b> al <b>${kvFecha(d2)}</b>.<br>Si algún remito ya estaba cargado se actualiza, no se duplica. Esto <b>no cambia ningún k</b>: solo calcula el K sugerido.`, [], 'Cargar ventas',
+        async () => { for (let i = 0; i < P.items.length; i += 400) await tbl(supabaseClient.from('kanban_ventas').upsert(P.items.slice(i, i + 400), { onConflict: 'comprobante,linea' })); });
+    } catch (e) { alert('No se pudo leer el archivo: ' + (e.message || e)); }
+  };
+  window.cirAplicarK = (u, c) => { const s = kSug(u, c); if (!s) return; const k = kOf(u, c);
+    ask('Usar el K sugerido — ' + UBIC[u], esc(nombre(c)) + `<br>k actual <b>${k == null ? '—' : k}</b> → k sugerido <b>${s.ks}</b>.<br><span class="code">Ventas ${fmtN(s.cm, 1)} u/mes (promedio de ${s.n} meses) × plazo ${s.tr} d / 30 × 2/3${s.via ? ' · incluye las ventas de los aros que usan esta pieza' : ''}.</span>`, [], 'Usar ' + s.ks,
+      () => tbl(supabaseClient.from('mec_k').upsert({ ubicacion: u, codigo: c, k: s.ks }, { onConflict: 'ubicacion,codigo' }))); };
+  function kvPanel(u, nRev) {
+    const M = kvModelo(), i = C.ventasInfo, up = puedePlanificar() ? `<input type="file" id="kv-file" accept=".xls,.xlsx" style="display:none" onchange="cirVentasFile(this)">${btn(M ? '⬆ Actualizar ventas (Excel)' : '⬆ Cargar informe de remitos', `document.getElementById('kv-file').click()`, 'pri')}` : '';
+    if (!C.ventasOK) return `<div class="alert"><div>📈 <b>K sugerido según ventas</b> — falta correr el parche 029 en Supabase para poder usarlo.</div></div>`;
+    if (!M) return `<div class="alert"><div>📈 <b>K sugerido según ventas</b> — todavía no hay ventas cargadas${i && i.desde ? ' (o no alcanzan para un mes cerrado)' : ''}. Subí el <b>Informe Diario de Remitos</b> (Excel) y la pantalla calcula el k que correspondería a cada pieza.</div>${up}</div>`;
+    const viejo = (kvUTC(TODAY()) - kvUTC(i.hasta)) / 864e5 > 45;
+    return `<div class="alert" style="${nRev ? '' : 'opacity:.85'}"><div>📈 <b>K sugerido según ventas</b> — ventas del ${kvFecha(i.desde)} al ${kvFecha(i.hasta)} (${i.remitos} remitos). Se promedian <b>${M.meses.length}</b> meses cerrados (${kvMes(M.meses[0])} a ${kvMes(M.meses[M.meses.length - 1])}); K = ventas por mes × plazo (${C.cfg[u === 'sector_z' ? 'plazo_sector_z' : 'plazo_kanban']} d) / 30 × 2/3.
+      ${M.meses.length < 3 ? '<br>⚠ Hay pocos meses de historia: tomalo como orientativo.' : ''}${viejo ? '<br>Las ventas están cargadas hasta hace más de un mes: conviene subir un informe más nuevo.' : ''}
+      ${nRev ? `<br>⚠ <b>${nRev}</b> pieza${nRev === 1 ? '' : 's'} con K sugerido distinto del actual en más de ${C.cfg.k_umbral_pct == null ? 20 : C.cfg.k_umbral_pct} % (para arriba o para abajo). Es solo un aviso: no se cambió nada. ${btn('Ver solo esas', `cirKanFilter('krev')`)}` : '<br>✔ Ningún k se aparta del sugerido más del umbral.'}</div>${up}</div>`;
+  }
+
   // ---------- Kanban: configuración + listado con stock físico y virtual ----------
   const nivelV = (k, x) => x >= 2 * k ? 'verde' : x >= k ? 'amarillo' : 'rojo';
   const SEV = { rojo: 0, amarillo: 1, verde: 2 };
@@ -6526,10 +6623,11 @@ function showToast(message, kind) {
   function vKan() {
     const u = C.kanTab, nom = u === 'sector_z' ? 'Kanban de Terminación (Sector Z)' : 'Kanban de Mecanizado (estantería post-mecanizado)';
     const plazoKey = u === 'sector_z' ? 'plazo_sector_z' : 'plazo_kanban';
-    const all = C.k.filter(r => r.ubicacion === u).map(r => { const c = r.codigo, k = r.k, f = stock(c, u), v = sv(u, c); return { c, k, f, v, nf: nivel(u, c), nv: nivelV(k, v), L: lote(u, c) }; });
+    const all = C.k.filter(r => r.ubicacion === u).map(r => { const c = r.codigo, k = r.k, f = stock(c, u), v = sv(u, c); return { c, k, f, v, nf: nivel(u, c), nv: nivelV(k, v), L: lote(u, c), s: kSug(u, c), rev: kRev(u, c) }; });
+    const nRev = all.filter(x => x.rev).length;
     const cnt = n => all.filter(x => x.nf === n).length;
     const q = sane(C.kanQ);
-    const lista = all.filter(x => (C.kanFilter === 'todos' || x.nf === C.kanFilter) && q.every(w => (nombre(x.c) + ' ' + x.c).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(w)))
+    const lista = all.filter(x => (C.kanFilter === 'todos' || (C.kanFilter === 'krev' ? !!x.rev : x.nf === C.kanFilter)) && q.every(w => (nombre(x.c) + ' ' + x.c).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(w)))
       .sort((a, b) => SEV[a.nf] - SEV[b.nf] || SEV[a.nv] - SEV[b.nv] || nombre(a.c).localeCompare(nombre(b.c), 'es'));
     const sinK = Object.keys(C.stock[u] || {}).filter(c => stock(c, u) > 0 && kOf(u, c) == null).sort((a, b) => nombre(a).localeCompare(nombre(b), 'es'));
     const tabBtn = (k, t) => `<button class="tab ${C.kanTab === k ? 'on' : ''}" onclick="cirKanTab('${k}')">${t}</button>`;
@@ -6539,6 +6637,8 @@ function showToast(message, kind) {
       return `<tr><td>${nameCell(x.c)}</td><td class="num"><b>${x.f}</b></td><td class="num"><b>${x.v}</b>${svRows(u, x.c)}</td>
         <td style="min-width:110px">${kanBar(x.k, x.f, x.v)}</td><td>${nivCell(x.nf)}</td><td>${nivCell(x.nv)}</td>
         <td class="num">${kgTxt(x.c)}${puedePlanificar() ? '<div>' + btn(kgDe(x.c) ? 'Kg/u' : 'Cargar Kg/u', `cir_kg('${esc(x.c)}')`) + '</div>' : ''}</td>
+        <td class="num">${x.s ? `<b>${fmtN(x.s.cm, 1)}</b><div class="code">en ${x.s.n} meses${x.s.esp ? ' · esporádica' : ''}</div>` : '—'}</td>
+        <td class="num">${!x.s ? '—' : x.s.ks <= 0 ? '<span class="code">sin ventas</span>' : `<b>${x.s.ks}</b>${x.rev ? `<div><span class="${x.rev.d > 0 ? 'rep' : 'soon'}" title="Aviso: no bloquea nada">⚠ ${x.rev.d > 0 ? 'subir' : 'bajar'} ${Math.abs(Math.round(x.rev.d))} %</span></div>` : ''}${puedePlanificar() && x.s.ks !== x.k ? '<div>' + btn('Usar ' + x.s.ks, `cirAplicarK('${u}','${esc(x.c)}')`) + '</div>' : ''}`}</td>
         <td><div class="row-actions">${puedePlanificar() ? btn('Cambiar k', `cir_k('${u}','${esc(x.c)}')`) + btn('Ajustar stock', `cir_ajustar('${u}','${esc(x.c)}')`) : ''}${u === 'sector_z' && alerta && x.L > 0 && puedePlanificar() ? btn('Lanzar OI por ' + x.L, `cir_moldeo(${x.L},'${esc(x.c)}',1)`, 'pri') : ''}${u === 'kanban' && alerta && x.L > 0 && puedePlanificar() ? btn('Lanzar OT por ' + x.L, `cir_nuevoPlan(${x.L},'${esc(x.c)}',1)`, 'pri') : ''}</div></td></tr>`; }).join('');
     return `<div class="tabs">${tabBtn('sector_z', '🗄️ Kanban de Terminación')}${tabBtn('kanban', '🏬 Kanban de Mecanizado')}</div>
       <div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:center;"><h2>${nom}</h2>
@@ -6546,9 +6646,10 @@ function showToast(message, kind) {
         <div class="sub">${u === 'sector_z' ? 'Piezas procesadas que llevan mecanizado. Stock físico = lo que hay en la estantería. Stock virtual = estantería + en Terminación + en moldeo/fusión − aros planificados sin entregar.' : 'Producto terminado después de Mecanizado. Stock físico = lo que hay en la estantería. Stock virtual = estantería + planificado en Mecanizado − aros en notas de pedido.'}
           Nivel según k: verde 2k o más · amarillo entre k y 2k (avisa reponer) · rojo menos de k.</div>
         <div class="dia-tiles" style="margin:10px 0;"><div class="tile"><div class="n">${all.length}</div><div class="l">piezas con kanban</div></div><div class="tile ${cnt('rojo') ? 'rojo' : ''}"><div class="n">${cnt('rojo')}</div><div class="l">🔴 rojo</div></div><div class="tile ${cnt('amarillo') ? 'hoy' : ''}"><div class="n">${cnt('amarillo')}</div><div class="l">🟡 amarillo</div></div><div class="tile"><div class="n">${cnt('verde')}</div><div class="l">🟢 verde</div></div></div>
-        <div class="tabs">${fchip('todos', 'Todas (' + all.length + ')')}${fchip('rojo', '🔴 Rojo (' + cnt('rojo') + ')')}${fchip('amarillo', '🟡 Amarillo (' + cnt('amarillo') + ')')}${fchip('verde', '🟢 Verde (' + cnt('verde') + ')')}
+        ${kvPanel(u, nRev)}
+        <div class="tabs">${fchip('todos', 'Todas (' + all.length + ')')}${nRev ? fchip('krev', '⚠ K a revisar (' + nRev + ')') : ''}${fchip('rojo', '🔴 Rojo (' + cnt('rojo') + ')')}${fchip('amarillo', '🟡 Amarillo (' + cnt('amarillo') + ')')}${fchip('verde', '🟢 Verde (' + cnt('verde') + ')')}
           <input id="kan-q" class="kq" placeholder="Buscar pieza…" value="${esc(C.kanQ)}" oninput="cirKanQ(this.value)"></div>
-        ${rows ? `<table><tr><th>Pieza</th><th class="num">Físico</th><th class="num">Virtual</th><th>Físico ▮ · virtual ▯</th><th>Nivel físico</th><th>Nivel virtual</th><th class="num">Kg/u</th><th></th></tr>${rows}</table>`
+        ${rows ? `<table><tr><th>Pieza</th><th class="num">Físico</th><th class="num">Virtual</th><th>Físico ▮ · virtual ▯</th><th>Nivel físico</th><th>Nivel virtual</th><th class="num">Kg/u</th><th class="num">Ventas/mes</th><th class="num">K sugerido</th><th></th></tr>${rows}</table>`
           : `<div class="empty">${all.length ? 'Ninguna pieza coincide con el filtro.' : 'Todavía no hay piezas con kanban acá. Tocá "+ Agregar pieza al kanban", elegí la pieza y definí su k.'}</div>`}</div>
       ${sinK.length ? `<div class="panel"><h2>Piezas con stock pero sin kanban definido (${sinK.length})</h2><div class="sub">Tienen stock en esta estantería pero no tienen k, así que no se controlan.</div><table>${sinK.map(c => `<tr><td>${nameCell(c)}</td><td class="num">${stock(c, u)}</td><td>${puedePlanificar() ? btn('Definir k', `cir_k('${u}','${esc(c)}')`, 'pri') : ''}</td></tr>`).join('')}</table></div>` : ''}`;
   }
