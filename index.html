@@ -485,6 +485,7 @@
     <button class="nav-tab" id="nav-indicadores" style="display:none;" onclick="irAPantalla('indicadores')">📊 Indicadores</button>
     <button class="nav-tab" id="nav-rechazo" style="display:none;" onclick="irAPantalla('rechazo')">❌ Rechazos</button>
     <button class="nav-tab" id="nav-replanificar" style="display:none;" onclick="irAPantalla('replanificar')">🔁 Replanificar<span id="replan-badge"></span></button>
+    <button class="nav-tab" id="nav-sgadesap" style="display:none;" onclick="irAPantalla('sgadesap')">⚠️ Desaparecidos de SGA<span id="desap-badge"></span></button>
   </nav>
 
   <div class="kpi-grid">
@@ -776,6 +777,17 @@
       <label class="text-dim" style="display:flex; gap:6px; align-items:center; font-size:0.78rem; cursor:pointer;"><input type="checkbox" id="replan-ver-todas" onchange="rechazoVerReplan = this.checked; renderReplanificarPanel()"> Mostrar también las ya replanificadas</label>
     </div>
     <div id="replanificar-list"></div>
+  </div>
+
+  <div class="stock-section" id="sgadesap-section" style="display:none;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
+      <div>
+        <div style="font-weight:700; color:#fff; font-size:0.95rem;">⚠️ Desaparecidos de SGA</div>
+        <div class="text-dim" style="margin-top:4px;">Pedidos/líneas que estaban pendientes y ya no vinieron en la última carga del Excel de SGA — puede ser que se despacharon ahí directo, sin pasar por "🚚 Despachar" acá. Elegí qué pasó con cada uno para que el indicador de Kg despachados quede correcto.</div>
+      </div>
+      <label class="text-dim" style="display:flex; gap:6px; align-items:center; font-size:0.78rem; cursor:pointer;"><input type="checkbox" id="desap-ver-resueltos" onchange="desapVerResueltos = this.checked; renderSgaDesapPanel()"> Mostrar también los ya resueltos</label>
+    </div>
+    <div id="sgadesap-list"></div>
   </div>
 
   <div class="stock-section" id="armar-hoja-section" style="display:none;">
@@ -2598,12 +2610,13 @@ const SECCION_ELEMS = {
   indicadores: ['nav-indicadores'],
   rechazo: ['nav-rechazo'],
   replanificar: ['nav-replanificar'],
+  sgadesap: ['nav-sgadesap'],
 };
 const FILTER_SECCION = {
   moldeo: 'moldeo', listas: 'listas', preparado: 'preparado', proceso: 'proceso', repuestos: 'repuestos',
   vencidas: 'vencidas', vencidas_term: 'vencidas', prioridad_alta: 'prioridades', prioridad_media: 'prioridades',
   stock: 'stock', despachado: 'despachado', armar_hoja: 'armar_hoja',
-  indicadores: 'indicadores', rechazo: 'rechazo', replanificar: 'replanificar',
+  indicadores: 'indicadores', rechazo: 'rechazo', replanificar: 'replanificar', sgadesap: 'sgadesap',
 };
 const SECCIONES_DEFAULT = ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades'];
 const ALL_SECCIONES = SECCIONES_DEF.map(s => s[0]);
@@ -2660,9 +2673,9 @@ function applyInspectorVisibility() {
   const areaBtn = document.getElementById('area-btn');
   if (areaBtn) areaBtn.style.display = (CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? '' : 'none';
   const nav = document.getElementById('main-nav');
-  if (nav) nav.style.display = ['indicadores', 'rechazo', 'replanificar'].some(k => puedeVer(k)) ? '' : 'none';
+  if (nav) nav.style.display = ['indicadores', 'rechazo', 'replanificar', 'sgadesap'].some(k => puedeVer(k)) ? '' : 'none';
 }
-const PANTALLAS_APARTE = ['indicadores', 'rechazo', 'replanificar'];
+const PANTALLAS_APARTE = ['indicadores', 'rechazo', 'replanificar', 'sgadesap'];
 function irAPantalla(tipo) {
   setFilterFromCard_direct(tipo);
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -2674,7 +2687,7 @@ function aplicarModoPantalla() {
     if (e) e.style.display = aparte ? 'none' : '';
   });
   const act = aparte ? currentFilter : 'pedidos';
-  ['pedidos', 'indicadores', 'rechazo', 'replanificar'].forEach(k => {
+  ['pedidos', 'indicadores', 'rechazo', 'replanificar', 'sgadesap'].forEach(k => {
     const b = document.getElementById('nav-' + k);
     if (b) b.classList.toggle('active', k === act);
   });
@@ -2710,6 +2723,11 @@ async function initDb() {
       rechazosList = qs.docs.filter(d => d.exists).map(d => d.data());
       recargarSiCorresponde();
     }, err => console.warn('rechazos onSnapshot:', err && err.code, err && err.message));
+    db.collection('items_desaparecidos').onSnapshot(qs => {
+      itemsDesaparecidosList = qs.docs.filter(d => d.exists).map(d => d.data());
+      actualizarBadgeDesap();
+      if (currentFilter === 'sgadesap') applyFilters();
+    }, err => console.warn('items_desaparecidos onSnapshot:', err && err.code, err && err.message));
     db.collection('rechazo_motivos').onSnapshot(qs => {
       motivosList = qs.docs.filter(d => d.exists).map(d => d.data()).sort((a, b) => (a.orden - b.orden) || String(a.nombre).localeCompare(String(b.nombre), 'es'));
     }, err => console.warn('rechazo_motivos onSnapshot:', err && err.code, err && err.message));
@@ -3049,6 +3067,8 @@ async function splitQuitarDivision() {
 // ---- Indicadores, Rechazos (Terminación) y Replanificación (Planificación) ----
 // =========================================================================
 let rechazosList = [], motivosList = [], eventosProd = [], eventosProdRaw = [];
+let itemsDesaparecidosList = [];
+let desapVerResueltos = false;
 window.pfReaplicarEventos = function () { if (typeof window.pfEventos === 'function') { eventosProd = window.pfEventos(eventosProdRaw); } if (typeof currentFilter !== 'undefined' && currentFilter === 'indicadores') applyFilters(); };
 let rechazoVerReplan = false;
 let indState = { periodo: 'semana', desde: '', hasta: '', medida: 'kg', kgTipo: 'neto' };
@@ -3057,6 +3077,12 @@ function actualizarBadgeReplan() {
   const el = document.getElementById('replan-badge');
   if (!el) return;
   const n = rechazosList.filter(r => r.estado === 'pendiente').length;
+  el.textContent = n > 0 ? ' (' + n + ')' : '';
+}
+function actualizarBadgeDesap() {
+  const el = document.getElementById('desap-badge');
+  if (!el) return;
+  const n = itemsDesaparecidosList.filter(d => !d.resuelto).length;
   el.textContent = n > 0 ? ' (' + n + ')' : '';
 }
 function mesRango(offset) {
@@ -3639,6 +3665,99 @@ async function saveReplan(id) {
   }
 }
 
+// ---- Desaparecidos de SGA (solo administrador): pedidos/líneas que estaban
+// pendientes y ya no vinieron en la última carga del Excel. En vez de
+// borrarlos sin dejar rastro (y perder esos Kg del indicador de Despachado),
+// el pipeline los manda a items_desaparecidos para que un admin elija qué
+// pasó con cada uno — ver SQL 028. ----
+function desapCardHtml(d) {
+  const kgPend = Math.round((Number(d.pend) || 0) * (Number(d.kxu) || 0) * 10) / 10;
+  const diaTxt = d.desaparecio_dia ? new Date(d.desaparecio_dia + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
+  const estadoHtml = d.resuelto
+    ? (d.resuelto_como === 'despachado'
+        ? `<div style="margin-top:6px;"><span class="pill pill-despachado">✅ Despachado: ${fmtN(d.resuelto_cant)} u.${d.resuelto_kg ? ' · ' + fmtN(d.resuelto_kg, 1) + ' Kg' : ''}</span>${d.resuelto_nota ? ` <span class="text-dim">— ${escHtml(d.resuelto_nota)}</span>` : ''}</div>`
+        : `<div style="margin-top:6px;"><span class="pill pill-warning">❌ No fue despacho</span>${d.resuelto_nota ? ` <span class="text-dim">— ${escHtml(d.resuelto_nota)}</span>` : ''}</div>`)
+    : '';
+  const acciones = (!d.resuelto && CURRENT_PROFILE && CURRENT_PROFILE.es_admin)
+    ? `<div class="row-actions" style="margin-top:8px;"><button class="view-toggle-btn" onclick="openDesapDespacharDialog(${d.id})">✅ Fue despachado</button><button class="view-toggle-btn" onclick="openDesapDescartarDialog(${d.id})">❌ No fue despacho</button></div>`
+    : '';
+  return `<div class="card" style="margin-bottom:10px;">
+    <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+      <div><b style="color:#fff;">${escHtml(d.descripcion || d.codigo)}</b><br><span class="text-dim">${escHtml(d.cliente)} · NV ${escHtml(d.comprobante)} · Cód ${escHtml(d.codigo)}</span></div>
+      <div class="text-dim" style="font-size:0.75rem; text-align:right;">Desapareció el ${diaTxt}</div>
+    </div>
+    <div style="margin-top:6px;">Pendiente cuando desapareció: <b>${fmtN(d.pend)} u.</b>${kgPend ? ' · ' + fmtN(kgPend, 1) + ' Kg' : ''}</div>
+    ${estadoHtml}${acciones}
+  </div>`;
+}
+function renderSgaDesapPanel() {
+  const el = document.getElementById('sgadesap-list');
+  if (!el) return;
+  const lista = itemsDesaparecidosList.filter(d => desapVerResueltos || !d.resuelto)
+    .sort((a, b) => (!!a.resuelto === !!b.resuelto) ? String(b.desaparecio_dia || '').localeCompare(String(a.desaparecio_dia || '')) : (a.resuelto ? 1 : -1));
+  if (!lista.length) {
+    el.innerHTML = '<div class="text-dim" style="padding: 20px 4px;">No hay ítems de SGA pendientes de revisar. 🎉</div>';
+    return;
+  }
+  el.innerHTML = lista.map(desapCardHtml).join('');
+}
+function openDesapDespacharDialog(id) {
+  const d = itemsDesaparecidosList.find(x => String(x.id) === String(id));
+  if (!d) return;
+  showStockDialog(`
+    <h3>✅ Marcar como despachado</h3>
+    <div class="text-dim" style="margin-bottom:12px; line-height:1.5;"><span style="color:#fff;">${escHtml(d.descripcion || d.codigo)}</span><br>${escHtml(d.cliente)} · NV ${escHtml(d.comprobante)} · Cód ${escHtml(d.codigo)}<br>Pendiente cuando desapareció de SGA: ${fmtN(d.pend)} u.</div>
+    <div class="stock-field"><label>Cantidad a sumar a Despachado</label><input type="number" id="desap-cant" value="${d.pend}" min="0" max="${d.pend}" step="any"></div>
+    <div class="stock-field"><label>Nota (opcional)</label><input type="text" id="desap-nota" autocomplete="off" placeholder="ej. facturado directo en SGA"></div>
+    <div class="text-dim" style="font-size:0.75rem; margin-bottom:10px;">Suma esta cantidad al indicador de Kg despachados (de hoy) y sale de esta lista para siempre.</div>
+    <div class="stock-actions">
+      <button class="stock-btn-cancel" onclick="closeStockDialog()">Cancelar</button>
+      <button class="stock-btn-primary" id="desap-save-btn" onclick="saveDesapResolver(${d.id}, 'despachado')">✅ Confirmar</button>
+    </div>`);
+}
+function openDesapDescartarDialog(id) {
+  const d = itemsDesaparecidosList.find(x => String(x.id) === String(id));
+  if (!d) return;
+  showStockDialog(`
+    <h3>❌ No fue un despacho</h3>
+    <div class="text-dim" style="margin-bottom:12px; line-height:1.5;"><span style="color:#fff;">${escHtml(d.descripcion || d.codigo)}</span><br>${escHtml(d.cliente)} · NV ${escHtml(d.comprobante)} · Cód ${escHtml(d.codigo)}<br>Pendiente cuando desapareció de SGA: ${fmtN(d.pend)} u.</div>
+    <div class="stock-field"><label>Motivo (ej. cancelado, error de carga)</label><input type="text" id="desap-nota" autocomplete="off"></div>
+    <div class="text-dim" style="font-size:0.75rem; margin-bottom:10px;">No suma nada a Despachado. Sale de esta lista para siempre.</div>
+    <div class="stock-actions">
+      <button class="stock-btn-cancel" onclick="closeStockDialog()">Cancelar</button>
+      <button class="stock-btn-primary" id="desap-save-btn" onclick="saveDesapResolver(${d.id}, 'descartado')">Confirmar</button>
+    </div>`);
+}
+async function saveDesapResolver(id, como) {
+  const notaEl = document.getElementById('desap-nota');
+  const nota = notaEl ? ((notaEl.value || '').trim() || null) : null;
+  const cantEl = document.getElementById('desap-cant');
+  const cant = cantEl ? Number(cantEl.value) : null;
+  if (como === 'despachado' && (cant == null || isNaN(cant) || cant < 0)) { alert('Poné una cantidad válida.'); return; }
+  const btn = document.getElementById('desap-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+  try {
+    const { error } = await supabaseClient.rpc('items_desaparecidos_resolver', {
+      p_id: id, p_como: como, p_cant: como === 'despachado' ? cant : null, p_nota: nota,
+    });
+    if (error) throw error;
+    const d = itemsDesaparecidosList.find(x => String(x.id) === String(id));
+    if (d) { d.resuelto = true; d.resuelto_como = como; d.resuelto_cant = como === 'despachado' ? cant : null; d.resuelto_nota = nota; }
+    closeStockDialog();
+    actualizarBadgeDesap();
+    applyFilters();
+    showToast(como === 'despachado' ? 'Marcado como despachado' : 'Descartado', 'success');
+  } catch (e) {
+    console.error('No se pudo resolver el ítem desaparecido de SGA:', e);
+    let msg = 'No se pudo guardar.';
+    if (e && (e.code === '42883' || e.code === 'PGRST202' || /items_desaparecidos_resolver/i.test(e.message || ''))) msg = 'La base todavía no tiene esta función. Avisale a quien administra el tablero (falta correr el SQL 028).';
+    else if (e && e.code === '42501') msg = 'Tu usuario no tiene permiso para resolver esto (hace falta ser Administrador).';
+    else if (e && e.message) msg += ' ' + e.message;
+    alert(msg);
+    if (btn) { btn.disabled = false; btn.textContent = como === 'despachado' ? '✅ Confirmar' : 'Confirmar'; }
+  }
+}
+
 // ---- Motivos de rechazo (solo administrador) ----
 function openMotivosDialog() {
   const filas = motivosList.map(m => `
@@ -4185,9 +4304,9 @@ function applyFilters() {
   const despachadoSection = document.getElementById('despachado-section');
   const armarHojaSection = document.getElementById('armar-hoja-section');
   const splitContainer = document.getElementById('split-container');
-  ['indicadores-section', 'rechazo-section', 'replanificar-section'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = 'none'; });
+  ['indicadores-section', 'rechazo-section', 'replanificar-section', 'sgadesap-section'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = 'none'; });
   aplicarModoPantalla();
-  if (currentFilter === 'indicadores' || currentFilter === 'rechazo' || currentFilter === 'replanificar') {
+  if (currentFilter === 'indicadores' || currentFilter === 'rechazo' || currentFilter === 'replanificar' || currentFilter === 'sgadesap') {
     if (stockSection) stockSection.style.display = 'none';
     if (despachadoSection) despachadoSection.style.display = 'none';
     if (armarHojaSection) armarHojaSection.style.display = 'none';
@@ -4196,7 +4315,8 @@ function applyFilters() {
     let n = '—';
     if (currentFilter === 'indicadores') renderIndicadoresPanel();
     else if (currentFilter === 'rechazo') { renderRechazoPanel(); n = rechazosList.length; }
-    else { renderReplanificarPanel(); n = rechazosList.filter(r => r.estado === 'pendiente').length; }
+    else if (currentFilter === 'replanificar') { renderReplanificarPanel(); n = rechazosList.filter(r => r.estado === 'pendiente').length; }
+    else { renderSgaDesapPanel(); n = itemsDesaparecidosList.filter(d => !d.resuelto).length; }
     document.getElementById('count-filtered').textContent = n;
     document.getElementById('count-total').textContent = DATA.length;
     document.getElementById('kg-filtered').textContent = '—';
