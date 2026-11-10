@@ -3163,13 +3163,15 @@ function barChartSvg(o) {
   o.labels.forEach((lab, i) => {
     const cx = padL + groupW * i + groupW / 2;
     const ultimo = !!o.marcarUltimo && i === n - 1;
+    const clk = o.det ? ` style="cursor:pointer" onclick="indDetShow('${o.det}',${i})"` : '';
+    if (o.det) g += `<rect x="${(cx - groupW / 2).toFixed(1)}" y="${padT}" width="${groupW.toFixed(1)}" height="${innerH}" fill="transparent"${clk}/>`;
     o.series.forEach((sr, jx) => {
       const v = Number(sr.values[i]) || 0;
       const bh = innerH * v / maxV;
       const x = cx - (barW * ns) / 2 + barW * jx;
       const color = sr.colors ? sr.colors[i] : sr.color;
       const op = (o.fadeOld && !ultimo) ? 0.55 : 1;
-      g += `<rect x="${x.toFixed(1)}" y="${(padT + innerH - bh).toFixed(1)}" width="${(barW - 1).toFixed(1)}" height="${Math.max(bh, v > 0 ? 1 : 0).toFixed(1)}" fill="${color}" opacity="${op}" rx="2"><title>${escHtml(lab)} — ${escHtml(sr.name)}: ${fmtN(v, 1)}</title></rect>`;
+      g += `<rect x="${x.toFixed(1)}" y="${(padT + innerH - bh).toFixed(1)}" width="${(barW - 1).toFixed(1)}" height="${Math.max(bh, v > 0 ? 1 : 0).toFixed(1)}" fill="${color}" opacity="${op}" rx="2"${clk}><title>${escHtml(lab)} — ${escHtml(sr.name)}: ${fmtN(v, 1)}</title></rect>`;
       if (v > 0 && (ns === 1 || n <= 7)) g += `<text x="${(x + (barW - 1) / 2).toFixed(1)}" y="${(padT + innerH - bh - 3).toFixed(1)}" text-anchor="middle" font-size="8" fill="#e2e8f0">${fmtK(v)}</text>`;
     });
     const txt = escHtml(String(lab).length > 13 ? String(lab).slice(0, 12) + '…' : lab);
@@ -3186,6 +3188,42 @@ function barChartSvg(o) {
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto; display:block;" role="img">${g}</svg>`;
 }
 const MESES_CORTO = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+// ---- Detalle al tocar una barra de los indicadores ----
+window.IND_DET = {};
+function indDetClose() { const ov = document.getElementById('ind-det-overlay'); if (ov) ov.style.display = 'none'; }
+function indDetShow(key, i) {
+  const d = (window.IND_DET[key] || [])[i];
+  if (!d) return;
+  let ov = document.getElementById('ind-det-overlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'ind-det-overlay';
+    ov.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:1500; align-items:center; justify-content:center; padding:12px;';
+    ov.onclick = e => { if (e.target === ov) indDetClose(); };
+    document.body.appendChild(ov);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') indDetClose(); });
+  }
+  const sec = s => {
+    const th = s.cols.map(c => `<th style="text-align:${c.num ? 'right' : 'left'}; padding:6px 8px; font-size:0.66rem; text-transform:uppercase; color:#94a3b8; border-bottom:1px solid #334155; white-space:nowrap; position:sticky; top:0; background:#0f172a;">${c.h}</th>`).join('');
+    const body = s.rows.length
+      ? s.rows.map(r => `<tr>${r.map((v, j) => `<td style="padding:5px 8px; font-size:0.76rem; border-bottom:1px solid #1e293b; text-align:${s.cols[j].num ? 'right' : 'left'};${s.cols[j].num ? ' white-space:nowrap;' : ''}">${v}</td>`).join('')}</tr>`).join('')
+      : `<tr><td colspan="${s.cols.length}" class="text-dim" style="padding:14px 8px; font-size:0.78rem;">Sin registros.</td></tr>`;
+    return `<div style="margin-bottom:16px;">
+      ${s.titulo ? `<div style="font-weight:700; color:#fff; font-size:0.85rem;">${s.titulo}</div>` : ''}
+      <div class="text-dim" style="font-size:0.74rem; margin:2px 0 6px;">${s.resumen || ''}</div>
+      <div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse;"><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div>
+    </div>`;
+  };
+  ov.innerHTML = `<div style="background:#0f172a; border:1px solid var(--card-border); border-radius:14px; width:min(980px,100%); max-height:88vh; display:flex; flex-direction:column;">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--card-border);">
+      <div style="font-weight:700; color:#fff;">${d.titulo}</div>
+      <button onclick="indDetClose()" style="background:transparent; border:1px solid var(--card-border); color:#cbd5e1; border-radius:8px; padding:3px 10px; cursor:pointer;">✕</button>
+    </div>
+    <div style="padding:12px 16px; overflow-y:auto;">${d.secs.map(sec).join('')}</div>
+  </div>`;
+  ov.style.display = 'flex';
+}
 
 function renderIndicadoresPanel() {
   const box = document.getElementById('indicadores-body');
@@ -3208,7 +3246,7 @@ function renderIndicadoresPanel() {
   const sem = [];
   for (let o = -7; o <= 0; o++) { const r = semanaRango(o); sem.push({ r, v: sumPeriodo(r) }); }
   const semLabels = sem.map(w => cortoIso(w.r.ini));
-  const semChart = (clave, nombre, color) => barChartSvg({ labels: semLabels, series: [{ name: nombre, color, values: sem.map(w => w.v[clave]) }], fadeOld: true, marcarUltimo: true });
+  const semChart = (clave, nombre, color) => barChartSvg({ labels: semLabels, series: [{ name: nombre, color, values: sem.map(w => w.v[clave]) }], fadeOld: true, marcarUltimo: true, det: clave });
   const tot8 = clave => fmtN(sem.reduce((a, w) => a + w.v[clave], 0));
 
   // 4) Mensual: ingresado vs despachado (últimos 6 meses)
@@ -3223,7 +3261,7 @@ function renderIndicadoresPanel() {
     });
   }
   const hayIngresos = eventosProd.some(e => e.tipo === 'ingreso');
-  const ingDes = barChartSvg({ labels: meses.map(m => m.label), series: [{ name: 'Ingresado (pedidos nuevos)', color: '#38bdf8', values: meses.map(m => m.ing) }, { name: 'Despachado', color: '#c084fc', values: meses.map(m => m.des) }], marcarUltimo: true });
+  const ingDes = barChartSvg({ labels: meses.map(m => m.label), series: [{ name: 'Ingresado (pedidos nuevos)', color: '#38bdf8', values: meses.map(m => m.ing) }, { name: 'Despachado', color: '#c084fc', values: meses.map(m => m.des) }], marcarUltimo: true, det: 'ingdes' });
 
   // 5) Pareto de rechazos del período seleccionado
   const med = indState.medida;
@@ -3235,7 +3273,7 @@ function renderIndicadoresPanel() {
   let ac = 0;
   const cumul = filas.map(f => { ac += f[1]; return totalP > 0 ? ac / totalP * 100 : 0; });
   const pareto = filas.length
-    ? barChartSvg({ labels: filas.map(f => f[0]), series: [{ name: med === 'kg' ? 'Kg' : 'Unidades', color: '#ef4444', values: filas.map(f => f[1]) }], line: { values: cumul, color: '#fbbf24' }, rotate: true, h: 240 })
+    ? barChartSvg({ labels: filas.map(f => f[0]), series: [{ name: med === 'kg' ? 'Kg' : 'Unidades', color: '#ef4444', values: filas.map(f => f[1]) }], line: { values: cumul, color: '#fbbf24' }, rotate: true, h: 240, det: 'pareto' })
     : '<div class="text-dim" style="padding:30px 0; text-align:center; font-size:0.8rem;">No hay rechazos registrados en el período elegido.</div>';
 
   // 6) Kg en cada etapa, hoy
@@ -3246,7 +3284,7 @@ function renderIndicadoresPanel() {
     ['Terminación', vivos.filter(r => r.estado_general === 'Fundido / En Terminación').reduce((a, r) => a + remainingKg(r), 0), '#34d399'],
     ['Preparado', vivos.reduce((a, r) => a + prepPendienteDespachoKg(r), 0), '#2dd4bf'],
   ];
-  const etapasChart = barChartSvg({ labels: etapas.map(e => e[0]), series: [{ name: 'Kg', color: '#38bdf8', colors: etapas.map(e => e[2]), values: etapas.map(e => e[1]) }] });
+  const etapasChart = barChartSvg({ labels: etapas.map(e => e[0]), series: [{ name: 'Kg', color: '#38bdf8', colors: etapas.map(e => e[2]), values: etapas.map(e => e[1]) }], det: 'etapas' });
 
   // 7) A despachar por mes, según fecha de entrega (todo lo pendiente, lo atrasado se suma en el mes actual)
   const HORIZONTE_DESP_FUT = 5; // meses además del actual
@@ -3259,20 +3297,75 @@ function renderIndicadoresPanel() {
   const finHorizonteDespFut = mesesDespFut[mesesDespFut.length - 1].r.fin;
   const kgPorMesDespFut = mesesDespFut.map(() => 0);
   let kgDespMasAdelante = 0, kgDespSinFecha = 0;
+  const detDespFut = mesesDespFut.map(() => []), detDespMas = [], detDespSin = [];
   vivos.forEach(r => {
     const u = Math.max(0, (r.pend || 0) - despRowCant(r));
     if (u <= 0) return;
     const kg = r.pend > 0 ? r.kilos * (u / r.pend) : 0;
-    if (!r.fecha_entrega) { kgDespSinFecha += kg; return; }
-    if (r.fecha_entrega > finHorizonteDespFut) { kgDespMasAdelante += kg; return; }
+    const fila = { r, u, kg };
+    if (!r.fecha_entrega) { kgDespSinFecha += kg; detDespSin.push(fila); return; }
+    if (r.fecha_entrega > finHorizonteDespFut) { kgDespMasAdelante += kg; detDespMas.push(fila); return; }
     const idx = mesesDespFut.findIndex(m => r.fecha_entrega <= m.r.fin);
-    if (idx >= 0) kgPorMesDespFut[idx] += kg;
+    if (idx >= 0) { kgPorMesDespFut[idx] += kg; detDespFut[idx].push(fila); }
   });
   const totalDespFutKg = kgPorMesDespFut.reduce((a, b) => a + b, 0) + kgDespMasAdelante + kgDespSinFecha;
   const labelsDespFut = [...mesesDespFut.map(m => m.label), 'Más adelante', 'Sin fecha'];
   const valoresDespFut = [...kgPorMesDespFut, kgDespMasAdelante, kgDespSinFecha];
   const coloresDespFut = [...mesesDespFut.map((m, i) => i === 0 ? '#ef4444' : '#38bdf8'), '#64748b', '#94a3b8'];
-  const despPorMesChart = barChartSvg({ labels: labelsDespFut, series: [{ name: 'Kg', color: '#38bdf8', colors: coloresDespFut, values: valoresDespFut }], rotate: true });
+  const despPorMesChart = barChartSvg({ labels: labelsDespFut, series: [{ name: 'Kg', color: '#38bdf8', colors: coloresDespFut, values: valoresDespFut }], rotate: true, det: 'despmes' });
+
+  // Detalle de cada barra (se abre al tocarla)
+  {
+    const E = escHtml;
+    const kgvE = e => (indState.kgTipo === 'bruto' && Number(e.kg_bruto) > 0) ? Number(e.kg_bruto) : (Number(e.kg) || 0);
+    const resumen = (n, u, kg) => `${n} registro${n === 1 ? '' : 's'} · ${fmtN(u)} u. · ${fmtN(kg, 1)} Kg`;
+    const COLS_MOV = [{ h: 'Día' }, { h: 'Cliente' }, { h: 'NV' }, { h: 'Código' }, { h: 'Descripción' }, { h: 'Unid.', num: 1 }, { h: 'Kg', num: 1 }];
+    const COLS_RZ = COLS_MOV.concat([{ h: 'Motivo' }]);
+    const sortDia = arr => arr.slice().sort((a, b) => (b.dia || '').localeCompare(a.dia || ''));
+    const secMov = (titulo, arr, kgFn) => {
+      const s = sortDia(arr);
+      return { titulo, cols: COLS_MOV, resumen: resumen(s.length, s.reduce((a, x) => a + (Number(x.cantidad) || 0), 0), s.reduce((a, x) => a + kgFn(x), 0)),
+        rows: s.map(x => [E(x.dia ? formatDate(x.dia) : '—'), E(x.cliente || ''), E(x.comprobante || ''), E(x.codigo || ''), E(x.descripcion || ''), fmtN(x.cantidad), fmtN(kgFn(x), 1)]) };
+    };
+    const secRz = (titulo, arr) => {
+      const s = sortDia(arr);
+      return { titulo, cols: COLS_RZ, resumen: resumen(s.length, s.reduce((a, x) => a + (Number(x.cantidad) || 0), 0), s.reduce((a, x) => a + (Number(x.kg) || 0), 0)),
+        rows: s.map(x => [E(x.dia ? formatDate(x.dia) : '—'), E(x.cliente || ''), E(x.comprobante || ''), E(x.codigo || ''), E(x.descripcion || ''), fmtN(x.cantidad), fmtN(x.kg, 1), E(x.motivo || '')]) };
+    };
+    const kgNum = x => Number(x.kg) || 0;
+    const tSem = w => `Semana del ${cortoIso(w.r.ini)} al ${cortoIso(w.r.fin)}`;
+    IND_DET.desKg = sem.map(w => ({ titulo: '🚚 Despachado · ' + tSem(w), secs: [secMov('', despachosLog.filter(d => enRango(d.dia, w.r)), kgNum)] }));
+    IND_DET.funKg = sem.map(w => ({ titulo: '🔥 Fundido · ' + tSem(w), secs: [secMov('', eventosProd.filter(e => e.tipo === 'fundido' && enRango(e.dia, w.r)), kgvE)] }));
+    IND_DET.molKg = sem.map(w => ({ titulo: '🧱 Moldeado · ' + tSem(w), secs: [secMov('', eventosProd.filter(e => e.tipo === 'moldeado' && enRango(e.dia, w.r)), kgvE)] }));
+    IND_DET.recKg = sem.map(w => ({ titulo: '❌ Rechazo · ' + tSem(w), secs: [secRz('', rechazosList.filter(x => enRango(x.dia, w.r)))] }));
+    IND_DET.ingdes = meses.map(m => ({ titulo: '📥 Ingresado vs despachado · ' + m.label, secs: [
+      secMov('📥 Ingresado (pedidos nuevos)', eventosProd.filter(e => e.tipo === 'ingreso' && enRango(e.dia, m.r)), kgNum),
+      secMov('🚚 Despachado', despachosLog.filter(d => enRango(d.dia, m.r)), kgNum)] }));
+    IND_DET.pareto = filas.map(f => ({ titulo: '📉 Rechazos · ' + f[0], secs: [secRz('', recPer.filter(x => (((x.motivo || '').trim()) || '(sin motivo)') === f[0]))] }));
+    const COLS_ET = [{ h: 'Cliente' }, { h: 'NV' }, { h: 'Código' }, { h: 'Descripción' }, { h: 'Unid.', num: 1 }, { h: 'Kg', num: 1 }, { h: 'Entrega' }];
+    const secEt = (lista) => {
+      const s = lista.filter(x => x.kg > 0 || x.u > 0).sort((a, b) => b.kg - a.kg);
+      return { titulo: '', cols: COLS_ET, resumen: resumen(s.length, s.reduce((a, x) => a + x.u, 0), s.reduce((a, x) => a + x.kg, 0)),
+        rows: s.map(x => [E(x.r.cliente || ''), E(x.r.comprobante || ''), E(x.r.codigo || ''), E(x.r.descripcion || ''), fmtN(x.u), fmtN(x.kg, 1), E(x.r.fecha_entrega ? formatDate(x.r.fecha_entrega) : '—')]) };
+    };
+    const etDet = [
+      vivos.filter(r => r.estado_general === 'En Fabricación' && r.area_actual !== 'Moldeo / Fusión').map(r => ({ r, u: r.pend, kg: r.kilos })),
+      vivos.filter(r => r.area_actual === 'Moldeo / Fusión').map(r => ({ r, u: r.pend, kg: r.kilos })),
+      vivos.filter(r => r.estado_general === 'Fundido / En Terminación').map(r => ({ r, u: remainingPend(r), kg: remainingKg(r) })),
+      vivos.map(r => ({ r, u: prepPendienteDespacho(r), kg: prepPendienteDespachoKg(r) })),
+    ];
+    IND_DET.etapas = etapas.map((e, i) => ({ titulo: '🏭 ' + e[0] + ' (hoy)', secs: [secEt(etDet[i])] }));
+    const COLS_DF = [{ h: 'Cliente' }, { h: 'NV' }, { h: 'Código' }, { h: 'Descripción' }, { h: 'Entrega' }, { h: 'Falta', num: 1 }, { h: 'Kg', num: 1 }];
+    const secDf = (lista) => {
+      const s = lista.slice().sort((a, b) => (a.r.fecha_entrega || '9999').localeCompare(b.r.fecha_entrega || '9999') || b.kg - a.kg);
+      return { titulo: '', cols: COLS_DF, resumen: resumen(s.length, s.reduce((a, x) => a + x.u, 0), s.reduce((a, x) => a + x.kg, 0)),
+        rows: s.map(x => [E(x.r.cliente || ''), E(x.r.comprobante || ''), E(x.r.codigo || ''), E(x.r.descripcion || ''),
+          x.r.fecha_entrega ? E(formatDate(x.r.fecha_entrega)) + (x.r.fecha_entrega < TODAY_ISO ? ' <span style="color:#ef4444;">⚠ atrasado</span>' : '') : '—', fmtN(x.u), fmtN(x.kg, 1)]) };
+    };
+    IND_DET.despmes = labelsDespFut.map((lab, i) => ({
+      titulo: '📅 A despachar · ' + lab + (i === 0 ? ' (incluye lo atrasado)' : ''),
+      secs: [secDf(i < mesesDespFut.length ? detDespFut[i] : i === mesesDespFut.length ? detDespMas : detDespSin)] }));
+  }
 
   const card = (titulo, sub, cuerpo, extra) => `
     <div style="background:#0f172a; border:1px solid var(--card-border); border-radius:12px; padding:12px 12px 8px; min-width:0;">
@@ -3290,7 +3383,7 @@ function renderIndicadoresPanel() {
       <input type="date" id="ind-desde" value="${escHtml(indState.desde)}" onchange="setIndRango()" style="background:#0f172a; border:1px solid var(--card-border); color:#fff; border-radius:8px; padding:5px 8px; font-size:0.78rem;">
       <input type="date" id="ind-hasta" value="${escHtml(indState.hasta)}" onchange="setIndRango()" style="background:#0f172a; border:1px solid var(--card-border); color:#fff; border-radius:8px; padding:5px 8px; font-size:0.78rem;">
     </div>
-    <div class="text-dim" style="font-size:0.78rem; margin-bottom:10px;">Período: <b style="color:#fff;">${cortoIso(cur.ini)} al ${cortoIso(cur.fin)}</b> · comparado con ${cortoIso(prev.ini)} al ${cortoIso(prev.fin)}</div>
+    <div class="text-dim" style="font-size:0.78rem; margin-bottom:10px;">Período: <b style="color:#fff;">${cortoIso(cur.ini)} al ${cortoIso(cur.fin)}</b> · comparado con ${cortoIso(prev.ini)} al ${cortoIso(prev.fin)} · <span style="color:#38bdf8;">👆 tocá una barra de cualquier gráfico para ver el detalle</span></div>
 
     <div class="ind-tiles">
       ${tile('Despachado', fmtN(A.desKg) + ' Kg', `${fmtN(A.desU)} u. · ${A.desN} despacho${A.desN === 1 ? '' : 's'}<br>${deltaHtml(A.desKg, B.desKg)}`, '#c084fc')}
