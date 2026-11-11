@@ -7978,16 +7978,43 @@ function showToast(message, kind) {
     return { rows, tot, hoyM };
   }
   const nomMes = k => k === 'futuro' ? 'Más adelante (12 meses o más)' : k === 'sinfecha' ? 'Sin fecha de entrega' : (() => { const d = parse(k + '-01'); return MESES[d.getMonth()] + ' ' + d.getFullYear(); })();
+  const nice = x => { const p = Math.pow(10, Math.floor(Math.log10(x))); for (const f of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (f * p >= x) return f * p; return 10 * p; };
   function vEstimacion() {
     const E = estimacion();
     if (!E.rows.length || (E.rows.length === 1 && !E.rows[0].n)) return '<div class="empty">No hay renglones pendientes de entrega.</div>';
-    const vals = E.rows.map(r => valorSerie(r.por)), max = Math.max(1, ...vals);
-    const fila = (r, i) => {
-      const v = vals[i], atr = valorSerie(r.atras), en = r.k === E.hoyM;
+    const vals = E.rows.map(r => valorSerie(r.por)), tope = nice(Math.max(1, ...vals) * 1.18), ticks = [0, 1, 2, 3, 4].map(k => tope * k / 4);
+    const pc = v => (v / tope * 100).toFixed(2);
+    const fila = r => {
+      const v = valorSerie(r.por), atr = Math.min(v, valorSerie(r.atras)), enf = v - atr, en = r.k === E.hoyM;
       const extra = V.moneda === 'ambas' ? (() => { const x = totalEn(r.por, 'ARS'); return x.incompleto ? '' : ` <span class="dim">≈ ${money(x.t, 'ARS')}</span>`; })() : '';
-      return `<div class="hb clk" data-k="${esc(r.k)}" onclick="venDet('mes', this.dataset.k)" title="Tocá para ver el detalle"><span class="l" style="width:190px" title="${esc(nomMes(r.k))}">${esc(nomMes(r.k))}${en ? ' <small class="dim">(en curso)</small>' : ''}</span><span class="tr"><i style="width:${v > 0 ? Math.max(1.5, v / max * 100).toFixed(1) : 0}%"></i></span><span class="v" style="width:150px">${v > 0 ? nf(v) : '—'}${extra}</span><span class="dim" style="width:150px;font-size:.72rem">${r.n} ${r.n === 1 ? 'renglón' : 'renglones'}${atr > 0 ? ` · <span class="warn">atrasado ${nf(atr)}</span>` : ''}${r.sin ? ` · ${r.sin} sin valorizar` : ''}</span></div>`;
+      const seg = (w, cls, t) => w > 0 ? `<i class="${cls}" style="width:${pc(w)}%" title="${t}"></i>` : '';
+      return `<div class="eb clk" data-k="${esc(r.k)}" onclick="venDet('mes', this.dataset.k)" title="Tocá para ver el detalle"><div class="el">${esc(nomMes(r.k))}${en ? ' <small class="dim">(en curso)</small>' : ''}</div>
+        <div class="ep"><div class="bars">${seg(atr, 'atr', 'Atrasado: ' + nf(atr))}${seg(enf, 'ok', 'En fecha: ' + nf(enf))}<span class="val" style="left:calc(${pc(v)}% + 8px)">${v > 0 ? nf(v) : '—'}${extra}</span></div></div>
+        <div class="em">${r.n} ${r.n === 1 ? 'renglón' : 'renglones'}${atr > 0 ? ` · <span class="warn">${nf(atr)} atrasado</span>` : ''}${r.sin ? ` · ${r.sin} sin valorizar` : ''}</div></div>`;
     };
-    return E.rows.map(fila).join('') + `<div class="sub">Total estimado: <b>${grande(E.tot)}</b>. Lo atrasado (fecha de entrega vencida y todavía pendiente) está sumado al mes en curso. Los renglones sin precio o por Kg sin Kg/u figuran como "sin valorizar" y no suman.</div>`;
+    return `<div class="leg"><span><i style="background:#3987e5"></i>En fecha</span><span><i style="background:#eda100"></i>Atrasado (se suma al mes en curso)</span></div>
+      <div class="ebw"><div class="grid">${ticks.map((t, k) => `<u style="left:${(k * 25)}%"></u>`).join('')}</div>${E.rows.map(fila).join('')}</div>
+      <div class="eax"><span class="el"></span><span class="ep">${ticks.map((t, k) => `<b style="left:${k * 25}%">${nf(t)}</b>`).join('')}</span><span class="em"></span></div>
+      <div class="sub">Total estimado: <b>${grande(E.tot)}</b>. Lo atrasado (fecha de entrega vencida y todavía pendiente) está sumado al mes en curso. Los renglones sin precio o por Kg sin Kg/u figuran como "sin valorizar" y no suman.</div>`;
+  }
+  // torta: hasta 5 partes + "Otros"; cada porción y cada renglón de la leyenda abre el detalle
+  const PIE = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#9085e9'], PIE_OTROS = '#64748b';
+  function torta(entries, tipoDet) {
+    let vals = entries.map(([k, por]) => [k, valorSerie(por)]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]);
+    if (!vals.length) return '<div class="empty">Sin datos todavía.</div>';
+    const total = vals.reduce((a, x) => a + x[1], 0);
+    if (vals.length > 6) { const resto = vals.slice(5).reduce((a, x) => a + x[1], 0); vals = vals.slice(0, 5).concat([['Otros (' + (vals.length - 5) + ')', resto, true]]); }
+    const R = 80, C0 = 90; let ang = -Math.PI / 2;
+    const pt = a => [C0 + R * Math.cos(a), C0 + R * Math.sin(a)];
+    const trozos = vals.map(([k, v, otros], i) => {
+      const col = otros ? PIE_OTROS : PIE[i % PIE.length], frac = v / total, a1 = ang + frac * 2 * Math.PI, tit = `${k}: ${nf(v)} (${(frac * 100).toFixed(1)}%)`;
+      let d; if (vals.length === 1) d = `M ${C0} ${C0 - R} A ${R} ${R} 0 1 1 ${C0 - 0.01} ${C0 - R} Z`; else { const [x0, y0] = pt(ang), [x1, y1] = pt(a1); d = `M ${C0} ${C0} L ${x0.toFixed(2)} ${y0.toFixed(2)} A ${R} ${R} 0 ${frac > .5 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z`; }
+      ang = a1;
+      const clk = tipoDet && !otros ? ` class="clk" data-k="${esc(k)}" onclick="venDet('${tipoDet}', this.dataset.k)"` : '';
+      return { col, k, v, frac, tit, otros, path: `<path d="${d}" fill="${col}" stroke="#1e293b" stroke-width="2"${clk}><title>${esc(tit)}${tipoDet && !otros ? ' — tocá para ver el detalle' : ''}</title></path>` };
+    });
+    const leg = trozos.map(t => `<div class="pl${tipoDet && !t.otros ? ' clk' : ''}"${tipoDet && !t.otros ? ` data-k="${esc(t.k)}" onclick="venDet('${tipoDet}', this.dataset.k)"` : ''} title="${esc(t.tit)}"><i style="background:${t.col}"></i><span class="n">${esc(t.k)}</span><span class="v">${nf(t.v)}</span><span class="p">${(t.frac * 100).toFixed(t.frac < .1 ? 1 : 0)}%</span></div>`).join('');
+    return `<div class="pie"><svg viewBox="0 0 180 180" width="170" height="170" role="img" aria-label="Gráfico de torta">${trozos.map(t => t.path).join('')}</svg><div class="pls">${leg}<div class="pl tot"><span class="n">Total</span><span class="v">${nf(total)}</span></div></div></div>`;
   }
   // detalle: ventana con los renglones que hay detrás de cada número
   const filtroPend = (tipo, k) => pendItems().filter(x => {
@@ -8089,8 +8116,8 @@ function showToast(message, kind) {
         <div class="panel"><h2>Ingresó vs. despachó por mes (${V.moneda === 'ARS' ? '$' : 'USD'})</h2>${chart()}
           <div class="leg"><span><i style="background:#38bdf8"></i>Ingresó</span><span><i style="background:#34d399"></i>Despachó</span></div>
           <div class="sub">Los meses anteriores al arranque del indicador pueden estar incompletos: SGA solo informa lo que sigue pendiente, no lo que ya se entregó y facturó.</div></div>
-        <div class="panel"><h2>Cartera pendiente por etapa (${V.moneda === 'ARS' ? '$' : 'USD'})</h2>${barras(Object.entries(car.etapas), '', 'etapa')}
-          <h2 style="margin-top:14px">Cartera por cliente (top 8)</h2>${barras(Object.entries(car.clientes).sort((a, b) => valorSerie(b[1]) - valorSerie(a[1])).slice(0, 8), '', 'cliente')}</div>
+        <div class="panel"><h2>Cartera pendiente por sector (${V.moneda === 'ARS' ? '$' : 'USD'})</h2>${torta(Object.entries(car.etapas), 'etapa')}
+          <h2 style="margin-top:14px">Cartera por cliente (${V.moneda === 'ARS' ? '$' : 'USD'})</h2>${torta(Object.entries(car.clientes), 'cliente')}</div>
       </div>
       <div class="panel"><h2>Por cliente en ${nombre} (${V.moneda === 'ARS' ? '$' : 'USD'})</h2>
         ${cliRows.length ? `<table><tr><th>Cliente</th><th class="num">Ingresó</th><th class="num">Despachó</th></tr>${cliRows.map(r => `<tr class="clk" data-k="${esc(r[0])}" onclick="venDet('cliper', this.dataset.k)" title="Tocá para ver el detalle"><td>${esc(r[0])}</td><td class="num">${r[1] ? nf(r[1]) : '—'}</td><td class="num">${r[2] ? nf(r[2]) : '—'}</td></tr>`).join('')}</table>` : '<div class="empty">Sin movimientos valorizados en el período.</div>'}</div>
@@ -8136,6 +8163,15 @@ function showToast(message, kind) {
   #ven-root .sub { color:var(--dim); font-size:.76rem; margin-top:8px; } #ven-root .dim { color:var(--dim); } #ven-root .warn { color:#fbbf24; } #ven-root .err { color:#f87171; padding:20px 0; } #ven-root .empty { color:var(--dim); font-size:.82rem; padding:6px 0; }
   #ven-root .alert { background:rgba(251,191,36,.1); border:1px solid #92400e; border-radius:8px; padding:8px 12px; margin-bottom:10px; font-size:.8rem; }
   #ven-root .hb { display:flex; align-items:center; gap:8px; margin:6px 0; font-size:.8rem; } #ven-root .hb .l { width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } #ven-root .hb .tr { flex:1; background:#0f172a; border-radius:5px; height:13px; overflow:hidden; } #ven-root .hb .tr i { display:block; height:100%; background:#38bdf8; } #ven-root .hb .v { width:78px; text-align:right; color:var(--dim); font-variant-numeric:tabular-nums; }
+  #ven-root .ebw { position:relative; } #ven-root .eb { display:grid; grid-template-columns:170px 1fr 220px; gap:10px; align-items:center; padding:5px 0; } #ven-root .eb:hover { background:#263449; }
+  #ven-root .eb .el, #ven-root .eax .el { font-size:.82rem; } #ven-root .eb .em { font-size:.72rem; color:var(--dim); }
+  #ven-root .ep { position:relative; display:block; } #ven-root .bars { position:relative; display:flex; gap:2px; height:20px; align-items:stretch; } #ven-root .bars i { display:block; height:100%; border-radius:0 4px 4px 0; } #ven-root .bars i.ok { background:#3987e5; } #ven-root .bars i.atr { background:#eda100; border-radius:0 4px 4px 0; }
+  #ven-root .bars .val { position:absolute; top:50%; transform:translateY(-50%); font-size:.78rem; white-space:nowrap; color:#e2e8f0; font-variant-numeric:tabular-nums; }
+  #ven-root .ebw .grid { position:absolute; top:0; bottom:0; left:180px; right:230px; pointer-events:none; } #ven-root .ebw .grid u { position:absolute; top:0; bottom:0; width:1px; background:#2b3a52; }
+  #ven-root .eax { display:grid; grid-template-columns:170px 1fr 220px; gap:10px; font-size:.68rem; color:var(--dim); } #ven-root .eax .ep { height:16px; } #ven-root .eax b { position:absolute; font-weight:400; transform:translateX(-50%); } #ven-root .eax b:first-child { transform:none; }
+  @media (max-width:760px) { #ven-root .eb, #ven-root .eax { grid-template-columns:96px 1fr; } #ven-root .eb .em { grid-column:1 / -1; padding-left:106px; margin-top:-4px; } #ven-root .eax .em { display:none; } #ven-root .ebw .grid { left:106px; right:0; } }
+  #ven-root .pie { display:flex; gap:14px; align-items:center; flex-wrap:wrap; } #ven-root .pie svg { flex:none; } #ven-root .pie path.clk:hover { opacity:.85; }
+  #ven-root .pls { flex:1; min-width:180px; } #ven-root .pl { display:grid; grid-template-columns:12px 1fr auto 46px; gap:8px; align-items:center; padding:3px 4px; font-size:.8rem; border-radius:6px; } #ven-root .pl i { width:11px; height:11px; border-radius:3px; display:block; } #ven-root .pl .n { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } #ven-root .pl .v, #ven-root .pl .p { text-align:right; font-variant-numeric:tabular-nums; } #ven-root .pl .p { color:var(--dim); } #ven-root .pl.tot { border-top:1px solid var(--line); margin-top:4px; padding-top:6px; font-weight:700; grid-template-columns:1fr auto; } #ven-root .pl.clk:hover { background:#263449; }
   #ven-root .clk { cursor:pointer; } #ven-root .hb.clk:hover, #ven-root tr.clk:hover td { background:#263449; } #ven-root .tile.clk:hover { border-color:var(--acc); }
   #ven-det { position:fixed; inset:0; background:rgba(2,6,23,.78); z-index:70; display:none; align-items:center; justify-content:center; padding:14px; } #ven-det.on { display:flex; }
   #ven-det .box { background:#1e293b; border:1px solid #334155; border-radius:12px; padding:14px 16px; width:min(1000px,100%); max-height:88vh; display:flex; flex-direction:column; } #ven-det .top { display:flex; justify-content:space-between; align-items:center; gap:10px; }
