@@ -77,6 +77,28 @@
   .login-btn:disabled { opacity: 0.6; cursor: wait; }
   .login-error { color: #f87171; font-size: 0.78rem; margin-top: 10px; min-height: 1em; }
   .app-root.hidden { display: none; }
+  /* Menú lateral: siempre visible en pantalla grande; en celular es un cajón con el botón ☰ */
+  .side-menu { position: fixed; left: 0; top: 0; bottom: 0; width: 232px; background: #0b1220; border-right: 1px solid var(--card-border); padding: 12px 8px 18px; overflow-y: auto; z-index: 65; display: none; }
+  body.has-side .side-menu { display: block; }
+  .side-menu .sm-brand { display: flex; align-items: center; gap: 8px; padding: 2px 6px 8px; color: #fff; font-weight: 800; font-size: 0.9rem; }
+  .side-menu .sm-brand img { width: 30px; height: 30px; border-radius: 6px; background: #fff; }
+  .side-menu .sm-gt { display: flex; align-items: center; gap: 7px; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.07em; color: #94a3b8; font-weight: 700; padding: 12px 8px 4px; }
+  .side-menu .sm-it { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; background: transparent; border: 0; border-left: 3px solid transparent; color: #e2e8f0; padding: 7px 9px; border-radius: 0 8px 8px 0; cursor: pointer; font-size: 0.84rem; }
+  .side-menu .sm-it:hover { background: #16243a; }
+  .side-menu .sm-it.on { background: #0c2a3f; border-left-color: var(--accent); color: #fff; font-weight: 600; }
+  .side-menu .sm-it .ic { width: 20px; text-align: center; flex: 0 0 auto; }
+  .side-burger { display: none; background: #1e293b; border: 1px solid #475569; color: #fff; border-radius: 8px; padding: 7px 11px; font-size: 0.85rem; cursor: pointer; font-weight: 600; }
+  .side-scrim { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 64; }
+  @media (min-width: 901px) {
+    body.has-side .app-root { margin-left: 232px; }
+    body.has-side #cir-root, body.has-side #ven-root, body.has-side #pf-root { left: 232px !important; }
+  }
+  @media (max-width: 900px) {
+    body.has-side .side-burger { display: inline-flex; align-items: center; gap: 6px; }
+    .side-menu { transform: translateX(-102%); transition: transform .18s; width: min(280px, 86vw); z-index: 2000; box-shadow: 6px 0 24px rgba(0,0,0,.5); }
+    body.side-open .side-menu { transform: none; }
+    body.side-open .side-scrim { display: block; z-index: 1999; }
+  }
   .logout-link { background: transparent; border: 1px solid #475569; color: #94a3b8; font-size: 0.72rem; padding: 5px 10px; border-radius: 6px; cursor: pointer; margin-left: 10px; }
   .logout-link:hover { color: #fff; border-color: var(--accent); }
   .hdr-btn { background: #1e293b; border: 1px solid #475569; color: #e2e8f0; font-size: 0.76rem; font-weight: 600; padding: 6px 12px; border-radius: 8px; cursor: pointer; margin-right: 8px; white-space: nowrap; }
@@ -455,22 +477,17 @@
 
   <div class="app-root hidden" id="app-root">
 
+  <aside class="side-menu" id="side-menu" aria-label="Menú principal"></aside>
+  <div class="side-scrim" id="side-scrim" onclick="sideToggle(false)"></div>
+
   <div class="header">
     <div>
       <h1><img src="icons/logo-256.png" alt="AMRO" style="width:44px; height:44px; border-radius:8px; background:#fff;"> Tablero Comercial & Control de Despachos</h1>
       <div class="subtitle">Monitoreo por áreas de fabricación, cálculo de Kg y anticipación comercial — datos de SGA (Perfil Planeamiento, desde 01/02/2026)</div>
     </div>
     <div style="display:flex; align-items:center; flex-wrap:wrap; gap:6px 0;">
+      <button class="side-burger" id="side-burger" onclick="sideToggle()">☰ Menú</button>
       <button class="hdr-btn install" id="install-btn" onclick="onInstallClick()" title="Instalar el tablero como app en tu pantalla de inicio">⬇️ Instalar app</button>
-      <button class="hdr-btn" id="admin-btn" style="display:none;" onclick="openAdminDialog()">👥 Usuarios y permisos</button>
-      <button class="hdr-btn" id="area-btn" style="display:none;" onclick="openAreaDialog()">🗂️ Áreas</button>
-      <button class="hdr-btn" id="cir-btn" style="display:none;" onclick="window.cirMenu && window.cirMenu()">🔩 Programación mecanizado</button>
-      <button class="hdr-btn" id="mold-btn" style="display:none;" onclick="window.cirOpen && window.cirOpen('mold')">🏭 Moldeo / Fusión</button>
-      <button class="hdr-btn" id="kan-btn" style="display:none;" onclick="window.cirOpen && window.cirOpen('kan')">🏬 Kanban</button>
-      <button class="hdr-btn" id="ven-btn" style="display:none;" onclick="window.venOpen && window.venOpen()">💰 Ventas</button>
-      <button class="hdr-btn" id="pfm-btn" style="display:none;" onclick="window.pfMoldeoOpen && window.pfMoldeoOpen()">🧱 Moldeo por día</button>
-      <button class="hdr-btn" id="pf-btn" style="display:none;" onclick="window.pfOpen && window.pfOpen()">🔥 Parte de fusión</button>
-      <button class="hdr-btn" id="mec-btn" style="display:none;" onclick="openMecDialog()">📋 Artículos</button>
       <span class="badge-live" id="asof-badge">ACTUALIZADO</span>
       <span class="user-pill" id="user-pill" style="margin-left:10px;"></span>
       <button class="logout-link" onclick="changeOwnPassword()">Cambiar contraseña</button>
@@ -1548,7 +1565,7 @@ function renderAdminUsers() {
   const box = document.getElementById('admin-dialog-content');
   const areaOpts = (cur) => '<option value="">— Sin área —</option>' + Object.keys(AREA_PRESETS).map(a => '<option value="' + escHtml(a) + '"' + (cur === a ? ' selected' : '') + '>' + escHtml(a) + '</option>').join('');
   const cards = ADMIN_USERS.map(u => {
-    const secs = Array.isArray(u.secciones) ? u.secciones : SECCIONES_DEFAULT;
+    const secs = expandLegacySecs(Array.isArray(u.secciones) ? u.secciones : SECCIONES_DEFAULT);
     const isMe = u.id === CURRENT_USER_ID;
     const checks = SECCIONES_DEF.map(s => '<label><input type="checkbox" data-sec="' + s[0] + '"' + (secs.includes(s[0]) ? ' checked' : '') + '> ' + s[1] + '</label>').join('');
     return '<div class="adm-user" data-uid="' + u.id + '">' +
@@ -1618,6 +1635,7 @@ async function createAdminUser(btn) {
   const email = g('email').value.trim().toLowerCase();
   const password = g('password').value;
   const secciones = [...box.querySelectorAll('input[data-sec]')].filter(cb => cb.checked).map(cb => cb.getAttribute('data-sec'));
+  secciones.push('menu_v2');
   if (!email) { msg.style.color = '#f87171'; msg.textContent = 'Falta el email.'; return; }
   if (password.length < 8) { msg.style.color = '#f87171'; msg.textContent = 'La contraseña necesita al menos 8 caracteres.'; return; }
   btn.disabled = true; msg.style.color = '#94a3b8'; msg.textContent = 'Creando…';
@@ -1674,8 +1692,9 @@ async function changeOwnPassword() {
 
 function applyAreaPreset(selectEl) {
   const card = selectEl.closest('.adm-user');
-  const preset = AREA_PRESETS[selectEl.value];
-  if (!preset || !card) return;
+  const presetRaw = AREA_PRESETS[selectEl.value];
+  if (!presetRaw || !card) return;
+  const preset = expandLegacySecs(presetRaw);
   card.querySelectorAll('input[data-sec]').forEach(cb => { cb.checked = preset.includes(cb.getAttribute('data-sec')); });
 }
 
@@ -1916,6 +1935,7 @@ async function saveAdminUser(uid, btn) {
   const card = btn.closest('.adm-user');
   const msg = card.querySelector('.adm-msg');
   const secciones = [...card.querySelectorAll('input[data-sec]')].filter(cb => cb.checked).map(cb => cb.getAttribute('data-sec'));
+  secciones.push('menu_v2');   // marca: este perfil ya tiene permisos propios por lugar del menú
   const payload = {
     nombre: card.querySelector('[data-f="nombre"]').value.trim() || null,
     rol: card.querySelector('[data-f="rol"]').value,
@@ -2587,12 +2607,19 @@ const SECCIONES_DEF = [
   ['indicadores', '📊 Indicadores'],
   ['rechazo', '❌ Registrar rechazos (Terminación)'],
   ['replanificar', '🔁 Replanificar rechazos (Planificación)'],
-  ['circuito', '🔩 Programación mecanizado (cronograma completo: jefe de planta / planificación)'],
+  ['circuito', '📅 Mecanizado: armar plan de mecanizado (planificación: jefe de planta / planificación)'],
+  ['mec_stock', '🧰 Mecanizado: stock en Mecanizado'],
+  ['kan_mec', '🏬 Mecanizado: estantería kanban de Mecanizado (k, stock)'],
   ['prog_mecanizado', '⚙️ Mecanizado: mi programa del día'],
   ['prog_terminacion', '🔧 Terminación: mis entregas del día'],
+  ['ter_stock', '🧰 Terminación: estantería de Terminación'],
+  ['kan_z', '🗄️ Terminación: Sector Z (kanban de Terminación: k, stock)'],
+  ['moldeo_dia', '🧱 Terminación: Moldeo por día'],
   ['ventas', '💰 Ventas (montos: indicador de ventas)'],
   ['kanban_moldeo', '🏭 Moldeo / Fusión: cargar piezas para kanban (menú propio)'],
-  ['kanban', '🏬 Kanban: configuración y stock (Terminación y Mecanizado)'],
+  ['cargar_remitos', '🧾 Cargas: cargar remitos (Excel de ventas)'],
+  ['conciliar_remitos', '⚖️ Cargas: conciliar remitos'],
+  ['articulos', '📋 Configuración: Artículos'],
   ['plan_moldeo', '🧮 Moldeo: planificador de vueltas (solo quien planifica)'],
   ['parte_fusion', '🔥 Parte de fusión: cargar el parte y confirmar fusión (Fundición / Planeamiento)'],
 ];
@@ -2643,10 +2670,24 @@ async function loadAreaPresets() {
   AREA_PRESETS = fresh;
 }
 
+// Menú v2: lo que antes era la sección única "kanban" (y parte de "circuito") se separó por sector.
+// Los perfiles guardados antes siguen viendo lo mismo (alias) hasta que un admin los guarde en Usuarios y permisos,
+// momento en que quedan con permisos propios y la marca 'menu_v2'.
+const LEGACY_ALIAS = {
+  mec_stock: ['circuito'], ter_stock: ['circuito'], kan_z: ['kanban', 'circuito'], kan_mec: ['kanban', 'circuito'],
+  cargar_remitos: ['kanban'], conciliar_remitos: ['kanban'], moldeo_dia: ['*'], articulos: ['*'],
+};
+function expandLegacySecs(list) {
+  const out = new Set(list);
+  if (!out.has('menu_v2')) Object.keys(LEGACY_ALIAS).forEach(n => { if (LEGACY_ALIAS[n].some(a => a === '*' || out.has(a))) out.add(n); });
+  return [...out];
+}
 function puedeVer(sec) {
   if (!CURRENT_PROFILE) return false;
   if (CURRENT_PROFILE.es_admin) return true;
   const list = Array.isArray(CURRENT_PROFILE.secciones) ? CURRENT_PROFILE.secciones : SECCIONES_DEFAULT;
+  if (sec === 'kanban') return puedeVer('kan_z') || puedeVer('kan_mec');   // nombre anterior: ahora son dos lugares
+  if (LEGACY_ALIAS[sec] && !list.includes('menu_v2')) return list.includes(sec) || LEGACY_ALIAS[sec].some(a => a === '*' || list.includes(a));
   return list.includes(sec);
 }
 function recomputeHojaInspector() {
@@ -2674,9 +2715,66 @@ function applyInspectorVisibility() {
   if (areaBtn) areaBtn.style.display = (CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? '' : 'none';
   const nav = document.getElementById('main-nav');
   if (nav) nav.style.display = ['indicadores', 'rechazo', 'replanificar', 'sgadesap'].some(k => puedeVer(k)) ? '' : 'none';
+  if (window.sideBuild) window.sideBuild();
 }
+
+// ---- Menú lateral (Version 92): un lugar por sector, siempre a la vista; cada lugar es un permiso propio ----
+const SIDE_GROUPS = [
+  { ic: '🔩', nombre: 'Mecanizado', items: [
+    { id: 'mec_plan', ic: '📅', t: 'Armar plan de mecanizado', sec: 'circuito', run: () => window.cirOpen('full', { tab: 'plan' }) },
+    { id: 'mec_ver', ic: '⚙️', t: 'Ver plan del día', sec: 'prog_mecanizado', run: () => window.cirOpen('mec') },
+    { id: 'mec_stock', ic: '🧰', t: 'Stock en Mecanizado', sec: 'mec_stock', run: () => window.cirOpen('full', { tab: 'mec' }) },
+    { id: 'mec_kan', ic: '🏬', t: 'Estantería kanban de Mecanizado', sec: 'kan_mec', run: () => window.cirOpen('kan', { kan: 'kanban' }) },
+  ] },
+  { ic: '🔧', nombre: 'Terminación', items: [
+    { id: 'ter_ent', ic: '🔧', t: 'Entregas del día', sec: 'prog_terminacion', run: () => window.cirOpen('term') },
+    { id: 'ter_stock', ic: '🧰', t: 'Estantería de Terminación', sec: 'ter_stock', run: () => window.cirOpen('full', { tab: 'term' }) },
+    { id: 'ter_z', ic: '🗄️', t: 'Sector Z', sec: 'kan_z', run: () => window.cirOpen('kan', { kan: 'sector_z' }) },
+    { id: 'ter_mold', ic: '🏭', t: 'Moldeo / Fusión en curso', sec: 'kanban_moldeo', run: () => window.cirOpen('mold') },
+    { id: 'ter_mdia', ic: '🧱', t: 'Moldeo por día', sec: 'moldeo_dia', run: () => window.pfMoldeoOpen && window.pfMoldeoOpen() },
+  ] },
+  { ic: '📥', nombre: 'Cargas', items: [
+    { id: 'c_rem', ic: '🧾', t: 'Cargar remitos (Excel)', sec: 'cargar_remitos', run: () => window.cirCargarRemitos && window.cirCargarRemitos(), noMark: true },
+    { id: 'c_conc', ic: '⚖️', t: 'Conciliar remitos', sec: 'conciliar_remitos', run: () => window.cirConciliar && window.cirConciliar(), noMark: true },
+    { id: 'c_parte', ic: '🔥', t: 'Parte de fusión', sec: 'parte_fusion', run: () => window.pfOpen && window.pfOpen() },
+    { id: 'c_mold', ic: '📝', t: 'Cargar piezas a moldeo / fusión', sec: 'kanban_moldeo', run: () => window.cirOpen('mold') },
+  ] },
+  { ic: '💰', nombre: 'Comercial', items: [
+    { id: 'ventas', ic: '💰', t: 'Ventas', sec: 'ventas', run: () => window.venOpen && window.venOpen() },
+  ] },
+  { ic: '⚙️', nombre: 'Configuración', items: [
+    { id: 'f_users', ic: '👥', t: 'Usuarios y permisos', admin: true, run: () => openAdminDialog(), noMark: true },
+    { id: 'f_areas', ic: '🗂️', t: 'Áreas', admin: true, run: () => openAreaDialog(), noMark: true },
+    { id: 'f_art', ic: '📋', t: 'Artículos', sec: 'articulos', run: () => openMecDialog(), noMark: true },
+  ] },
+];
+let SIDE_CUR = null;
+window.sideMarcar = id => { SIDE_CUR = id; document.querySelectorAll('#side-menu .sm-it').forEach(b => b.classList.toggle('on', b.getAttribute('data-id') === id)); };
+window.sideToggle = on => { const o = on === undefined ? !document.body.classList.contains('side-open') : !!on; document.body.classList.toggle('side-open', o); };
+window.sideGo = id => {
+  for (const g of SIDE_GROUPS) for (const it of g.items) if (it.id === id) {
+    sideToggle(false);
+    if (!it.noMark) window.sideMarcar(id);
+    try { it.run(); } catch (e) { console.error('Menú lateral:', e); }
+    return;
+  }
+};
+window.sideBuild = () => {
+  const el = document.getElementById('side-menu'); if (!el) return;
+  const prof = (typeof CURRENT_PROFILE !== 'undefined') ? CURRENT_PROFILE : null;
+  if (!prof) { document.body.classList.remove('has-side'); return; }
+  const ok = it => it.admin ? !!prof.es_admin : puedeVer(it.sec);
+  let h = '<div class="sm-brand"><img src="icons/logo-256.png" alt="AMRO"> AMRO Gestión</div>';
+  SIDE_GROUPS.forEach(g => {
+    const its = g.items.filter(ok); if (!its.length) return;
+    h += `<div class="sm-gt"><span>${g.ic}</span>${g.nombre}</div>` + its.map(it => `<button class="sm-it${SIDE_CUR === it.id ? ' on' : ''}" data-id="${it.id}" onclick="sideGo('${it.id}')"><span class="ic">${it.ic}</span>${escHtml(it.t)}</button>`).join('');
+  });
+  el.innerHTML = h;
+  document.body.classList.toggle('has-side', h.includes('sm-it'));
+};
 const PANTALLAS_APARTE = ['indicadores', 'rechazo', 'replanificar', 'sgadesap'];
 function irAPantalla(tipo) {
+  if (window.sideMarcar) window.sideMarcar(null);
   setFilterFromCard_direct(tipo);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -6978,7 +7076,15 @@ function showToast(message, kind) {
     const col = n => n === 'verde' ? 'var(--ok)' : n === 'rojo' ? 'var(--bad)' : 'var(--warn)';
     return `<div class="kbar-wrap"><div class="kbar" title="Izquierda: físico ${f} · Derecha: virtual ${v} · k ${k} · 2k ${2 * k}"><i style="height:${pc(f)}%; background:${col(nivelV(k, f))}"></i><b style="height:${pc(v)}%; border-color:${col(nivelV(k, v))}"></b><s style="bottom:${pc(k)}%"></s><s style="bottom:${pc(2 * k)}%"></s></div><div class="kbar-lbl"><span style="bottom:${pc(k)}%">k ${k}</span><span style="bottom:${pc(2 * k)}%">2k ${2 * k}</span></div></div>`;
   }
+  // pestañas del kanban que esta persona puede ver (y, si entró desde "Sector Z" o "Estantería kanban de Mecanizado", solo esa)
+  function kanTabs() {
+    let t = [puede('kan_z') ? 'sector_z' : null, puede('kan_mec') ? 'kanban' : null].filter(Boolean);
+    if (C.kanOnly && t.includes(C.kanOnly)) t = [C.kanOnly];
+    if (!t.includes(C.kanTab)) C.kanTab = t[0] || C.kanTab;
+    return t;
+  }
   function vKan() {
+    kanTabs();
     const u = C.kanTab, nom = u === 'sector_z' ? 'Kanban de Terminación (Sector Z)' : 'Kanban de Mecanizado (estantería post-mecanizado)';
     const plazoKey = u === 'sector_z' ? 'plazo_sector_z' : 'plazo_kanban';
     const all = C.k.filter(r => r.ubicacion === u).map(r => { const c = r.codigo, k = r.k, f = stock(c, u), v = sv(u, c); return { c, k, f, v, nf: nivel(u, c), nv: nivelV(k, v), L: lote(u, c), s: kSug(u, c), rev: kRev(u, c) }; });
@@ -6998,7 +7104,8 @@ function showToast(message, kind) {
         <td class="num">${x.s ? `<b>${fmtN(x.s.cm, 0)}</b><div class="code">30 d: ${fmtN(x.s.u30, 0)} · prom. ${fmtN(x.s.prom, 0)}${x.s.esp ? ' · esporádica' : ''}</div>` : '—'}</td>
         <td class="num">${!x.s ? '—' : x.s.ks <= 0 ? '<span class="code">sin ventas</span>' : `<b title="${x.s.raw !== x.s.ks ? 'Calculado ' + x.s.raw + ', redondeado a múltiplo de 10 (pallets)' : ''}">${x.s.ks}</b>${x.rev ? `<div><span class="${x.rev.d > 0 ? 'rep' : 'soon'}" title="Aviso: no bloquea nada">⚠ ${x.rev.d > 0 ? 'subir' : 'bajar'} ${Math.abs(Math.round(x.rev.d))} %</span></div>` : ''}${puedePlanificar() && x.s.ks !== x.k ? '<div>' + btn('Usar ' + x.s.ks, `cirAplicarK('${u}','${esc(x.c)}')`) + '</div>' : ''}`}</td>
         <td><div class="row-actions">${puedePlanificar() ? btn('Cambiar k', `cir_k('${u}','${esc(x.c)}')`) + btn('Ajustar stock', `cir_ajustar('${u}','${esc(x.c)}')`) : ''}${u === 'sector_z' && alerta && x.L > 0 && puedePlanificar() ? btn('Lanzar OI por ' + x.L, `cir_moldeo(${x.L},'${esc(x.c)}',1)`, 'pri') : ''}${u === 'kanban' && alerta && x.L > 0 && puedePlanificar() ? btn('Lanzar OT por ' + x.L, `cir_nuevoPlan(${x.L},'${esc(x.c)}',1)`, 'pri') : ''}</div></td></tr>`; }).join('');
-    return `<div class="tabs">${tabBtn('sector_z', '🗄️ Kanban de Terminación')}${tabBtn('kanban', '🏬 Kanban de Mecanizado')}</div>
+    const kt = kanTabs();
+    return `${kt.length > 1 ? `<div class="tabs">${kt.includes('sector_z') ? tabBtn('sector_z', '🗄️ Kanban de Terminación') : ''}${kt.includes('kanban') ? tabBtn('kanban', '🏬 Kanban de Mecanizado') : ''}</div>` : ''}
       <div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:center;"><h2>${nom}</h2>
         <div class="row-actions">${puedePlanificar() ? btn('+ Agregar pieza al kanban', `cir_kNuevo('${u}')`, 'pri') + btn('Plazo: ' + (C.cfg[plazoKey] || '—') + ' días', `cir_plazo('${u}')`) : `<span class="code">Plazo de reposición: ${C.cfg[plazoKey] || '—'} días</span>`}</div></div>
         <div class="sub">${u === 'sector_z' ? 'Piezas procesadas que llevan mecanizado. Stock físico = lo que hay en la estantería. Stock virtual = estantería + en Terminación + en moldeo/fusión − aros planificados sin entregar.' : 'Producto terminado después de Mecanizado. Stock físico = lo que hay en la estantería. Stock virtual = estantería + planificado en Mecanizado − aros en notas de pedido.'}
@@ -7354,11 +7461,9 @@ function showToast(message, kind) {
   const puede = sec => (typeof puedeVer === 'function') ? puedeVer(sec) : false;
   const misVistas = () => VIEWS.filter(v => v.key !== 'mold' && v.key !== 'kan' && puede(v.sec));   // menú de Programación mecanizado
   window.cirRefreshBtn = () => {
-    const b = document.getElementById('cir-btn');
-    if (b) { const v = misVistas(); b.style.display = v.length ? '' : 'none'; b.textContent = v.length === 1 ? v[0].label : '🔩 Programación mecanizado ▾'; }
-    [['mold-btn', 'kanban_moldeo'], ['kan-btn', 'kanban']].forEach(([id, sec]) => { const x = document.getElementById(id); if (x) x.style.display = puede(sec) ? '' : 'none'; });
+    if (window.sideBuild) window.sideBuild();
     const kc = document.getElementById('card-kanban'), mc = document.getElementById('card-mecanizado');
-    const vk = ['kanban', 'stock', 'circuito'].some(puede), vm = ['prog_mecanizado', 'circuito', 'kanban', 'stock', 'listas'].some(puede);
+    const vk = ['kan_z', 'kan_mec', 'stock', 'circuito'].some(puede), vm = ['prog_mecanizado', 'circuito', 'kan_z', 'kan_mec', 'mec_stock', 'stock', 'listas'].some(puede);
     if (kc) kc.style.display = vk ? '' : 'none'; if (mc) mc.style.display = vm ? '' : 'none';
     if ((vk || vm) && window.cirCards) { try { window.cirCards(); } catch (e) { /* sin tarjetas */ } }
     if (window.tjAplicar) { try { window.tjAplicar(); } catch (e) { /* sin orden */ } }
@@ -7500,14 +7605,27 @@ function showToast(message, kind) {
        <div class="node m"><div class="n">${tot('mecanizado')}</div><div class="l">⚙️ Mecanizado</div></div><div class="arrow">→</div>
        <div class="node k"><div class="n">${tot('kanban')}</div><div class="l">🏬 Estantería kanban post-mecanizado${tag(nk)}</div></div>`;
     const tabs = [['plan', '📅 Planificación'], ['term', '🔧 Terminación'], ['z', '🗄️ Sector Z' + tag(nz)], ['mec', '⚙️ Mecanizado'], ['k', '🏬 Kanban' + tag(nk)]];
-    document.getElementById('cir-tabs').innerHTML = tabs.map(t => `<button class="tab ${C.tab === t[0] ? 'on' : ''}" onclick="cirTab('${t[0]}')">${t[1]}</button>`).join('');
+    const TAB_SEC = { plan: 'circuito', term: 'ter_stock', z: 'kan_z', mec: 'mec_stock', k: 'kan_mec' };
+    const tabsOk = tabs.filter(t => puede(TAB_SEC[t[0]]));
+    if (!tabsOk.length) { document.getElementById('cir-tabs').innerHTML = ''; screen.innerHTML = '<div class="empty">Tu usuario no tiene habilitada ninguna pestaña de esta pantalla.</div>'; return; }
+    if (!tabsOk.some(t => t[0] === C.tab)) C.tab = tabsOk[0][0];
+    document.getElementById('cir-tabs').innerHTML = tabsOk.map(t => `<button class="tab ${C.tab === t[0] ? 'on' : ''}" onclick="cirTab('${t[0]}')">${t[1]}</button>`).join('');
     try { screen.innerHTML = { term: vTerm, z: vZ, k: vK, plan: vPlan, mec: vMec }[C.tab](); rtMobile(screen); }
     catch (e) { console.error('Programación mecanizado:', e); screen.innerHTML = '<div class="err">Error al mostrar esta pantalla: ' + esc(e.message) + '</div>'; }
   }
   async function reload() { await load(); cardsT = Date.now(); render(); paintCards(); }
   window.cirTab = t => { C.tab = t; render(); };
-  window.cirOpen = async mode => { C.tile = {}; C.moldTab = 'curso'; C.mode = (typeof mode === 'string' && VIEWS.some(v => v.key === mode)) ? mode : 'full'; ensureDom(); document.getElementById('cir-root').classList.add('on'); render(); await reload(); };
-  window.cirClose = () => { const r = document.getElementById('cir-root'); if (r) r.classList.remove('on'); paintCards(); };
+  window.cirOpen = async (mode, opt) => { C.tile = {}; C.moldTab = 'curso'; C.kanOnly = (opt && opt.kan) || null; if (opt && opt.kan) C.kanTab = opt.kan; if (opt && opt.tab) C.tab = opt.tab; C.mode = (typeof mode === 'string' && VIEWS.some(v => v.key === mode)) ? mode : 'full'; ensureDom(); document.getElementById('cir-root').classList.add('on'); render(); await reload(); };
+  window.cirClose = () => { const r = document.getElementById('cir-root'); if (r) r.classList.remove('on'); if (window.sideMarcar) window.sideMarcar(null); paintCards(); };
+  // Cargar remitos (Excel de ventas) desde el menú: abre el selector de archivo; el resto lo hace cirVentasFile
+  window.cirCargarRemitos = async () => {
+    if (!puedePlanificar()) { alert('Para cargar remitos hace falta el rol Editor.'); return; }
+    ensureDom();
+    try { if (!C.loaded) await load(); } catch (e) { /* sigue */ }
+    const i = document.createElement('input'); i.type = 'file'; i.accept = '.xls,.xlsx';
+    i.onchange = () => window.cirVentasFile(i);
+    i.click();
+  };
   window.__cir = { C, load, render, nivel, sv, lote, isBiz, prevBiz, FERIADOS };
 })();
 
@@ -7727,7 +7845,7 @@ function showToast(message, kind) {
   window.venRefrescar = () => cargar(true);
 
   // ---------- botón + pantalla ----------
-  window.venRefreshBtn = () => { const b = document.getElementById('ven-btn'); if (b) b.style.display = puede() ? '' : 'none'; };
+  window.venRefreshBtn = () => { if (window.sideBuild) window.sideBuild(); };
   setTimeout(window.venRefreshBtn, 0); [1500, 4000, 9000, 20000].forEach(t => setTimeout(window.venRefreshBtn, t));
   const CSS = `
   #ven-root { position:fixed; inset:0; background:#0f172a; color:#e2e8f0; z-index:60; overflow:auto; display:none; font-size:14px; line-height:1.45; --card:#1e293b; --line:#334155; --dim:#94a3b8; --acc:#38bdf8; }
@@ -7753,7 +7871,7 @@ function showToast(message, kind) {
     document.body.appendChild(root);
   }
   window.venOpen = () => { if (!puede()) return; ensureDom(); document.getElementById('ven-root').classList.add('on'); document.body.style.overflow = 'hidden'; V.loaded ? render() : cargar(); };
-  window.venClose = () => { const r = document.getElementById('ven-root'); if (r) r.classList.remove('on'); document.body.style.overflow = ''; };
+  window.venClose = () => { const r = document.getElementById('ven-root'); if (r) r.classList.remove('on'); document.body.style.overflow = ''; if (window.sideMarcar) window.sideMarcar(null); };
 })();
 
 </script>
@@ -8355,11 +8473,11 @@ function showToast(message, kind) {
     await load(true); pintar();
   };
   window.pfBuscar = q => { if (puedeSec() || admin()) window.pfOpen('seg', q); };
-  window.pfClose = () => { P.open = false; const r = document.getElementById('pf-root'); if (r) r.classList.remove('on'); refrescarTabla(); };
+  window.pfClose = () => { P.open = false; const r = document.getElementById('pf-root'); if (r) r.classList.remove('on'); if (window.sideMarcar) window.sideMarcar(null); refrescarTabla(); };
   window.pfTab = k => { P.tab = k; if (k !== 'cargar') P.msg = null; pintar(); };
   window.pfFiltro = k => { P.filtro = k; pintar(); };
   window.pfBusca = v => { P.q = v; pintar(); };
-  window.pfRefreshBtn = () => { const b = document.getElementById('pf-btn'); if (b) b.style.display = (puedeSec() || admin()) ? '' : 'none'; const m = document.getElementById('pfm-btn'); if (m) m.style.display = (typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE) ? '' : 'none'; };
+  window.pfRefreshBtn = () => { if (window.sideBuild) window.sideBuild(); };
   setTimeout(window.pfRefreshBtn, 0); [1500, 4000, 9000, 20000].forEach(t => setTimeout(window.pfRefreshBtn, t));
 
   // ---------- acciones ----------
