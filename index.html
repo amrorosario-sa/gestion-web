@@ -783,7 +783,7 @@
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
       <div>
         <div style="font-weight:700; color:#fff; font-size:0.95rem;">⚠️ Desaparecidos de SGA</div>
-        <div class="text-dim" style="margin-top:4px;">Pedidos/líneas que estaban pendientes y ya no vinieron en la última carga del Excel de SGA — puede ser que se despacharon ahí directo, sin pasar por "🚚 Despachar" acá. Elegí qué pasó con cada uno para que el indicador de Kg despachados quede correcto.</div>
+        <div class="text-dim" style="margin-top:4px;">Pedidos/líneas que estaban pendientes y ya no vinieron en la última carga del Excel de SGA — puede ser que se despacharon ahí directo, sin pasar por "🚚 Despachar" acá. Elegí qué pasó con cada uno para que el indicador de Kg despachados quede correcto. Más abajo también aparecen las entregas parciales (el pendiente bajó pero el pedido sigue abierto).</div>
       </div>
       <label class="text-dim" style="display:flex; gap:6px; align-items:center; font-size:0.78rem; cursor:pointer;"><input type="checkbox" id="desap-ver-resueltos" onchange="desapVerResueltos = this.checked; renderSgaDesapPanel()"> Mostrar también los ya resueltos</label>
     </div>
@@ -2728,6 +2728,11 @@ async function initDb() {
       actualizarBadgeDesap();
       if (currentFilter === 'sgadesap') applyFilters();
     }, err => console.warn('items_desaparecidos onSnapshot:', err && err.code, err && err.message));
+    db.collection('items_bajas').onSnapshot(qs => {
+      itemsBajasList = qs.docs.filter(d => d.exists).map(d => d.data());
+      actualizarBadgeDesap();
+      if (currentFilter === 'sgadesap') applyFilters();
+    }, err => console.warn('items_bajas onSnapshot:', err && err.code, err && err.message));
     db.collection('rechazo_motivos').onSnapshot(qs => {
       motivosList = qs.docs.filter(d => d.exists).map(d => d.data()).sort((a, b) => (a.orden - b.orden) || String(a.nombre).localeCompare(String(b.nombre), 'es'));
     }, err => console.warn('rechazo_motivos onSnapshot:', err && err.code, err && err.message));
@@ -3068,6 +3073,7 @@ async function splitQuitarDivision() {
 // =========================================================================
 let rechazosList = [], motivosList = [], eventosProd = [], eventosProdRaw = [];
 let itemsDesaparecidosList = [];
+let itemsBajasList = [];
 let desapVerResueltos = false;
 window.pfReaplicarEventos = function () { if (typeof window.pfEventos === 'function') { eventosProd = window.pfEventos(eventosProdRaw); } if (typeof currentFilter !== 'undefined' && currentFilter === 'indicadores') applyFilters(); };
 let rechazoVerReplan = false;
@@ -3082,7 +3088,7 @@ function actualizarBadgeReplan() {
 function actualizarBadgeDesap() {
   const el = document.getElementById('desap-badge');
   if (!el) return;
-  const n = itemsDesaparecidosList.filter(d => !d.resuelto).length;
+  const n = itemsDesaparecidosList.filter(d => !d.resuelto).length + itemsBajasList.filter(d => !d.resuelto).length;
   el.textContent = n > 0 ? ' (' + n + ')' : '';
 }
 function mesRango(offset) {
@@ -3878,11 +3884,134 @@ function renderSgaDesapPanel() {
   if (!el) return;
   const lista = itemsDesaparecidosList.filter(d => desapVerResueltos || !d.resuelto)
     .sort((a, b) => (!!a.resuelto === !!b.resuelto) ? String(b.desaparecio_dia || '').localeCompare(String(a.desaparecio_dia || '')) : (a.resuelto ? 1 : -1));
-  if (!lista.length) {
-    el.innerHTML = '<div class="text-dim" style="padding: 20px 4px;">No hay ítems de SGA pendientes de revisar. 🎉</div>';
-    return;
+  const bajas = itemsBajasList.filter(d => desapVerResueltos || !d.resuelto)
+    .sort((a, b) => (!!a.resuelto === !!b.resuelto) ? String(b.dia || '').localeCompare(String(a.dia || '')) : (a.resuelto ? 1 : -1));
+  let html = '';
+  if (bajas.length) {
+    const pend = bajas.filter(b => !b.resuelto);
+    const esAdmin = CURRENT_PROFILE && CURRENT_PROFILE.es_admin;
+    html += `<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin:4px 0 8px;">
+      <div><div style="font-weight:700; color:#fff;">📉 Bajó el pendiente en SGA</div><div class="text-dim" style="font-size:0.78rem; margin-top:2px;">Entregas parciales hechas directo en SGA: el pedido sigue abierto pero el pendiente bajó y el tablero no lo tenía como despachado.</div></div>
+      ${esAdmin && pend.length > 1 ? `<button class="view-toggle-btn" onclick="openBajasTodasDialog()">✅ Confirmar todas (${pend.length})</button>` : ''}
+    </div>` + bajas.map(bajaCardHtml).join('');
   }
-  el.innerHTML = lista.map(desapCardHtml).join('');
+  if (lista.length) {
+    if (bajas.length) html += '<div style="font-weight:700; color:#fff; margin:16px 0 8px;">⚠️ Desaparecieron del Excel de SGA</div>';
+    html += lista.map(desapCardHtml).join('');
+  }
+  if (!html) html = '<div class="text-dim" style="padding: 20px 4px;">No hay ítems de SGA pendientes de revisar. 🎉</div>';
+  el.innerHTML = html;
+}
+function bajaCardHtml(b) {
+  const kg = Math.round((Number(b.sin_registrar) || 0) * (Number(b.kxu) || 0) * 10) / 10;
+  const diaTxt = b.dia ? new Date(b.dia + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
+  const estadoHtml = b.resuelto
+    ? (b.resuelto_como === 'despachado'
+        ? `<div style="margin-top:6px;"><span class="pill pill-despachado">✅ Despachado: ${fmtN(b.resuelto_cant)} u.${b.resuelto_kg ? ' · ' + fmtN(b.resuelto_kg, 1) + ' Kg' : ''}</span>${Number(b.resuelto_kanban) > 0 ? ` <span class="text-dim">· 📦 −${fmtN(b.resuelto_kanban)} de la ${b.resuelto_kanban_ubic === 'sector_z' ? 'estantería Sector Z' : 'estantería kanban'}</span>` : ''}${b.resuelto_nota ? ` <span class="text-dim">— ${escHtml(b.resuelto_nota)}</span>` : ''}</div>`
+        : `<div style="margin-top:6px;"><span class="pill pill-warning">❌ No fue despacho</span>${b.resuelto_nota ? ` <span class="text-dim">— ${escHtml(b.resuelto_nota)}</span>` : ''}</div>`)
+    : '';
+  const acciones = (!b.resuelto && CURRENT_PROFILE && CURRENT_PROFILE.es_admin)
+    ? `<div class="row-actions" style="margin-top:8px;"><button class="view-toggle-btn" onclick="openBajaDespachadoDialog(${b.id})">✅ Fue despachado</button><button class="view-toggle-btn" onclick="openBajaDescartarDialog(${b.id})">❌ No fue despacho</button></div>`
+    : '';
+  return `<div class="card" style="margin-bottom:10px;">
+    <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+      <div><b style="color:#fff;">${escHtml(b.descripcion || b.codigo)}</b><br><span class="text-dim">${escHtml(b.cliente)} · NV ${escHtml(b.comprobante)}${b.oc && b.oc !== '-' ? ' · OC ' + escHtml(b.oc) : ''} · Cód ${escHtml(b.codigo)}</span></div>
+      <div class="text-dim" style="font-size:0.75rem; text-align:right;">Detectado el ${diaTxt}</div>
+    </div>
+    <div style="margin-top:6px;">Pendiente: <b>${fmtN(b.pend_antes)} → ${fmtN(b.pend_ahora)}</b> (bajó ${fmtN(b.baja)} u.) · Sin registrar: <b>${fmtN(b.sin_registrar)} u.</b>${kg ? ' · ' + fmtN(kg, 1) + ' Kg' : ''}</div>
+    ${estadoHtml}${acciones}
+  </div>`;
+}
+function bajasErrorMsg(e) {
+  if (e && (e.code === '42883' || e.code === 'PGRST202' || /items_bajas_resolver/i.test(e.message || ''))) return 'La base todavía no tiene esta función. Avisale a quien administra el tablero (falta correr el SQL 033).';
+  if (e && e.code === '42501') return 'Tu usuario no tiene permiso para resolver esto (hace falta ser Administrador).';
+  return 'No se pudo guardar.' + (e && e.message ? ' ' + e.message : '');
+}
+function openBajaDespachadoDialog(id) {
+  const b = itemsBajasList.find(x => String(x.id) === String(id));
+  if (!b) return;
+  const abrir = () => {
+    const kan = window.cirKanbanInfo ? window.cirKanbanInfo(b.codigo) : null;
+    const hoyIso = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+    showStockDialog(`
+      <h3>✅ Confirmar entrega hecha en SGA</h3>
+      <div class="text-dim" style="margin-bottom:12px; line-height:1.5;"><span style="color:#fff;">${escHtml(b.descripcion || b.codigo)}</span><br>${escHtml(b.cliente)} · NV ${escHtml(b.comprobante)} · Cód ${escHtml(b.codigo)}<br>El pendiente en SGA bajó de ${fmtN(b.pend_antes)} a ${fmtN(b.pend_ahora)}.</div>
+      <div class="stock-field"><label>Cantidad a sumar a Despachado</label><input type="number" id="baja-cant" value="${b.sin_registrar}" min="0" max="${b.baja}" step="any"></div>
+      <div class="stock-field"><label>Fecha de la entrega</label><input type="date" id="baja-dia" value="${escHtml(b.dia || hoyIso)}" max="${hoyIso}"></div>
+      ${kan ? `<div class="stock-field"><label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer;"><input type="checkbox" id="baja-kan" checked style="margin-top:3px;"> <span>📦 Descontar de la ${escHtml(kan.nom)} (hay ${kan.hay} · k ${kan.k})<br><span class="text-dim" style="font-size:0.72rem;">${Number(b.ya_descontado) > 0 ? 'Ya se habían descontado ' + fmtN(b.ya_descontado) + ' al preparar el pedido: se baja solo la diferencia, ' : 'Se baja '}y nunca más de lo que hay.</span></span></label></div>` : ''}
+      <div class="stock-field"><label>Nota (opcional)</label><input type="text" id="baja-nota" autocomplete="off" placeholder="ej. remito 0001-00001234"></div>
+      <div class="text-dim" style="font-size:0.75rem; margin-bottom:10px;">Suma esta cantidad al indicador de Kg despachados (en la fecha elegida) y sale de esta lista.</div>
+      <div class="stock-actions">
+        <button class="stock-btn-cancel" onclick="closeStockDialog()">Cancelar</button>
+        <button class="stock-btn-primary" id="baja-save-btn" onclick="saveBajasResolver([${b.id}], 'despachado')">✅ Confirmar</button>
+      </div>`);
+  };
+  if (window.cirEstimadoEnsure) window.cirEstimadoEnsure().then(abrir, abrir); else abrir();
+}
+function openBajaDescartarDialog(id) {
+  const b = itemsBajasList.find(x => String(x.id) === String(id));
+  if (!b) return;
+  showStockDialog(`
+    <h3>❌ No fue un despacho</h3>
+    <div class="text-dim" style="margin-bottom:12px; line-height:1.5;"><span style="color:#fff;">${escHtml(b.descripcion || b.codigo)}</span><br>${escHtml(b.cliente)} · NV ${escHtml(b.comprobante)} · Cód ${escHtml(b.codigo)}<br>El pendiente en SGA bajó de ${fmtN(b.pend_antes)} a ${fmtN(b.pend_ahora)}.</div>
+    <div class="stock-field"><label>Motivo (ej. se corrigió la cantidad, cancelado)</label><input type="text" id="baja-nota" autocomplete="off"></div>
+    <div class="text-dim" style="font-size:0.75rem; margin-bottom:10px;">No suma nada a Despachado ni toca la estantería. Sale de esta lista.</div>
+    <div class="stock-actions">
+      <button class="stock-btn-cancel" onclick="closeStockDialog()">Cancelar</button>
+      <button class="stock-btn-primary" id="baja-save-btn" onclick="saveBajasResolver([${b.id}], 'descartado')">Confirmar</button>
+    </div>`);
+}
+function openBajasTodasDialog() {
+  const pend = itemsBajasList.filter(b => !b.resuelto);
+  if (!pend.length) return;
+  const tot = pend.reduce((a, b) => a + (Number(b.sin_registrar) || 0), 0);
+  const kg = pend.reduce((a, b) => a + (Number(b.sin_registrar) || 0) * (Number(b.kxu) || 0), 0);
+  showStockDialog(`
+    <h3>✅ Confirmar todas como despachadas</h3>
+    <div class="text-dim" style="margin-bottom:12px; line-height:1.5;">${pend.length} bajas del pendiente · ${fmtN(tot)} u. · ${fmtN(kg, 1)} Kg. Cada una se anota con la fecha en que se detectó y descuenta la estantería kanban que corresponda (sin pasar de lo que hay).</div>
+    <div class="stock-field"><label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer;"><input type="checkbox" id="baja-kan" checked style="margin-top:3px;"> <span>📦 Descontar de la estantería kanban las piezas que lleven kanban</span></label></div>
+    <div class="text-dim" style="font-size:0.75rem; margin-bottom:10px;">Si alguna no fue una entrega (por ejemplo, una cancelación), confirmala una por una con "No fue despacho" en vez de usar este botón.</div>
+    <div class="stock-actions">
+      <button class="stock-btn-cancel" onclick="closeStockDialog()">Cancelar</button>
+      <button class="stock-btn-primary" id="baja-save-btn" onclick="saveBajasResolver([${pend.map(b => b.id).join(',')}], 'despachado')">✅ Confirmar todas</button>
+    </div>`);
+}
+async function saveBajasResolver(ids, como) {
+  const notaEl = document.getElementById('baja-nota');
+  const nota = notaEl ? ((notaEl.value || '').trim() || null) : null;
+  const cantEl = document.getElementById('baja-cant');
+  const diaEl = document.getElementById('baja-dia');
+  const kanEl = document.getElementById('baja-kan');
+  const args = { p_ids: ids, p_como: como, p_nota: nota };
+  if (como === 'despachado') {
+    if (ids.length === 1 && cantEl) {
+      const cant = Number(cantEl.value);
+      if (isNaN(cant) || cant < 0) { alert('Poné una cantidad válida.'); return; }
+      args.p_cant = cant;
+    }
+    if (diaEl && diaEl.value) args.p_dia = diaEl.value;
+    if (kanEl && !kanEl.checked) args.p_descontar = false;
+  }
+  const btn = document.getElementById('baja-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+  try {
+    const { data: resu, error } = await supabaseClient.rpc('items_bajas_resolver', args);
+    if (error) throw error;
+    const descK = resu && Number(resu.descontado) > 0 ? Number(resu.descontado) : 0;
+    ids.forEach(id => {
+      const b = itemsBajasList.find(x => String(x.id) === String(id));
+      if (b) { b.resuelto = true; b.resuelto_como = como; b.resuelto_cant = como === 'despachado' ? (args.p_cant != null ? args.p_cant : b.sin_registrar) : null; b.resuelto_kg = como === 'despachado' ? Math.round(b.resuelto_cant * (Number(b.kxu) || 0) * 10) / 10 : null; b.resuelto_nota = nota; }
+    });
+    closeStockDialog();
+    actualizarBadgeDesap();
+    applyFilters();
+    showToast(como === 'despachado' ? 'Marcado como despachado' + (descK ? ' · se descontaron ' + fmtN(descK) + ' de la estantería' : '') : 'Descartado', 'success');
+    if (como === 'despachado' && window.cirRefreshStock) window.cirRefreshStock();
+  } catch (e) {
+    console.error('No se pudo resolver la baja de pendiente de SGA:', e);
+    alert(bajasErrorMsg(e));
+    if (btn) { btn.disabled = false; btn.textContent = como === 'despachado' ? '✅ Confirmar' : 'Confirmar'; }
+  }
 }
 function openDesapDespacharDialog(id) {
   const d = itemsDesaparecidosList.find(x => String(x.id) === String(id));
@@ -4511,7 +4640,7 @@ function applyFilters() {
     if (currentFilter === 'indicadores') renderIndicadoresPanel();
     else if (currentFilter === 'rechazo') { renderRechazoPanel(); n = rechazosList.length; }
     else if (currentFilter === 'replanificar') { renderReplanificarPanel(); n = rechazosList.filter(r => r.estado === 'pendiente').length; }
-    else { renderSgaDesapPanel(); n = itemsDesaparecidosList.filter(d => !d.resuelto).length; }
+    else { renderSgaDesapPanel(); n = itemsDesaparecidosList.filter(d => !d.resuelto).length + itemsBajasList.filter(d => !d.resuelto).length; }
     document.getElementById('count-filtered').textContent = n;
     document.getElementById('count-total').textContent = DATA.length;
     document.getElementById('kg-filtered').textContent = '—';
