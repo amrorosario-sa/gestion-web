@@ -5571,7 +5571,8 @@ function showToast(message, kind) {
         cantidad,
         probeta: '',
         pesoTeorico,
-        pesoReal: pesoTeorico != null ? String(pesoTeorico) : '',
+        pesoUnit: kxu > 0 ? String(Math.round(kxu * 1000) / 1000) : '',   // lo que se carga: kg de UNA pieza
+        pesoReal: pesoTeorico != null ? String(pesoTeorico) : '',          // total del renglón = pesoUnit × cantidad (es lo que se guarda y va al PDF)
         pesoRealTouched: false,
       };
     }
@@ -5668,9 +5669,20 @@ function showToast(message, kind) {
     }
 
     function kgRefHtml(rg, kxu) {
-      return rg.pesoTeorico != null
-        ? `Kg/u teórico en SGA: ${kxu.toLocaleString(undefined,{maximumFractionDigits:2})} Kg/u × ${rg.cantidad.toLocaleString()} = <b>${rg.pesoTeorico.toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1})} Kg</b> — se precargó este valor, corregilo si pesó distinto.`
-        : `Kg/u teórico en SGA: <b>sin dato (0,0)</b> — esta pieza no tiene con qué comparar, cargá el peso real pesado.`;
+      const pr = parseFloat(rg.pesoReal), tot = isNaN(pr) ? '—' : pr.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 2 }) + ' Kg';
+      const totHtml = `<br>Peso total de este renglón: <b>${rg.pesoUnit !== '' && !isNaN(parseFloat(rg.pesoUnit)) ? parseFloat(rg.pesoUnit).toLocaleString(undefined, { maximumFractionDigits: 3 }) + ' Kg/u × ' + rg.cantidad.toLocaleString() + ' = ' : ''}${tot}</b>`;
+      return (rg.pesoTeorico != null
+        ? `Kg/u teórico en SGA: <b>${kxu.toLocaleString(undefined,{maximumFractionDigits:3})} Kg/u</b> (× ${rg.cantidad.toLocaleString()} = ${rg.pesoTeorico.toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1})} Kg) — se precargó, corregí el Kg/u si la pieza pesa distinto.`
+        : `Kg/u teórico en SGA: <b>sin dato (0,0)</b> — esta pieza no tiene con qué comparar, cargá el peso real de UNA pieza.`) + totHtml;
+    }
+    // el usuario carga el peso de UNA pieza; el total del renglón se calcula con la cantidad
+    function updateHojaPesoUnit(idx, rIdx, value) {
+      if (!hojaFormState || !hojaFormState.items[idx] || !hojaFormState.items[idx].renglones[rIdx]) return;
+      const it = hojaFormState.items[idx], rg = it.renglones[rIdx], u = parseFloat(value);
+      rg.pesoUnit = value; rg.pesoRealTouched = true;
+      rg.pesoReal = (value === '' || isNaN(u)) ? '' : String(Math.round(u * (rg.cantidad || 0) * 100) / 100);
+      const kgRefEl = document.getElementById(`hoja-kgref-${idx}-${rIdx}`); if (kgRefEl) kgRefEl.innerHTML = kgRefHtml(rg, it.kxu);
+      refreshHojaImportes();
     }
 
     function renderItemBlockHtml(idx) {
@@ -5689,8 +5701,8 @@ function showToast(message, kind) {
               <input type="text" placeholder="Ej: AM6050" value="${escHtml(rg.probeta)}" oninput="updateHojaRenglonField(${idx}, ${rIdx}, 'probeta', this.value)">
             </div>
             <div class="hoja-field-mini">
-              <label>Peso real (Kg)</label>
-              <input type="number" step="0.1" min="0" id="hoja-pesoreal-${idx}-${rIdx}" value="${escHtml(rg.pesoReal)}" oninput="updateHojaRenglonField(${idx}, ${rIdx}, 'pesoReal', this.value); hojaFormState.items[${idx}].renglones[${rIdx}].pesoRealTouched = true;">
+              <label>Peso real por unidad (Kg/u)</label>
+              <input type="number" step="0.01" min="0" id="hoja-pesoreal-${idx}-${rIdx}" value="${escHtml(rg.pesoUnit)}" oninput="updateHojaPesoUnit(${idx}, ${rIdx}, this.value)">
             </div>
             ${it.renglones.length > 1 ? `<button type="button" class="hoja-renglon-del" title="Quitar este renglón" onclick="removeHojaRenglon(${idx}, ${rIdx})">✕</button>` : '<span></span>'}
           </div>
@@ -5726,7 +5738,7 @@ function showToast(message, kind) {
           <h3 style="margin-bottom:4px;">🧾 Armar Hoja de Pesada — ${escHtml(s.cliente)}</h3>
           <button class="modal-close" onclick="closeHojaModal()" title="Cerrar" style="flex-shrink:0;">✕</button>
         </div>
-        <div class="hoja-sub">${s.items.length} ítem${s.items.length===1?'':'s'} seleccionado${s.items.length===1?'':'s'}. Revisá/corregí el peso real de cada uno — si una pieza salió con más de un Nº de Probeta, agregá un renglón por cada uno.</div>
+        <div class="hoja-sub">${s.items.length} ítem${s.items.length===1?'':'s'} seleccionado${s.items.length===1?'':'s'}. Revisá/corregí el peso real por unidad (Kg/u) de cada uno; el total sale de multiplicarlo por la cantidad — si una pieza salió con más de un Nº de Probeta, agregá un renglón por cada uno.</div>
         <div class="hoja-field-row">
           <div class="hoja-field"><label>Transporte</label><input type="text" placeholder="(opcional)" value="${escHtml(s.transporte)}" oninput="hojaFormState.transporte=this.value"></div>
           <div class="hoja-field"><label>Cond. / Pago</label><input type="text" placeholder="(opcional)" value="${escHtml(s.condPago)}" oninput="hojaFormState.condPago=this.value"></div>
@@ -5792,11 +5804,7 @@ function showToast(message, kind) {
       rg.cantidad = v;
       if (inputEl && Number(inputEl.value) !== v) inputEl.value = v;
       rg.pesoTeorico = it.kxu > 0 ? Math.round(it.kxu * v * 10) / 10 : null;
-      if (!rg.pesoRealTouched) {
-        rg.pesoReal = rg.pesoTeorico != null ? String(rg.pesoTeorico) : '';
-        const pesoInput = document.getElementById(`hoja-pesoreal-${idx}-${rIdx}`);
-        if (pesoInput) pesoInput.value = rg.pesoReal;
-      }
+      { const u = parseFloat(rg.pesoUnit); rg.pesoReal = (rg.pesoUnit === '' || isNaN(u)) ? '' : String(Math.round(u * v * 100) / 100); }
       const kgRefEl = document.getElementById(`hoja-kgref-${idx}-${rIdx}`);
       if (kgRefEl) kgRefEl.innerHTML = kgRefHtml(rg, it.kxu);
       updateHojaItemTotalHtml(idx);
@@ -5840,7 +5848,7 @@ function showToast(message, kind) {
           const v = parseFloat(rg.pesoReal);
           if (rg.pesoReal === '' || isNaN(v) || v < 0) {
             const probetaTxt = rg.probeta ? ` (Probeta ${rg.probeta})` : '';
-            return `Falta cargar el peso real de "${it.descripcion}"${probetaTxt}.`;
+            return `Falta cargar el peso real por unidad (Kg/u) de "${it.descripcion}"${probetaTxt}.`;
           }
         }
       }
