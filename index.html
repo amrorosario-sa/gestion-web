@@ -5855,6 +5855,20 @@ function showToast(message, kind) {
       return null;
     }
 
+    // Piezas sin Kg/u conocido (nuevas): el Kg/u que se cargó en la hoja queda guardado como peso de la pieza (catálogo), así la próxima vez ya viene precargado.
+    async function guardarKgNuevos(items) {
+      let n = 0, falla = null;
+      for (const it of items) {
+        if (Number(it.kxu) > 0) continue;
+        const u = (it.renglones.map(rg => parseFloat(rg.pesoUnit)).find(x => x > 0)) || 0;
+        if (!(u > 0)) continue;
+        try { const { error } = await supabaseClient.rpc('mec_set_kg', { p_codigo: it.codigo, p_kg: Math.round(u * 1000) / 1000 }); if (error) falla = error.message || String(error); else n++; }
+        catch (e) { falla = (e && e.message) || String(e); }
+      }
+      if (n) showToast(`⚖️ Kg/u guardado como peso de ${n} pieza${n === 1 ? '' : 's'} nueva${n === 1 ? '' : 's'}`, 'success');
+      else if (falla) console.warn('mec_set_kg:', falla);
+    }
+
     async function confirmHojaPesada() {
       const s = hojaFormState;
       if (!s) return;
@@ -5873,6 +5887,7 @@ function showToast(message, kind) {
         if (!s.numeroHoja) s.numeroHoja = String(await getNextHojaNumber()).padStart(4, '0');
         const ok = await markHojaItemsPrepared(s.items, s.numeroHoja);
         if (ok) {
+          try { await guardarKgNuevos(s.items); } catch (e) { /* el peso de la hoja ya quedó guardado */ }
           const totalCant = s.items.reduce((sum, it) => sum + hojaRenglonTotal(it), 0);
           const totalKg = s.items.reduce((sum, it) => sum + it.renglones.reduce((s2, rg) => s2 + (parseFloat(rg.pesoReal) || 0), 0), 0);
           showToast(`✅ Hoja Nº ${s.numeroHoja} confirmada — ${totalCant.toLocaleString()} u. (${fmt1(totalKg)} Kg)`, 'success');
