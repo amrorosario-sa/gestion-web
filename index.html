@@ -8289,8 +8289,21 @@ function showToast(message, kind) {
   const rKey = l => 'pf-' + l.id;
   const rutaTxt = l => { try { return window.rutaPaso ? window.rutaPaso(rKey(l)) : null; } catch (e) { return null; } };
 
+  // días reales de moldeo de una línea (origen 'moldeo'): reparte lo moldeado por día, en orden, entre las líneas de la misma colada y artículo
+  function moldDias(l) {
+    if ((l.origen || 'parte') === 'parte') return null;
+    if (!P._md) P._md = new Map();
+    if (!P._md.size || P._mdL !== P.L) { P._mdL = P.L; P._md = new Map();
+      const por = new Map(); P.MD.forEach(m => { const k = String(m.colada) + '|' + m.codigo; if (!por.has(k)) por.set(k, new Map()); const d = String(m.dia).slice(0, 10); por.get(k).set(d, (por.get(k).get(d) || 0) + Number(m.cant)); });
+      const gr = new Map(); P.L.filter(x => x.origen === 'moldeo').sort((x, y) => x.id - y.id).forEach(x => { const k = String(x.colada) + '|' + x.codigo; if (!gr.has(k)) gr.set(k, []); gr.get(k).push(x); });
+      gr.forEach((ls, k) => { const dd = [...(por.get(k) || new Map()).entries()].sort((x, y) => x[0].localeCompare(y[0])).map(x => [x[0], x[1]]);
+        ls.forEach(x => { let need = Number(x.cant), res = []; for (const e of dd) { if (need <= 0) break; if (e[1] <= 0) continue; const t = Math.min(need, e[1]); res.push([e[0], t]); e[1] -= t; need -= t; } P._md.set(x.id, res); }); }); }
+    const r = P._md.get(l.id); return r && r.length ? r : null;
+  }
+  const moldTxt = l => { const d = moldDias(l); return d ? d.map(([x, n]) => fd(x) + ': ' + nf(n, 0)).join(' · ') : null; };
   function estadoTxt(l) {
-    const out = [`🧱 ${nf(l.cant, 0)} u. moldeadas${l.primera_carga ? ' el ' + fd(l.primera_carga) : ''}`], p = pend(l), t = term(l);
+    const mt = moldTxt(l);
+    const out = [`🧱 ${nf(l.cant, 0)} u. moldeadas${mt && moldDias(l).length > 1 ? ' (' + mt + ')' : (l.primera_carga ? ' el ' + fd(mt ? moldDias(l)[0][0] : l.primera_carga) : '')}`], p = pend(l), t = term(l);
     if (p > 0) out.push(`⏳ ${nf(p, 0)} u. pendiente de fusión${l.fecha_parte && dif(hoy(), l.fecha_parte) > 2 ? ' (atrasada)' : ''}`);
     if (t > 0) { const rt = rutaTxt(l); out.push(`🔧 ${nf(t, 0)} u. en Terminación${rt ? ' · ' + rt : ''}`); }
     if (Number(l.terminado) > 0) out.push(`✅ ${nf(l.terminado, 0)} u. → ${DEST[l.destino] || l.destino || ''}`);
@@ -8317,7 +8330,7 @@ function showToast(message, kind) {
   function lineaEtapas(l) {
     const p = Math.max(0, pend(l)), t = Math.max(0, term(l)), o = Number(l.terminado), rt = t > 0 ? rutaTxt(l) : null;
     return `<div class="stl"><div><span class="cola">Colada ${E(l.colada)}</span> ${chips(l)} <span class="mono">${E(l.codigo)}${l.fecha_parte ? ' · planificada ' + fd(l.fecha_parte) : ''}</span></div>
-      <div class="stgs">${stg('🧱 Moldeadas' + (l.primera_carga ? ' ' + fd(l.primera_carga) : ''), l.cant, 'done')}${stg('⏳ En fusión', p, p > 0 ? 'act' : 'done')}${stg('🔧 Terminación' + (rt ? ' · ' + E(rt) : ''), t, t > 0 ? 'act' : (o > 0 ? 'done' : 'pen'))}${stg('✅ ' + (l.destino ? E((DEST[l.destino] || '').replace(/^\S+\s/, '')) : 'Destino'), o, o > 0 ? 'done' : 'pen')}</div>
+      <div class="stgs">${stg('🧱 Moldeadas' + (moldTxt(l) ? ' ' + E(moldTxt(l)) : (l.primera_carga ? ' ' + fd(l.primera_carga) : '')), l.cant, 'done')}${stg('⏳ En fusión', p, p > 0 ? 'act' : 'done')}${stg('🔧 Terminación' + (rt ? ' · ' + E(rt) : ''), t, t > 0 ? 'act' : (o > 0 ? 'done' : 'pen'))}${stg('✅ ' + (l.destino ? E((DEST[l.destino] || '').replace(/^\S+\s/, '')) : 'Destino'), o, o > 0 ? 'done' : 'pen')}</div>
       ${l.no_figura && p > 0 ? '<div class="mono" style="color:#fca5a5">No figura en el último parte cargado</div>' : ''}</div>`;
   }
   window.pfPedidoOpen = key => {
