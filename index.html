@@ -7238,23 +7238,41 @@ function showToast(message, kind) {
   }
   function vAros() {
     if (!C.recetas.length) return '<div class="panel"><div class="empty">Todavía no hay recetas cargadas (macho + hembra → aro armado). Cargalas en Programación mecanizado › Recetas.</div></div>';
-    const fl = C.arFilter || 'todos', q = sane(C.arQ), all = arFamilias();
-    const okQ = f => q.every(w => (f.titulo + ' ' + [...f.pz.values()].map(p => nombre(p.c) + ' ' + p.c).join(' ')).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(w));
-    const L = all.filter(f => (fl === 'todos' || (fl === 'def' ? f.def : f.alerta)) && okQ(f));
-    const kp = (cls, key, n, t) => `<button class="ar-kpi ${cls}" onclick="cirArFilter('${key}')"><b>${n}</b><span>${t}</span></button>`;
+    const tab = C.arTab === 'aro' ? 'aro' : 'pz', fl = (tab === 'aro' && C.arFilter === 'def') ? 'todos' : (C.arFilter || 'todos'), q = sane(C.arQ), all = arFamilias();
+    const norm = t => String(t).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const tb = (k, t) => `<button class="tab ${tab === k ? 'on' : ''}" onclick="cirArTab('${k}')">${t}</button>`;
     const fb = (k, t) => `<button class="tab ${fl === k ? 'on' : ''}" onclick="cirArFilter('${k}')">${t}</button>`;
-    return `<div class="sub" style="color:var(--dim);margin-bottom:10px">Cada aro armado con su macho y su hembra. Una pieza que sirve para varios aros aparece <b>una sola vez</b> y se compara contra la <b>suma</b> de lo que necesitan. Disponible = terminación + estantería + mecanizado. Tarjeta roja bajo K, amarilla hasta 2K. Lote = 2,5K + (2K − stock virtual).</div>
-      <div class="ar-kpis">${kp('ro', 'alerta', all.filter(f => f.alerta).length, '⚠️ familias con alerta')}${kp('am', 'def', all.filter(f => f.def).length, '⚖️ con desfasaje')}<div class="ar-kpi ok" style="cursor:default"><b>${all.reduce((a, f) => a + f.armHoy, 0)}</b><span>aros armables hoy (suma)</span></div><div class="ar-kpi" style="cursor:default"><b>${all.length}</b><span>familias / recetas</span></div></div>
-      <div class="row-actions" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">${fb('todos', 'Todas')}${fb('def', '⚖️ Con desfasaje')}${fb('alerta', '⚠️ Con alerta')}<input id="ar-q" class="kq" placeholder="Buscar aro, macho o hembra…" value="${esc(C.arQ || '')}" oninput="cirArQ(this.value)"></div>
-      ${L.map(f => { const comp = new Set(f.comp);
+    const kp = (cls, key, n, t) => `<button class="ar-kpi ${cls}" onclick="cirArFilter('${key}')"><b>${n}</b><span>${t}</span></button>`;
+    const head = `<div class="tabs" style="margin-bottom:10px">${tb('pz', '🔧 Machos y hembras')}${tb('aro', '🔩 Aros armados')}</div>`;
+    const qbox = `<input id="ar-q" class="kq" placeholder="Buscar aro, macho o hembra…" value="${esc(C.arQ || '')}" oninput="cirArQ(this.value)">`;
+    if (tab === 'aro') {
+      const A = []; all.forEach(f => f.aros.forEach(x => A.push({ f, x })));
+      const L = A.filter(({ f, x }) => (fl === 'todos' || x.a.nV !== 'verde') && q.every(w => norm(nombre(x.a.c) + ' ' + x.a.c + ' ' + nombre(x.m.c) + ' ' + nombre(x.h.c)).includes(w)));
+      const cn = n => A.filter(({ x }) => x.a.nV === n).length;
+      const rows = L.map(({ x }) => { const a = x.a, pill = n => n ? `<span class="arp ${NIVP[n][0]}">${NIVP[n][1]}</span>` : '<span class="arp nd">SIN K</span>';
+        return `<tr><td><b>${esc(String(nombre(a.c)).slice(0, 70))}</b><div class="code">${esc(a.c)} · macho ${esc(x.m.c)} + hembra ${esc(x.h.c)}</div></td><td class="num"><b>${a.es}</b></td><td class="num">${a.k == null ? '—' : a.k}</td><td>${pill(a.nE)}</td><td>${pill(a.nV)}</td><td class="num">${a.lote ? `<b class="rep">${a.lote}</b>` : '<span class="code">—</span>'}</td><td class="num">${Math.min(x.m.disp, x.h.disp)}</td></tr>`; }).join('');
+      return `<div class="sub" style="color:var(--dim);margin-bottom:10px">Aros ya armados (estantería del kanban de aros), ordenados por familia de receta. Tarjeta roja bajo K, amarilla hasta 2K. Lote = 2,5K + (2K − stock virtual). La última columna es el tope por piezas disponibles (macho/hembra); si un macho se comparte entre varios aros, mirá el reparto en la pestaña Machos y hembras.</div>${head}
+        <div class="ar-kpis">${kp('ro', 'alerta', cn('rojo'), '🔴 aros en rojo')}${kp('am', 'alerta', cn('amarillo'), '🟡 aros en amarillo')}<div class="ar-kpi ok" style="cursor:default"><b>${cn('verde')}</b><span>🟢 aros en verde</span></div><div class="ar-kpi" style="cursor:default"><b>${A.reduce((a, { x }) => a + x.a.es, 0)}</b><span>aros armados en estantería</span></div></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">${fb('todos', 'Todos')}${fb('alerta', '⚠️ Con alerta')}${qbox}</div>
+        <div class="ar-fam"><div class="ar-tw"><table><tr><th>Aro armado</th><th class="num">Estantería</th><th class="num">K</th><th>Tarjeta estantería</th><th>Tarjeta virtual</th><th class="num">Lote</th><th class="num">Se pueden armar (tope)</th></tr>${rows || '<tr><td colspan="7" class="empty">Nada con este filtro.</td></tr>'}</table></div></div>`;
+    }
+    const okQ = f => q.every(w => norm(f.titulo + ' ' + [...f.pz.values()].map(p => nombre(p.c) + ' ' + p.c).join(' ')).includes(w));
+    const alertaPz = f => [...f.pz.values()].some(p => p.nV && p.nV !== 'verde');
+    const L = all.filter(f => (fl === 'todos' || (fl === 'def' ? f.def : alertaPz(f))) && okQ(f));
+    return `<div class="sub" style="color:var(--dim);margin-bottom:10px">Machos y hembras (Sector Z) agrupados por receta. Una pieza que sirve para varios aros aparece <b>una sola vez</b> y se compara contra la <b>suma</b> de lo que necesitan. Disponible = terminación + estantería + mecanizado. Tarjeta roja bajo K, amarilla hasta 2K. Lote = 2,5K + (2K − stock virtual). Los aros armados están en la otra pestaña.</div>${head}
+      <div class="ar-kpis">${kp('ro', 'alerta', all.filter(alertaPz).length, '⚠️ familias con alerta')}${kp('am', 'def', all.filter(f => f.def).length, '⚖️ con desfasaje')}<div class="ar-kpi ok" style="cursor:default"><b>${all.reduce((a, f) => a + f.armHoy, 0)}</b><span>aros armables hoy (suma)</span></div><div class="ar-kpi" style="cursor:default"><b>${all.length}</b><span>familias / recetas</span></div></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">${fb('todos', 'Todas')}${fb('def', '⚖️ Con desfasaje')}${fb('alerta', '⚠️ Con alerta')}${qbox}</div>
+      ${L.map(f => { const comp = new Set(f.comp), rec = f.rs.length > 1 ? ' <span class="code">para ' + esc(f.rs.map(r => r.nombre).join(' · ').slice(0, 90)) + '</span>' : '';
         let body = '', foot = '';
-        if (!comp.size) { const x = f.aros[0]; body = arRow(x.a, nombre(x.a.c), false) + arRow(x.m, nombre(x.m.c), true) + arRow(x.h, nombre(x.h.c), true); foot = `<span>Machos disponibles: <b>${x.m.disp}</b> · hembras: <b>${x.h.disp}</b></span>`; }
+        if (!comp.size) { const x = f.aros[0]; body = arRow(x.m, nombre(x.m.c), false) + arRow(x.h, nombre(x.h.c), false); foot = `<span>Machos disponibles: <b>${x.m.disp}</b> · hembras: <b>${x.h.disp}</b></span>`; }
         else { body = f.comp.map(c => arRow(f.pz.get(c), nombre(c), false, ` <span class="code">compartido por ${f.rs.filter(r => r.macho === c || r.hembra === c).length} aros</span>`)).join('')
-          + f.aros.map(x => arRow(x.a, nombre(x.a.c), false) + [x.m, x.h].filter(p => !comp.has(p.c)).map(p => arRow(p, nombre(p.c), true)).join('')).join('');
+          + f.aros.map(x => [x.m, x.h].filter(p => !comp.has(p.c)).map(p => arRow(p, nombre(p.c), false, ` <span class="code">→ ${esc(String(x.r.nombre).slice(0, 40))}</span>`)).join('')).join('');
           foot = f.comp.map(c => { const S = f.pz.get(c); return `<span>${S.rol === 'm' ? 'Machos' : 'Hembras'} (${esc(nombre(c).slice(0, 34))}) disponibles: <b>${S.disp}</b> · ${S.rol === 'm' ? 'hembras' : 'machos'} de todos los aros sumadas: <b>${S._nec}</b>${S._otrosK ? ` · K del compartido: <b>${S.k == null ? '—' : S.k}</b> · suma de K de las otras: <b>${S._otrosK}</b>` : ''}</span>`; }).join(''); }
-        return `<div class="ar-fam"><div class="ar-h"><b>🔩 ${esc(f.titulo.slice(0, 120))}</b><div class="ar-ch">${f.chips.map(c => `<span class="ar-c ${c.cls}">${c.t}</span>`).join('')}<span class="ar-c">armables hoy: <b>${f.armHoy}</b></span><span class="ar-c">con lo de fusión: <b>${f.armF}</b></span>${f.alerta ? '<span class="ar-c ro">⚠️ ALERTA</span>' : '<span class="ar-c ok">OK</span>'}</div></div>
+        const al = alertaPz(f);
+        return `<div class="ar-fam"><div class="ar-h"><b>🔧 ${esc(f.titulo.slice(0, 120))}</b><div class="ar-ch">${f.chips.map(c => `<span class="ar-c ${c.cls}">${c.t}</span>`).join('')}<span class="ar-c">armables hoy: <b>${f.armHoy}</b></span><span class="ar-c">con lo de fusión: <b>${f.armF}</b></span>${al ? '<span class="ar-c ro">⚠️ ALERTA</span>' : '<span class="ar-c ok">OK</span>'}</div></div>
           <div class="ar-tw"><table><tr><th>Pieza</th><th class="num">Fusión</th><th class="num">Terminación</th><th class="num">Estantería</th><th class="num">Mecanizado</th><th class="num">Stock virtual</th><th class="num">K</th><th>Tarjeta estantería</th><th>Tarjeta virtual</th><th class="num">Lote</th></tr>${body}</table></div><div class="ar-f">${foot}</div></div>`; }).join('') || '<div class="panel"><div class="empty">Nada con este filtro.</div></div>'}`;
   }
+  window.cirArTab = t => { C.arTab = t; C.arFilter = 'todos'; render(); };
   window.cirArFilter = f => { C.arFilter = f; render(); };
   window.cirArQ = t => { C.arQ = t; render(); const e = document.getElementById('ar-q'); if (e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); } };
 
