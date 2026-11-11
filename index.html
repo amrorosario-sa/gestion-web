@@ -6425,18 +6425,27 @@ function showToast(message, kind) {
   const libre = c => Math.max(0, stock(c, 'mecanizado') - C.planes.reduce((a, p) => { const r = rec(p.receta); return r ? a + (c === r.macho ? p.hold_macho : 0) + (c === r.hembra ? p.hold_hembra : 0) : a; }, 0));
   const pedidosAbiertos = c => (typeof DATA === 'undefined' ? [] : DATA.filter(r => r.codigo === c && r.estado_general !== 'Cancelado' && remainingPend(r) > 0)).sort((a, b) => (a.fecha_entrega || '').localeCompare(b.fecha_entrega || ''));
   const pedidosPend = c => pedidosAbiertos(c).reduce((a, r) => a + remainingPend(r), 0);
+  // ventana de cálculo del stock virtual: solo cuenta lo que vence hasta hoy + N días (default 30; clave 'ventana_dias' en mec_config). Lo atrasado cuenta siempre; lo de más adelante se informa aparte.
+  const ventana = () => (Number(C.cfg.ventana_dias) > 0 ? Number(C.cfg.ventana_dias) : 30);
+  const horizonte = () => addD(TODAY(), ventana());
+  const fIso = s => { const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(s || '')); return m ? m[1] : ''; };
+  const enVentana = f => { const d = fIso(f); return !d || d <= horizonte(); };
+  const pedidosVent = c => pedidosAbiertos(c).filter(r => enVentana(r.fecha_entrega)).reduce((a, r) => a + remainingPend(r), 0);
+  const pedidosFut = c => pedidosPend(c) - pedidosVent(c);
+  const planSinEntregarV = c => C.planes.reduce((a, p) => { const r = rec(p.receta); return (r && (c === r.macho || c === r.hembra) && enVentana(p.fecha)) ? a + Math.max(0, pendPlan(p) - holdOf(p, c)) : a; }, 0);
+  const planFut = c => planSinEntregar(c) - planSinEntregarV(c);
   // stock virtual: Z = estantería + Terminación + moldeo/fusión − planificado sin entregar; K = estantería + planificado − pedidos
   // parte de fusión: lo pendiente de fusión cuenta en el stock virtual hasta que llega a la estantería (kanban: también lo que está en Terminación)
   const pfV = c => (window.pfVirtual ? window.pfVirtual(c) : { pend: 0, destKan: false });
   const pfK = c => { const v = pfV(c); return v.destKan ? { pend: v.pend, term: stock(c, 'terminacion') } : { pend: 0, term: 0 }; };
   const pfZ = c => { const v = pfV(c); return v.destKan ? 0 : v.pend; };
-  function sv(u, c) { return u === 'sector_z' ? stock(c, 'sector_z') + stock(c, 'terminacion') + enMoldeo(c) + pfZ(c) - planSinEntregar(c) : stock(c, 'kanban') + planPend(c) + pfK(c).pend + pfK(c).term - pedidosPend(c); }
-  function svTxt(u, c) { return u === 'sector_z' ? `${stock(c, 'sector_z')} estantería + ${stock(c, 'terminacion')} terminación + ${enMoldeo(c) + pfZ(c)} moldeo/fusión − ${planSinEntregar(c)} planificado` : `${stock(c, 'kanban')} estantería + ${planPend(c)} planificado + ${pfK(c).term} terminación + ${pfK(c).pend} pend. de fusión − ${pedidosPend(c)} en pedidos`; }
+  function sv(u, c) { return u === 'sector_z' ? stock(c, 'sector_z') + stock(c, 'terminacion') + enMoldeo(c) + pfZ(c) - planSinEntregarV(c) : stock(c, 'kanban') + planPend(c) + pfK(c).pend + pfK(c).term - pedidosVent(c); }
+  function svTxt(u, c) { return u === 'sector_z' ? `${stock(c, 'sector_z')} estantería + ${stock(c, 'terminacion')} terminación + ${enMoldeo(c) + pfZ(c)} moldeo/fusión − ${planSinEntregarV(c)} planificado hasta el ${fIso(horizonte()).split('-').reverse().join('/')}${planFut(c) ? ' (' + planFut(c) + ' más adelante, no descuenta)' : ''}` : `${stock(c, 'kanban')} estantería + ${planPend(c)} planificado + ${pfK(c).term} terminación + ${pfK(c).pend} pend. de fusión − ${pedidosVent(c)} en pedidos hasta el ${fIso(horizonte()).split('-').reverse().join('/')}${pedidosFut(c) ? ' (' + pedidosFut(c) + ' más adelante, no descuenta)' : ''}`; }
   // stock virtual en filas (estantería / + planificados / − en pedido)
   function svRows(u, c) {
     const L = u === 'sector_z'
-      ? [['', stock(c, 'sector_z'), 'en estantería'], ['+', stock(c, 'terminacion'), 'en terminación'], ['+', enMoldeo(c) + pfZ(c), 'en moldeo/fusión'], ['−', planSinEntregar(c), 'planificado']]
-      : [['', stock(c, 'kanban'), 'en estantería'], ['+', planPend(c), 'planificados']].concat(pfK(c).term ? [['+', pfK(c).term, 'en terminación']] : [], pfK(c).pend ? [['+', pfK(c).pend, 'moldeadas en el parte (sin fundir)']] : [], [['−', pedidosPend(c), 'en pedido']]);
+      ? [['', stock(c, 'sector_z'), 'en estantería'], ['+', stock(c, 'terminacion'), 'en terminación'], ['+', enMoldeo(c) + pfZ(c), 'en moldeo/fusión'], ['−', planSinEntregarV(c), 'planificado hasta ' + ventana() + ' días']].concat(planFut(c) ? [['·', planFut(c), 'planificado más adelante (no descuenta)']] : [])
+      : [['', stock(c, 'kanban'), 'en estantería'], ['+', planPend(c), 'planificados']].concat(pfK(c).term ? [['+', pfK(c).term, 'en terminación']] : [], pfK(c).pend ? [['+', pfK(c).pend, 'moldeadas en el parte (sin fundir)']] : [], [['−', pedidosVent(c), 'en pedidos hasta ' + ventana() + ' días']], pedidosFut(c) ? [['·', pedidosFut(c), 'en pedidos más adelante (no descuenta)']] : []);
     return '<div class="svr">' + L.map(([o, n, t]) => `<div><i>${o}</i><b>${n}</b> ${t}</div>`).join('') + '</div>';
   }
   // lote sugerido = 2k − stock virtual + 2.5k (fórmula tal cual la definió el cliente; ver nota en el parche)
@@ -7251,7 +7260,7 @@ function showToast(message, kind) {
       const cn = n => A.filter(({ x }) => x.a.nV === n).length;
       const rows = L.map(({ x }) => { const a = x.a, pill = n => n ? `<span class="arp ${NIVP[n][0]}">${NIVP[n][1]}</span>` : '<span class="arp nd">SIN K</span>';
         return `<tr><td><b>${esc(String(nombre(a.c)).slice(0, 70))}</b><div class="code">${esc(a.c)} · macho ${esc(x.m.c)} + hembra ${esc(x.h.c)}</div></td><td class="num"><b>${a.es}</b></td><td class="num">${a.k == null ? '—' : a.k}</td><td>${pill(a.nE)}</td><td>${pill(a.nV)}</td><td class="num">${a.lote ? `<b class="rep">${a.lote}</b>` : '<span class="code">—</span>'}</td><td class="num">${Math.min(x.m.disp, x.h.disp)}</td></tr>`; }).join('');
-      return `<div class="sub" style="color:var(--dim);margin-bottom:10px">Aros ya armados (estantería del kanban de aros), ordenados por familia de receta. Tarjeta roja bajo K, amarilla hasta 2K. Lote = 2,5K + (2K − stock virtual). La última columna es el tope por piezas disponibles (macho/hembra); si un macho se comparte entre varios aros, mirá el reparto en la pestaña Machos y hembras.</div>${head}
+      return `<div class="sub" style="color:var(--dim);margin-bottom:10px">Aros ya armados (estantería del kanban de aros), ordenados por familia de receta. Tarjeta roja bajo K, amarilla hasta 2K. Lote = 2,5K + (2K − stock virtual). El stock virtual descuenta solo los pedidos que vencen en los próximos ${ventana()} días (y los atrasados). La última columna es el tope por piezas disponibles (macho/hembra); si un macho se comparte entre varios aros, mirá el reparto en la pestaña Machos y hembras.</div>${head}
         <div class="ar-kpis">${kp('ro', 'alerta', cn('rojo'), '🔴 aros en rojo')}${kp('am', 'alerta', cn('amarillo'), '🟡 aros en amarillo')}<div class="ar-kpi ok" style="cursor:default"><b>${cn('verde')}</b><span>🟢 aros en verde</span></div><div class="ar-kpi" style="cursor:default"><b>${A.reduce((a, { x }) => a + x.a.es, 0)}</b><span>aros armados en estantería</span></div></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">${fb('todos', 'Todos')}${fb('alerta', '⚠️ Con alerta')}${qbox}</div>
         <div class="ar-fam"><div class="ar-tw"><table><tr><th>Aro armado</th><th class="num">Estantería</th><th class="num">K</th><th>Tarjeta estantería</th><th>Tarjeta virtual</th><th class="num">Lote</th><th class="num">Se pueden armar (tope)</th></tr>${rows || '<tr><td colspan="7" class="empty">Nada con este filtro.</td></tr>'}</table></div></div>`;
