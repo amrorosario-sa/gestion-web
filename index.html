@@ -6945,7 +6945,7 @@ function showToast(message, kind) {
   };
   // ---------- Conciliar remitos (SGA) con los despachos del tablero ----------
   // Lo que salió con remito pero no figura en despachos_log (ventas que nacieron y salieron entre dos actualizaciones del tablero).
-  const CONC = { dias: 30, desc: true, q: '', lines: [], ign: new Set(), rows: [], sel: new Set(), desde: null, nota: '', cargando: false };
+  const CONC = { dias: 30, desc: true, todas: false, estado: [], q: '', lines: [], ign: new Set(), rows: [], sel: new Set(), desde: null, nota: '', cargando: false };
   const concNorm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
   const concRef = l => l.comprobante + '|' + l.linea;
   async function concLoad() {
@@ -6972,20 +6972,25 @@ function showToast(message, kind) {
   }
   // Para cada línea de remito, se descuentan unidades de los despachos del tablero del mismo código (±10 días, primero el mismo cliente). Lo que sobra es lo que falta registrar.
   function concCompute() {
-    const logs = (typeof despachosLog !== 'undefined') ? despachosLog : [], DIA = 864e5, VENT = 10 * DIA, pool = {}, yaRef = new Set();
+    const logs = (typeof despachosLog !== 'undefined') ? despachosLog : [], DIA = 864e5, VENT = 10 * DIA, pool = {}, yaRef = new Set(), refLog = {};
     const DES = (typeof itemsDesaparecidosList !== 'undefined' && Array.isArray(itemsDesaparecidosList)) ? itemsDesaparecidosList : [];
     // despachos creados al resolver un desaparecido de SGA: se resuelven días después del remito, así que se les da más margen hacia adelante
     const tard = new Set(DES.filter(d => d.resuelto && d.resuelto_como === 'despachado').map(d => d.comprobante + '|' + d.codigo + '|' + Number(d.resuelto_cant)));
-    logs.forEach(l => { if (l.remito_ref) { yaRef.add(l.remito_ref); return; } (pool[l.codigo] = pool[l.codigo] || []).push({ rem: Number(l.cantidad) || 0, t: kvUTC(l.dia), cli: concNorm(l.cliente), tard: tard.has(l.comprobante + '|' + l.codigo + '|' + Number(l.cantidad)) }); });
-    const rows = []; CONC.sinKg = 0;
+    logs.forEach(l => { if (l.remito_ref) { yaRef.add(l.remito_ref); refLog[l.remito_ref] = l; return; } (pool[l.codigo] = pool[l.codigo] || []).push({ rem: Number(l.cantidad) || 0, log: l, t: kvUTC(l.dia), cli: concNorm(l.cliente), tard: tard.has(l.comprobante + '|' + l.codigo + '|' + Number(l.cantidad)) }); });
+    const rows = []; CONC.sinKg = 0; CONC.estado = [];
+    const ESTADO = (l, txt, forz) => CONC.estado.push({ l, txt, ref: concRef(l), forz: !!forz });
     CONC.lines.slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || a.comprobante.localeCompare(b.comprobante) || a.linea - b.linea).forEach(l => {
-      const ref = concRef(l); if (yaRef.has(ref) || CONC.ign.has(ref)) return;
+      const ref = concRef(l);
+      if (yaRef.has(ref)) { const g = refLog[ref]; ESTADO(l, '✔ Registrado desde este remito' + (g ? ' el ' + kvFecha(g.dia) : '')); return; }
+      if (CONC.ign.has(ref)) { ESTADO(l, '🚫 Marcado como "no es un despacho del tablero"'); return; }
       let need = Number(l.cantidad) || 0; if (need <= 0) return;
-      if (l.kilos != null && Number(l.kilos) === 0) { CONC.sinKg++; return; }   // servicios (p. ej. perforado): sin kilos no hay nada que sumar al indicador
-      const t = kvUTC(l.fecha), cli = concNorm(l.cliente);
+      if (l.kilos != null && Number(l.kilos) === 0) { CONC.sinKg++; ESTADO(l, 'ℹ Servicio sin kilos: no suma al indicador'); return; }   // servicios (p. ej. perforado): sin kilos no hay nada que sumar al indicador
+      const t = kvUTC(l.fecha), cli = concNorm(l.cliente); let usados = null;
       (pool[l.codigo] || []).filter(p => p.rem > 0 && p.t - t >= -VENT && p.t - t <= (p.tard ? 45 * DIA : VENT))
         .sort((a, b) => ((b.cli === cli) - (a.cli === cli)) || (Math.abs(a.t - t) - Math.abs(b.t - t)))
-        .forEach(p => { if (need <= 0) return; const take = Math.min(need, p.rem); p.rem -= take; need -= take; });
+        .forEach(p => { if (need <= 0) return; const take = Math.min(need, p.rem); p.rem -= take; need -= take; (usados = usados || []).push({ take, log: p.log }); });
+      const cubre = (usados || []).map(u => fmtN(u.take, u.take % 1 ? 1 : 0) + ' u. del despacho del ' + kvFecha(u.log.dia) + ' (' + (u.log.comprobante || '-') + ' · ' + (u.log.cliente || '-') + ' · ' + fmtN(u.log.cantidad) + ' u.)').join('; ');
+      if (need <= 1e-9) { ESTADO(l, '✔ Ya figura como despachado en el tablero: ' + cubre, true); return; }
       if (need > 1e-9) {
         // desaparecidos de SGA sin resolver que podrían ser esta misma salida (mismo código, desaparecieron cerca de la fecha del remito)
         const cand = DES.filter(d => !d.resuelto && d.codigo === l.codigo && Number(d.pend) > 0 && d.desaparecio_dia && kvUTC(d.desaparecio_dia) - t >= -5 * DIA && kvUTC(d.desaparecio_dia) - t <= 20 * DIA)
@@ -7012,6 +7017,9 @@ function showToast(message, kind) {
     const body = CONC.cargando ? '<tr><td colspan="8" style="padding:16px; color:#94a3b8;">Cargando remitos…</td></tr>'
       : !vis.length ? `<tr><td colspan="8" style="padding:16px; color:#94a3b8;">${CONC.rows.length ? 'Ninguna línea coincide con la búsqueda.' : '✔ No hay remitos sin registrar en este período: todo lo que salió figura en los despachos del tablero.'}</td></tr>`
       : vis.map(x => `<tr><td style="${td}"><input type="checkbox" ${CONC.sel.has(x.ref) ? 'checked' : ''} onchange="cirConcSel('${esc(x.ref)}',this.checked)"></td><td style="${td}">${kvFecha(x.l.fecha)}</td><td style="${td}">${esc(x.l.comprobante)}</td><td style="${td}">${esc(x.l.cliente || '')}</td><td style="${td}">${esc(x.l.codigo)}</td><td style="${td}">${esc(x.l.descripcion || '')}${x.cand.map(d => `<div style="font-size:.7rem; color:#fbbf24; margin-top:3px;">${d.baja ? `⚠ Posible entrega parcial hecha en SGA: NV ${esc(d.comprobante)} · bajó el pendiente (${fmtN(d.pend)} u. sin registrar) · detectado el ${kvFecha(d.desaparecio_dia)}` : `⚠ Posible desaparecido de SGA: NV ${esc(d.comprobante)} · pendiente ${fmtN(d.pend)} · desapareció el ${kvFecha(d.desaparecio_dia)}`} ${(typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? `<button onclick="cirConcEsEste('${esc(x.ref)}',${d.id},${d.baja ? 'true' : 'false'})" style="padding:2px 8px; font-size:.7rem;">${d.baja ? 'Es esta' : 'Es este'}</button>` : ''}</div>`).join('')}</td><td style="${td} text-align:right;">${fmtN(x.falta, x.falta % 1 ? 1 : 0)}${x.falta < Number(x.l.cantidad) ? `<div class="code">de ${fmtN(x.l.cantidad)}</div>` : ''}</td><td style="${td} text-align:right;">${fmtN(x.kg, 1)}</td></tr>`).join('');
+    const toks = concNorm(CONC.q).split(' ').filter(Boolean);
+    const est = CONC.estado.filter(x => !toks.length || toks.every(t => concNorm([x.l.cliente, x.l.comprobante, x.l.codigo, x.l.descripcion].join(' ')).includes(t)));
+    const estTabla = `<div style="margin:16px 0 6px; font-weight:700; color:#fff; font-size:.82rem;">Líneas de remito que NO figuran arriba (${est.length}) y por qué</div><table style="width:100%; border-collapse:collapse;"><thead><tr><th style="${th}">Fecha</th><th style="${th}">Remito</th><th style="${th}">Cliente</th><th style="${th}">Código</th><th style="${th}">Descripción</th><th style="${th} text-align:right;">Cant.</th><th style="${th}">Estado</th></tr></thead><tbody>${est.length ? est.map(x => `<tr><td style="${td}">${kvFecha(x.l.fecha)}</td><td style="${td}">${esc(x.l.comprobante)}</td><td style="${td}">${esc(x.l.cliente || '')}</td><td style="${td}">${esc(x.l.codigo)}</td><td style="${td}">${esc(x.l.descripcion || '')}</td><td style="${td} text-align:right;">${fmtN(x.l.cantidad, x.l.cantidad % 1 ? 1 : 0)}</td><td style="${td} color:#94a3b8;">${x.txt}${x.forz && (typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE && (CURRENT_PROFILE.es_admin || ['colaborador', 'editor'].includes(CURRENT_PROFILE.rol))) ? ` <button onclick="cirConcForzar('${esc(x.ref)}')" style="padding:2px 8px; font-size:.7rem;" title="Si esa salida NO era la de este remito, registrarlo igual">No es ese despacho: registrar igual</button>` : ''}</td></tr>`).join('') : `<tr><td colspan="7" style="padding:12px; color:#94a3b8;">Ninguna.</td></tr>`}</tbody></table>`;
     const chip = n => `<button class="chip ${CONC.dias === n ? 'active' : ''}" onclick="cirConcDias(${n})">${n} días</button>`;
     const conKan = CONC.rows.filter(x => CONC.sel.has(x.ref) && ['kanban', 'sector_z'].some(u => kOf(u, x.l.codigo) != null)), uKan = conKan.reduce((a, x) => a + x.falta, 0);
     const descChk = conKan.length ? `<label style="font-size:.74rem; color:#cbd5e1; display:flex; gap:6px; align-items:center; cursor:pointer;"><input type="checkbox" ${CONC.desc ? 'checked' : ''} onchange="cirConcDesc(this.checked)"> 📦 Descontar de la estantería kanban (${conKan.length} línea${conKan.length === 1 ? '' : 's'} con kanban · ${fmtN(uKan)} u.)</label>` : '';
@@ -7020,8 +7028,9 @@ function showToast(message, kind) {
       <div style="padding:10px 16px 0;">
         <div class="text-dim" style="font-size:.74rem; line-height:1.45;">Compara el Informe de Remitos cargado${CONC.hasta ? ` (hasta el ${kvFecha(CONC.hasta)})` : ''} contra los despachos del tablero: mismo código, mismas unidades, con hasta 10 días de diferencia. Lo que queda acá salió con remito y el tablero no lo sabe: al registrarlo suma a Despachado (indicadores) con la fecha del remito.${CONC.nota ? `<br>ℹ ${esc(CONC.nota)}` : ''}${CONC.sinKg ? `<br>ℹ ${CONC.sinKg} línea${CONC.sinKg === 1 ? '' : 's'} de remito sin kilos (servicios, p. ej. perforado) no se listan: no suman al indicador.` : ''}${CONC.ignOK === false ? '<br>⚠ Falta correr el parche 030 en Supabase para registrar o ignorar.' : ''}</div>
         <div class="quick-chips" style="margin:8px 0;">${chip(15)}${chip(30)}${chip(60)}${chip(90)}<input type="search" placeholder="🔎 Buscar cliente, remito, código…" value="${esc(CONC.q)}" oninput="cirConcQ(this.value)" style="flex:1; min-width:180px; background:#0b1220; border:1px solid var(--card-border); color:#fff; border-radius:8px; padding:6px 10px; font-size:.8rem;"></div>
+        <label style="font-size:.74rem; color:#cbd5e1; display:flex; gap:6px; align-items:center; cursor:pointer; margin-bottom:6px;"><input type="checkbox" ${CONC.todas ? 'checked' : ''} onchange="cirConcTodas(this.checked)"> Ver también las líneas de remito que no aparecen (ya registradas, cubiertas por un despacho del tablero, ignoradas) y el motivo</label>
       </div>
-      <div class="conc-sc" style="padding:0 16px; overflow:auto; flex:1; min-height:0;"><table style="width:100%; border-collapse:collapse;"><thead><tr><th style="${th}"><input type="checkbox" onchange="cirConcTodos(this.checked)" ${vis.length && vis.every(x => CONC.sel.has(x.ref)) ? 'checked' : ''}></th><th style="${th}">Fecha</th><th style="${th}">Remito</th><th style="${th}">Cliente</th><th style="${th}">Código</th><th style="${th}">Descripción</th><th style="${th} text-align:right;">Sin registrar (u)</th><th style="${th} text-align:right;">Kg</th></tr></thead><tbody>${body}</tbody></table></div>
+      <div class="conc-sc" style="padding:0 16px; overflow:auto; flex:1; min-height:0;"><table style="width:100%; border-collapse:collapse;"><thead><tr><th style="${th}"><input type="checkbox" onchange="cirConcTodos(this.checked)" ${vis.length && vis.every(x => CONC.sel.has(x.ref)) ? 'checked' : ''}></th><th style="${th}">Fecha</th><th style="${th}">Remito</th><th style="${th}">Cliente</th><th style="${th}">Código</th><th style="${th}">Descripción</th><th style="${th} text-align:right;">Sin registrar (u)</th><th style="${th} text-align:right;">Kg</th></tr></thead><tbody>${body}</tbody></table>${CONC.todas ? estTabla : ''}</div>
       <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 16px; border-top:1px solid var(--card-border);"><div><div class="text-dim" style="font-size:.76rem;">${vis.length} línea${vis.length === 1 ? '' : 's'} · ${fmtN(tu)} u. · ${fmtN(tk, 1)} Kg · ${nsel} seleccionada${nsel === 1 ? '' : 's'}</div>${descChk}</div>
         <div class="row-actions">${btn('No es un despacho del tablero', 'cirConcIgnorar()', '', !nsel)}${btn('✅ Registrar como despachado', 'cirConcRegistrar()', 'pri', !nsel)}</div></div></div>`;
     const sc1 = ov.querySelector('.conc-sc'); if (sc1) sc1.scrollTop = st0;
@@ -7034,6 +7043,21 @@ function showToast(message, kind) {
   window.cirConcSel = (ref, on) => { if (on) CONC.sel.add(ref); else CONC.sel.delete(ref); concDraw(); };
   window.cirConcTodos = on => { concVisibles().forEach(x => { if (on) CONC.sel.add(x.ref); else CONC.sel.delete(x.ref); }); concDraw(); };
   window.cirConcDesc = on => { CONC.desc = !!on; };
+  window.cirConcTodas = on => { CONC.todas = !!on; concDraw(); };
+  // El tablero dio esta línea por cubierta con otro despacho del mismo código y fechas cercanas, pero el usuario sabe que es otra salida.
+  window.cirConcForzar = async ref => {
+    const l = CONC.lines.find(x => concRef(x) === ref); if (!l) return;
+    if (!confirm(`Se va a registrar este remito aunque el tablero ya tenga un despacho parecido: ${fmtN(l.cantidad)} u. · ${fmtN(l.kilos || 0, 1)} Kg de ${l.codigo}, con fecha ${kvFecha(l.fecha)}${CONC.desc && ['kanban', 'sector_z'].some(u => kOf(u, l.codigo) != null) ? ', y se descuenta de la estantería kanban' : ''}.\n\nSi en realidad es la MISMA salida que ya estaba registrada, se cuenta dos veces.\n\n¿Confirmás?`)) return;
+    try {
+      const { data, error } = await supabaseClient.rpc('remitos_registrar_despachos', { p_descontar: !!CONC.desc, p_lineas: [{ comprobante: l.comprobante, linea: l.linea, fecha: l.fecha, cliente: l.cliente, codigo: l.codigo, descripcion: l.descripcion, cantidad: l.cantidad, kg: l.kilos || 0 }] });
+      if (error) throw error;
+      if (typeof despachosLog !== 'undefined') despachosLog.push({ id: 'rem-' + ref, itemId: 0, cliente: l.cliente, comprobante: 'REM ' + l.comprobante, codigo: l.codigo, descripcion: l.descripcion, cantidad: l.cantidad, kg: Math.round((l.kilos || 0) * 10) / 10, dia: l.fecha, remito_ref: ref });
+      concCompute(); concDraw();
+      if (data && Number(data.descontado) > 0) window.cirRefreshStock();
+      try { if (typeof showToast === 'function') showToast('Registrado desde el remito', 'success'); } catch (e) { /* sin aviso */ }
+      try { if (typeof renderIndicadoresPanel === 'function' && typeof currentFilter !== 'undefined' && currentFilter === 'indicadores') renderIndicadoresPanel(); } catch (e) { /* sin refrescar */ }
+    } catch (e) { alert(/Could not find the function|schema cache/i.test(e.message || '') ? 'Falta correr el parche 030 en Supabase.' : 'No se pudo registrar: ' + (e.message || e)); }
+  };
   window.cirConcEsEste = async (ref, id, baja) => {
     const x = CONC.rows.find(r => r.ref === ref), d = x && x.cand.find(c => c.id === id && !!c.baja === !!baja); if (!x || !d) return;
     const cant = Math.min(x.falta, Number(d.pend));
