@@ -7936,12 +7936,99 @@ function showToast(message, kind) {
     return { tot, etapas, clientes, sin, n };
   }
 
+  // ---------- estimación por fecha de entrega + detalle ----------
+  const fEnt = it => { const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(it.fecha_entrega || '')); return m ? m[1] : ''; };
+  const itemsBase = () => (typeof BASE !== 'undefined' && BASE) ? BASE : (typeof DATA !== 'undefined' ? DATA : []);
+  // renglón pendiente valorizado: { it, monto, m, val, f, atras }
+  function pendItems() {
+    const out = [];
+    itemsBase().forEach(it => {
+      if (!it || it.estado_general === 'Cancelado' || !(it.pend > 0)) return;
+      const p = V.precios.get(it.id); let monto = null, m = null;
+      if (p && Number(p.importe_final) > 0) {
+        if (String(p.vta).toUpperCase() === 'KG') { if (it.kxu > 0) monto = p.importe_final * it.kxu * it.pend; } else monto = p.importe_final * it.pend;
+        if (monto != null) m = p.moneda === 'ARS' ? 'ARS' : 'USD';
+      }
+      const f = fEnt(it);
+      out.push({ it, monto, m, val: monto != null, f, atras: !!f && f < TODAY() });
+    });
+    return out;
+  }
+  // mes en que se espera ingresar cada renglón: lo atrasado cuenta en el mes en curso
+  function claveMes(x) {
+    if (!x.f) return 'sinfecha';
+    const hoyM = TODAY().slice(0, 7), k = x.f < TODAY() ? hoyM : x.f.slice(0, 7);
+    const lim = iso(new Date(parse(TODAY()).getFullYear(), parse(TODAY()).getMonth() + 12, 1)).slice(0, 7);
+    return k >= lim ? 'futuro' : k;
+  }
+  function estimacion() {
+    const por = new Map();
+    pendItems().forEach(x => {
+      const k = claveMes(x); if (!por.has(k)) por.set(k, { k, por: { USD: 0, ARS: 0 }, atras: { USD: 0, ARS: 0 }, n: 0, sin: 0 });
+      const o = por.get(k); o.n++;
+      if (x.val) { o.por[x.m] += x.monto; if (x.atras) o.atras[x.m] += x.monto; } else o.sin++;
+    });
+    const hoyM = TODAY().slice(0, 7), keys = [...por.keys()].filter(k => /^\d{4}-\d{2}$/.test(k)).sort();
+    const rows = []; const tot = { USD: 0, ARS: 0 };
+    // todos los meses desde el actual hasta el último con entregas (los vacíos también se muestran)
+    const ult = keys.length ? keys[keys.length - 1] : hoyM; let cur = hoyM;
+    while (cur <= ult) { rows.push(por.get(cur) || { k: cur, por: { USD: 0, ARS: 0 }, atras: { USD: 0, ARS: 0 }, n: 0, sin: 0 }); const d = parse(cur + '-01'); cur = iso(new Date(d.getFullYear(), d.getMonth() + 1, 1)).slice(0, 7); }
+    ['futuro', 'sinfecha'].forEach(k => { if (por.has(k)) rows.push(por.get(k)); });
+    rows.forEach(r => { tot.USD += r.por.USD; tot.ARS += r.por.ARS; });
+    return { rows, tot, hoyM };
+  }
+  const nomMes = k => k === 'futuro' ? 'Más adelante (12 meses o más)' : k === 'sinfecha' ? 'Sin fecha de entrega' : (() => { const d = parse(k + '-01'); return MESES[d.getMonth()] + ' ' + d.getFullYear(); })();
+  function vEstimacion() {
+    const E = estimacion();
+    if (!E.rows.length || (E.rows.length === 1 && !E.rows[0].n)) return '<div class="empty">No hay renglones pendientes de entrega.</div>';
+    const vals = E.rows.map(r => valorSerie(r.por)), max = Math.max(1, ...vals);
+    const fila = (r, i) => {
+      const v = vals[i], atr = valorSerie(r.atras), en = r.k === E.hoyM;
+      const extra = V.moneda === 'ambas' ? (() => { const x = totalEn(r.por, 'ARS'); return x.incompleto ? '' : ` <span class="dim">≈ ${money(x.t, 'ARS')}</span>`; })() : '';
+      return `<div class="hb clk" data-k="${esc(r.k)}" onclick="venDet('mes', this.dataset.k)" title="Tocá para ver el detalle"><span class="l" style="width:190px" title="${esc(nomMes(r.k))}">${esc(nomMes(r.k))}${en ? ' <small class="dim">(en curso)</small>' : ''}</span><span class="tr"><i style="width:${v > 0 ? Math.max(1.5, v / max * 100).toFixed(1) : 0}%"></i></span><span class="v" style="width:150px">${v > 0 ? nf(v) : '—'}${extra}</span><span class="dim" style="width:150px;font-size:.72rem">${r.n} ${r.n === 1 ? 'renglón' : 'renglones'}${atr > 0 ? ` · <span class="warn">atrasado ${nf(atr)}</span>` : ''}${r.sin ? ` · ${r.sin} sin valorizar` : ''}</span></div>`;
+    };
+    return E.rows.map(fila).join('') + `<div class="sub">Total estimado: <b>${grande(E.tot)}</b>. Lo atrasado (fecha de entrega vencida y todavía pendiente) está sumado al mes en curso. Los renglones sin precio o por Kg sin Kg/u figuran como "sin valorizar" y no suman.</div>`;
+  }
+  // detalle: ventana con los renglones que hay detrás de cada número
+  const filtroPend = (tipo, k) => pendItems().filter(x => {
+    if (tipo === 'mes') return claveMes(x) === k;
+    if (tipo === 'etapa') return (x.it.area_actual || '—') === k;
+    if (tipo === 'cliente') return (x.it.cliente || '—') === k;
+    return true;
+  });
+  function detPend(titulo, rows) {
+    const tot = { USD: 0, ARS: 0 }; let sin = 0; rows.forEach(x => { if (x.val) tot[x.m] += x.monto; else sin++; });
+    rows = rows.slice().sort((a, b) => (a.f || '9999').localeCompare(b.f || '9999') || String(a.it.cliente).localeCompare(String(b.it.cliente)));
+    const mostrar = rows.slice(0, 400);
+    return { titulo, tot, sub: `${rows.length} renglones pendientes${sin ? ` · ${sin} sin valorizar` : ''}`, html: `<table><tr><th>Cliente</th><th>NV</th><th>Pieza</th><th class="num">Pend.</th><th>Entrega</th><th>Etapa</th><th class="num">Importe</th></tr>${mostrar.map(x => `<tr><td>${esc(x.it.cliente || '—')}</td><td>${esc(x.it.comprobante || '')}</td><td>${esc(String(x.it.descripcion || '').slice(0, 46))}<div class="dim" style="font-size:.7rem">${esc(x.it.codigo || '')}${x.it.oc ? ' · OC ' + esc(x.it.oc) : ''}</div></td><td class="num">${nf(x.it.pend)}</td><td>${x.f ? esc(x.f.split('-').reverse().join('/')) : '—'}${x.atras ? ' <span class="warn" style="font-size:.7rem">atrasado</span>' : ''}</td><td>${esc(x.it.area_actual || '—')}</td><td class="num">${x.val ? money(x.monto, x.m) : '<span class="dim">sin valorizar</span>'}</td></tr>`).join('')}</table>${rows.length > mostrar.length ? `<div class="sub">Se muestran los primeros ${mostrar.length} de ${rows.length}.</div>` : ''}` };
+  }
+  function detLog(titulo, rows) {
+    const s = sumar(rows); rows = rows.slice().sort((a, b) => String(b.dia).localeCompare(String(a.dia)));
+    const mostrar = rows.slice(0, 400);
+    return { titulo, tot: s.por, sub: `${rows.length} líneas${s.sin ? ` · ${s.sin} sin valorizar` : ''}`, html: `<table><tr><th>Fecha</th><th>Cliente</th><th>NV</th><th>Pieza</th><th class="num">Cant.</th><th class="num">Importe</th></tr>${mostrar.map(x => `<tr><td>${esc(String(x.dia || '').split('-').reverse().join('/'))}</td><td>${esc(x.cliente || '—')}</td><td>${esc(x.comprobante || '')}</td><td>${esc(String(x.descripcion || '').slice(0, 46))}<div class="dim" style="font-size:.7rem">${esc(x.codigo || '')}</div></td><td class="num">${nf(x.cantidad)}</td><td class="num">${x.valorizado && x.monto != null ? money(x.monto, x.moneda === 'ARS' ? 'ARS' : 'USD') : '<span class="dim">sin valorizar</span>'}</td></tr>`).join('')}</table>${rows.length > mostrar.length ? `<div class="sub">Se muestran las primeras ${mostrar.length} de ${rows.length}.</div>` : ''}` };
+  }
+  window.venDet = (tipo, k) => {
+    const { cur } = rangos(); let d;
+    if (tipo === 'mes') d = detPend('📅 ' + nomMes(k) + (k === estimacion().hoyM ? ' (en curso, incluye lo atrasado)' : ''), filtroPend('mes', k));
+    else if (tipo === 'etapa') d = detPend('📦 Cartera pendiente en ' + k, filtroPend('etapa', k));
+    else if (tipo === 'cliente') d = detPend('📦 Cartera pendiente de ' + k, filtroPend('cliente', k));
+    else if (tipo === 'cartera') d = detPend('📦 Cartera pendiente de entrega', pendItems());
+    else if (tipo === 'ing') d = detLog('💵 Ingresó (notas de venta del período)', V.log.filter(x => x.tipo === 'ingreso' && enRango(x.dia, cur)));
+    else if (tipo === 'des') d = detLog('🚚 Despachó (período)', V.log.filter(x => x.tipo === 'despacho' && enRango(x.dia, cur)));
+    else if (tipo === 'cliper') d = detLog('👤 ' + k + ' en el período', V.log.filter(x => (x.cliente || '—') === k && enRango(x.dia, cur)));
+    else return;
+    const el = document.getElementById('ven-det'); if (!el) return;
+    el.innerHTML = `<div class="box"><div class="top"><h2 style="margin:0">${esc(d.titulo)}</h2><button onclick="venDetCerrar()">✕ Cerrar</button></div><div class="sub" style="margin:2px 0 8px"><b style="color:#fff;font-size:1rem">${grande(d.tot)}</b> · ${d.sub}</div><div class="scr">${d.html}</div></div>`;
+    el.classList.add('on');
+  };
+  window.venDetCerrar = () => { const el = document.getElementById('ven-det'); if (el) el.classList.remove('on'); };
+
   // ---------- dibujo ----------
-  function barras(entries, titulo) {
+  function barras(entries, titulo, tipoDet) {
     const vals = entries.map(([k, por]) => [k, valorSerie(por)]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]);
     if (!vals.length) return '<div class="empty">Sin datos todavía.</div>';
     const max = vals[0][1];
-    return vals.map(([k, v]) => `<div class="hb"><span class="l" title="${esc(k)}">${esc(k)}</span><span class="tr"><i style="width:${Math.max(1.5, v / max * 100).toFixed(1)}%"></i></span><span class="v">${nf(v)}</span></div>`).join('');
+    return vals.map(([k, v]) => `<div class="hb${tipoDet ? ' clk' : ''}"${tipoDet ? ` data-k="${esc(k)}" onclick="venDet('${tipoDet}', this.dataset.k)" title="Tocá para ver el detalle"` : ''}><span class="l" title="${esc(k)}">${esc(k)}</span><span class="tr"><i style="width:${Math.max(1.5, v / max * 100).toFixed(1)}%"></i></span><span class="v">${nf(v)}</span></div>`).join('');
   }
   function deltaHtml(cur, prev) {
     if (!(prev > 0)) return '<span class="dim">período anterior sin datos</span>';
@@ -7992,20 +8079,21 @@ function showToast(message, kind) {
         <span class="tc">Tipo de cambio: ${V.tc > 0 ? `<b>$ ${nf(V.tc, 2)}</b> por USD` : '<b class="warn">sin cargar</b>'} <button class="chip" onclick="venTc()">${V.tc > 0 ? 'Cambiar' : 'Cargar'}</button></span></div>
       ${sinTc ? '<div class="alert">Hay montos en pesos y todavía no cargaste el tipo de cambio: los pesos no están sumados a los dólares.</div>' : ''}
       <div class="tiles">
-        <div class="tile"><div class="t">💵 Ingresó (notas de venta de ${nombre})</div><div class="b" style="color:#38bdf8">${grande(sI.por)}</div>${chico(sI.por)}<div class="s">${sI.n} líneas · ${deltaHtml(vI, valorSerie(pI.por))}</div>${sinMayor}</div>
-        <div class="tile"><div class="t">🚚 Despachó (${nombre})</div><div class="b" style="color:#34d399">${grande(sD.por)}</div>${chico(sD.por)}<div class="s">${sD.n} despachos · ${deltaHtml(vD, valorSerie(pD.por))}</div></div>
+        <div class="tile clk" onclick="venDet('ing')" title="Tocá para ver el detalle"><div class="t">💵 Ingresó (notas de venta de ${nombre})</div><div class="b" style="color:#38bdf8">${grande(sI.por)}</div>${chico(sI.por)}<div class="s">${sI.n} líneas · ${deltaHtml(vI, valorSerie(pI.por))}</div>${sinMayor}</div>
+        <div class="tile clk" onclick="venDet('des')" title="Tocá para ver el detalle"><div class="t">🚚 Despachó (${nombre})</div><div class="b" style="color:#34d399">${grande(sD.por)}</div>${chico(sD.por)}<div class="s">${sD.n} despachos · ${deltaHtml(vD, valorSerie(pD.por))}</div></div>
         <div class="tile"><div class="t">⚖️ Despachado / Ingresado</div><div class="b">${ratio == null ? '—' : nf(ratio, 2)}</div><div class="s">${ratio == null ? 'sin ingresos en el período' : ratio < 1 ? 'menor a 1: la cartera crece' : 'mayor o igual a 1: la cartera baja'}</div></div>
-        <div class="tile"><div class="t">📦 Cartera pendiente de entrega</div><div class="b" style="color:#38bdf8">${grande(car.tot)}</div>${chico(car.tot)}<div class="s">${car.n - car.sin} de ${car.n} renglones valorizados</div></div>
+        <div class="tile clk" onclick="venDet('cartera')" title="Tocá para ver el detalle"><div class="t">📦 Cartera pendiente de entrega</div><div class="b" style="color:#38bdf8">${grande(car.tot)}</div>${chico(car.tot)}<div class="s">${car.n - car.sin} de ${car.n} renglones valorizados</div></div>
       </div>
+      <div class="panel"><h2>📅 Estimación de ingresos por fecha de entrega (${V.moneda === 'ARS' ? '$' : 'USD'})</h2><div class="sub" style="margin:0 0 8px">Lo que falta entregar, valorizado y repartido por la fecha de entrega comprometida de cada renglón. Tocá un mes para ver los pedidos.</div>${vEstimacion()}</div>
       <div class="grid2">
         <div class="panel"><h2>Ingresó vs. despachó por mes (${V.moneda === 'ARS' ? '$' : 'USD'})</h2>${chart()}
           <div class="leg"><span><i style="background:#38bdf8"></i>Ingresó</span><span><i style="background:#34d399"></i>Despachó</span></div>
           <div class="sub">Los meses anteriores al arranque del indicador pueden estar incompletos: SGA solo informa lo que sigue pendiente, no lo que ya se entregó y facturó.</div></div>
-        <div class="panel"><h2>Cartera pendiente por etapa (${V.moneda === 'ARS' ? '$' : 'USD'})</h2>${barras(Object.entries(car.etapas))}
-          <h2 style="margin-top:14px">Cartera por cliente (top 8)</h2>${barras(Object.entries(car.clientes).sort((a, b) => valorSerie(b[1]) - valorSerie(a[1])).slice(0, 8))}</div>
+        <div class="panel"><h2>Cartera pendiente por etapa (${V.moneda === 'ARS' ? '$' : 'USD'})</h2>${barras(Object.entries(car.etapas), '', 'etapa')}
+          <h2 style="margin-top:14px">Cartera por cliente (top 8)</h2>${barras(Object.entries(car.clientes).sort((a, b) => valorSerie(b[1]) - valorSerie(a[1])).slice(0, 8), '', 'cliente')}</div>
       </div>
       <div class="panel"><h2>Por cliente en ${nombre} (${V.moneda === 'ARS' ? '$' : 'USD'})</h2>
-        ${cliRows.length ? `<table><tr><th>Cliente</th><th class="num">Ingresó</th><th class="num">Despachó</th></tr>${cliRows.map(r => `<tr><td>${esc(r[0])}</td><td class="num">${r[1] ? nf(r[1]) : '—'}</td><td class="num">${r[2] ? nf(r[2]) : '—'}</td></tr>`).join('')}</table>` : '<div class="empty">Sin movimientos valorizados en el período.</div>'}</div>
+        ${cliRows.length ? `<table><tr><th>Cliente</th><th class="num">Ingresó</th><th class="num">Despachó</th></tr>${cliRows.map(r => `<tr class="clk" data-k="${esc(r[0])}" onclick="venDet('cliper', this.dataset.k)" title="Tocá para ver el detalle"><td>${esc(r[0])}</td><td class="num">${r[1] ? nf(r[1]) : '—'}</td><td class="num">${r[2] ? nf(r[2]) : '—'}</td></tr>`).join('')}</table>` : '<div class="empty">Sin movimientos valorizados en el período.</div>'}</div>
       <div class="panel"><h2>Calidad del dato</h2>
         <table>
           <tr><td>Ingresos del período sin valorizar</td><td class="num">${sI.sin}</td><td class="dim">Vendidos por KG y SGA no tiene el Kg/u, o sin precio.</td></tr>
@@ -8048,13 +8136,18 @@ function showToast(message, kind) {
   #ven-root .sub { color:var(--dim); font-size:.76rem; margin-top:8px; } #ven-root .dim { color:var(--dim); } #ven-root .warn { color:#fbbf24; } #ven-root .err { color:#f87171; padding:20px 0; } #ven-root .empty { color:var(--dim); font-size:.82rem; padding:6px 0; }
   #ven-root .alert { background:rgba(251,191,36,.1); border:1px solid #92400e; border-radius:8px; padding:8px 12px; margin-bottom:10px; font-size:.8rem; }
   #ven-root .hb { display:flex; align-items:center; gap:8px; margin:6px 0; font-size:.8rem; } #ven-root .hb .l { width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } #ven-root .hb .tr { flex:1; background:#0f172a; border-radius:5px; height:13px; overflow:hidden; } #ven-root .hb .tr i { display:block; height:100%; background:#38bdf8; } #ven-root .hb .v { width:78px; text-align:right; color:var(--dim); font-variant-numeric:tabular-nums; }
+  #ven-root .clk { cursor:pointer; } #ven-root .hb.clk:hover, #ven-root tr.clk:hover td { background:#263449; } #ven-root .tile.clk:hover { border-color:var(--acc); }
+  #ven-det { position:fixed; inset:0; background:rgba(2,6,23,.78); z-index:70; display:none; align-items:center; justify-content:center; padding:14px; } #ven-det.on { display:flex; }
+  #ven-det .box { background:#1e293b; border:1px solid #334155; border-radius:12px; padding:14px 16px; width:min(1000px,100%); max-height:88vh; display:flex; flex-direction:column; } #ven-det .top { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+  #ven-det .scr { overflow:auto; } #ven-det table { width:100%; border-collapse:collapse; font-size:.8rem; min-width:720px; } #ven-det th { text-align:left; font-size:.7rem; color:#94a3b8; font-weight:600; padding:4px 6px; border-bottom:1px solid #334155; position:sticky; top:0; background:#1e293b; } #ven-det td { padding:5px 6px; border-bottom:1px solid #263449; vertical-align:top; } #ven-det .num { text-align:right; font-variant-numeric:tabular-nums; } #ven-det .dim { color:#94a3b8; } #ven-det .warn { color:#fbbf24; } #ven-det .sub { color:#94a3b8; font-size:.76rem; }
+  #ven-det button { background:#334155; color:#fff; border:none; border-radius:7px; padding:6px 11px; font-size:.8rem; cursor:pointer; }
   #ven-root .leg { display:flex; gap:14px; font-size:.75rem; color:var(--dim); margin-top:6px; } #ven-root .leg i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; }
   #ven-root table { width:100%; border-collapse:collapse; font-size:.82rem; } #ven-root th { text-align:left; font-size:.7rem; color:var(--dim); font-weight:600; padding:4px 6px; border-bottom:1px solid var(--line); } #ven-root td { padding:6px; border-bottom:1px solid #263449; } #ven-root .num { text-align:right; font-variant-numeric:tabular-nums; }`;
   function ensureDom() {
     if (document.getElementById('ven-root')) return;
     const st = document.createElement('style'); st.textContent = CSS; document.head.appendChild(st);
     const root = document.createElement('div'); root.id = 'ven-root';
-    root.innerHTML = '<div class="wrap"><div class="top"><h1>💰 Ventas — lo que entra y lo que sale</h1><div style="display:flex;gap:8px"><button onclick="venRefrescar()">↻ Actualizar</button><button onclick="venClose()">✕ Cerrar</button></div></div><div id="ven-body"></div></div>';
+    root.innerHTML = '<div class="wrap"><div class="top"><h1>💰 Ventas — lo que entra y lo que sale</h1><div style="display:flex;gap:8px"><button onclick="venRefrescar()">↻ Actualizar</button><button onclick="venClose()">✕ Cerrar</button></div></div><div id="ven-body"></div></div><div id="ven-det" onclick="if(event.target===this)venDetCerrar()"></div>';
     document.body.appendChild(root);
   }
   window.venOpen = () => { if (!puede()) return; ensureDom(); document.getElementById('ven-root').classList.add('on'); document.body.style.overflow = 'hidden'; V.loaded ? render() : cargar(); };
