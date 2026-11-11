@@ -7279,6 +7279,21 @@ function showToast(message, kind) {
   #cir-root .pz-row { display:flex; justify-content:space-between; align-items:center; gap:8px 12px; margin:8px 0 3px; flex-wrap:wrap; } #cir-root .pz-big { font-size:1.7rem; font-weight:800; color:#fff; line-height:1; } #cir-root .pz-big small { font-size:.74rem; font-weight:600; color:var(--dim); margin-left:6px; }
   #cir-root .pz-st { font-size:.78rem; font-weight:700; padding:4px 10px; border-radius:99px; } #cir-root .pz-st.ok { background:rgba(52,211,153,.16); color:#6ee7b7; } #cir-root .pz-st.bad { background:rgba(248,113,113,.16); color:#fca5a5; }
   #cir-root .pz-act { display:flex; gap:8px; margin-top:9px; flex-wrap:wrap; } #cir-root .pz-act button { flex:1 1 130px; min-height:44px; font-size:.88rem; padding:10px 8px; white-space:nowrap; }
+  @media (max-width:640px) {
+    #cir-root table.rt, #cir-root table.rt tbody, #cir-root table.rt tr.rt-x, #cir-root table.rt td { display:block; width:100%; }
+    #cir-root table.rt tr.rt-h { display:none; }
+    #cir-root table.rt tr.rt-r { display:grid; grid-template-columns:1fr 1fr; gap:2px 14px; background:rgba(2,6,23,.38); border:1px solid var(--line); border-radius:10px; padding:10px 12px 8px; margin:0 0 9px; }
+    #cir-root table.rt td { border:0; padding:4px 0; text-align:left; min-width:0; width:auto; }
+    #cir-root table.rt td[data-l]::before { content:attr(data-l); display:block; font-size:.64rem; text-transform:uppercase; letter-spacing:.03em; color:var(--dim); font-weight:600; margin-bottom:1px; }
+    #cir-root table.rt .rt-v { min-width:0; }
+    #cir-root table.rt td.rt-first { grid-column:1 / -1; padding-bottom:7px; margin-bottom:3px; border-bottom:1px solid #263449; }
+    #cir-root table.rt td.rt-act { grid-column:1 / -1; padding-top:8px; } #cir-root table.rt td.rt-act .row-actions { display:flex; gap:8px; flex-wrap:wrap; } #cir-root table.rt td.rt-act button { flex:1 1 120px; min-height:42px; font-size:.86rem; white-space:nowrap; }
+    #cir-root table.rt td.num { text-align:left; }
+    #cir-root .card .row-actions button { flex:1 1 130px; min-height:44px; font-size:.9rem; }
+    #cir-root .quick { display:flex; flex-wrap:wrap; gap:8px; } #cir-root .quick button { flex:1 1 150px; min-height:42px; }
+    #cir-root #cir-tabs { overflow-x:auto; flex-wrap:nowrap; -webkit-overflow-scrolling:touch; padding-bottom:4px; } #cir-root #cir-tabs .tab { flex:0 0 auto; white-space:nowrap; }
+  }
+
   #cir-root .chip { display:inline-block; font-size:.72rem; font-weight:800; padding:3px 9px; border-radius:99px; } #cir-root .chip.hoy { background:var(--warn); color:#1c1917; } #cir-root .chip.rojo { background:var(--bad); color:#1c1917; }
   #cir-modal .menu-it { display:block; width:100%; text-align:left; background:#0f172a; border:1px solid #334155; border-radius:10px; padding:10px 12px; margin-bottom:8px; color:#e2e8f0; cursor:pointer; } #cir-modal .menu-it:hover { border-color:#38bdf8; } #cir-modal .menu-it span { display:block; font-size:.74rem; color:#94a3b8; margin-top:2px; }
   #cir-ov { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; padding:16px; z-index:70; } #cir-ov.on { display:flex; }
@@ -7295,6 +7310,25 @@ function showToast(message, kind) {
     document.body.appendChild(root);
     const ov = document.createElement('div'); ov.id = 'cir-ov'; ov.innerHTML = '<div id="cir-modal"></div>'; ov.addEventListener('click', e => { if (e.target.id === 'cir-ov') cirCloseAsk(); }); document.body.appendChild(ov);
   }
+  // Celular: cada fila de una tabla con encabezados se ve como una tarjeta (el CSS lo hace con estas marcas; en pantalla grande no cambia nada)
+  function rtMobile(root) {
+    root.querySelectorAll('table').forEach(t => {
+      if (t.closest('.pl-grid') || t.classList.contains('nort')) return;
+      const hr = t.querySelector('tr th') ? t.querySelector('tr th').parentElement : null; if (!hr) return;
+      const labs = [...hr.children].map(h => (h.textContent || '').replace(/\s+/g, ' ').trim());
+      t.classList.add('rt'); hr.classList.add('rt-h');
+      t.querySelectorAll('tr').forEach(tr => {
+        if (tr === hr || tr.querySelector('th')) { tr.classList.add('rt-h'); return; }
+        const tds = [...tr.children]; if (tds.some(td => td.colSpan > 1)) { tr.classList.add('rt-x'); return; }
+        tr.classList.add('rt-r');
+        tds.forEach((td, i) => {
+          if (td.firstElementChild && td.firstElementChild.classList.contains('rt-v')) return;
+          td.innerHTML = '<div class="rt-v">' + td.innerHTML + '</div>';
+          if (i === 0) td.classList.add('rt-first'); else if (labs[i]) td.setAttribute('data-l', labs[i]); else td.classList.add('rt-act');
+        });
+      });
+    });
+  }
   function render() {
     const screen = document.getElementById('cir-screen'); if (!screen) return;
     const vw = VIEWS.find(v => v.key === C.mode) || VIEWS[0]; document.getElementById('cir-title').textContent = vw.title;
@@ -7302,7 +7336,7 @@ function showToast(message, kind) {
       document.getElementById('cir-flow').innerHTML = ''; document.getElementById('cir-tabs').innerHTML = '';
       if (C.error) { screen.innerHTML = `<div class="err">${esc(C.error)}</div>`; return; }
       if (!C.loaded) { screen.innerHTML = '<div class="empty">Cargando…</div>'; return; }
-      try { screen.innerHTML = ({ mec: vDiaMec, term: vDiaTerm, mold: vMold, kan: vKan }[C.mode] || vDiaTerm)(); if (C.mode === 'mold' && C.moldTab === 'plan' && puede('plan_moldeo')) plMount(); } catch (e) { console.error('Programación mecanizado:', e); screen.innerHTML = '<div class="err">Error al mostrar esta pantalla: ' + esc(e.message) + '</div>'; }
+      try { screen.innerHTML = ({ mec: vDiaMec, term: vDiaTerm, mold: vMold, kan: vKan }[C.mode] || vDiaTerm)(); rtMobile(screen); if (C.mode === 'mold' && C.moldTab === 'plan' && puede('plan_moldeo')) plMount(); } catch (e) { console.error('Programación mecanizado:', e); screen.innerHTML = '<div class="err">Error al mostrar esta pantalla: ' + esc(e.message) + '</div>'; }
       return;
     }
     if (C.error) { document.getElementById('cir-flow').innerHTML = ''; document.getElementById('cir-tabs').innerHTML = ''; screen.innerHTML = `<div class="err">${esc(C.error)}</div>`; return; }
@@ -7317,7 +7351,7 @@ function showToast(message, kind) {
        <div class="node k"><div class="n">${tot('kanban')}</div><div class="l">🏬 Estantería kanban post-mecanizado${tag(nk)}</div></div>`;
     const tabs = [['plan', '📅 Planificación'], ['term', '🔧 Terminación'], ['z', '🗄️ Sector Z' + tag(nz)], ['mec', '⚙️ Mecanizado'], ['k', '🏬 Kanban' + tag(nk)]];
     document.getElementById('cir-tabs').innerHTML = tabs.map(t => `<button class="tab ${C.tab === t[0] ? 'on' : ''}" onclick="cirTab('${t[0]}')">${t[1]}</button>`).join('');
-    try { screen.innerHTML = { term: vTerm, z: vZ, k: vK, plan: vPlan, mec: vMec }[C.tab](); }
+    try { screen.innerHTML = { term: vTerm, z: vZ, k: vK, plan: vPlan, mec: vMec }[C.tab](); rtMobile(screen); }
     catch (e) { console.error('Programación mecanizado:', e); screen.innerHTML = '<div class="err">Error al mostrar esta pantalla: ' + esc(e.message) + '</div>'; }
   }
   async function reload() { await load(); cardsT = Date.now(); render(); paintCards(); }
