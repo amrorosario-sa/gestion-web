@@ -3887,16 +3887,21 @@ function renderSgaDesapPanel() {
 function openDesapDespacharDialog(id) {
   const d = itemsDesaparecidosList.find(x => String(x.id) === String(id));
   if (!d) return;
+  const abrir = () => {
+  const kan = window.cirKanbanInfo ? window.cirKanbanInfo(d.codigo) : null;
   showStockDialog(`
     <h3>✅ Marcar como despachado</h3>
     <div class="text-dim" style="margin-bottom:12px; line-height:1.5;"><span style="color:#fff;">${escHtml(d.descripcion || d.codigo)}</span><br>${escHtml(d.cliente)} · NV ${escHtml(d.comprobante)} · Cód ${escHtml(d.codigo)}<br>Pendiente cuando desapareció de SGA: ${fmtN(d.pend)} u.</div>
     <div class="stock-field"><label>Cantidad a sumar a Despachado</label><input type="number" id="desap-cant" value="${d.pend}" min="0" max="${d.pend}" step="any"></div>
+    ${kan ? `<div class="stock-field"><label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer;"><input type="checkbox" id="desap-kan" checked style="margin-top:3px;"> <span>📦 Descontar de la ${escHtml(kan.nom)} (hay ${kan.hay} · k ${kan.k})<br><span class="text-dim" style="font-size:0.72rem;">Esta pieza lleva kanban y salió sin pasar por el tablero. Se baja lo despachado, menos lo que ya se hubiera descontado al preparar el pedido, y nunca más de lo que hay.</span></span></label></div>` : ''}
     <div class="stock-field"><label>Nota (opcional)</label><input type="text" id="desap-nota" autocomplete="off" placeholder="ej. facturado directo en SGA"></div>
     <div class="text-dim" style="font-size:0.75rem; margin-bottom:10px;">Suma esta cantidad al indicador de Kg despachados (de hoy) y sale de esta lista para siempre.</div>
     <div class="stock-actions">
       <button class="stock-btn-cancel" onclick="closeStockDialog()">Cancelar</button>
       <button class="stock-btn-primary" id="desap-save-btn" onclick="saveDesapResolver(${d.id}, 'despachado')">✅ Confirmar</button>
     </div>`);
+  };
+  if (window.cirEstimadoEnsure) window.cirEstimadoEnsure().then(abrir, abrir); else abrir();
 }
 function openDesapDescartarDialog(id) {
   const d = itemsDesaparecidosList.find(x => String(x.id) === String(id));
@@ -3920,20 +3925,23 @@ async function saveDesapResolver(id, como) {
   const btn = document.getElementById('desap-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
   try {
-    const { error } = await supabaseClient.rpc('items_desaparecidos_resolver', {
-      p_id: id, p_como: como, p_cant: como === 'despachado' ? cant : null, p_nota: nota,
-    });
+    const kanEl = document.getElementById('desap-kan');
+    const args = { p_id: id, p_como: como, p_cant: como === 'despachado' ? cant : null, p_nota: nota };
+    if (como === 'despachado' && kanEl && !kanEl.checked) args.p_descontar = false;
+    const { data: resu, error } = await supabaseClient.rpc('items_desaparecidos_resolver', args);
     if (error) throw error;
+    const descK = resu && Number(resu.descontado) > 0 ? Number(resu.descontado) : 0, ubK = resu && resu.ubicacion === 'sector_z' ? 'Sector Z' : 'estantería kanban';
     const d = itemsDesaparecidosList.find(x => String(x.id) === String(id));
     if (d) { d.resuelto = true; d.resuelto_como = como; d.resuelto_cant = como === 'despachado' ? cant : null; d.resuelto_nota = nota; }
     closeStockDialog();
     actualizarBadgeDesap();
     applyFilters();
-    showToast(como === 'despachado' ? 'Marcado como despachado' : 'Descartado', 'success');
+    showToast(como === 'despachado' ? 'Marcado como despachado' + (descK ? ' · se descontaron ' + descK + ' de ' + ubK : '') : 'Descartado', 'success');
+    if (descK && window.cirRefreshStock) window.cirRefreshStock();
   } catch (e) {
     console.error('No se pudo resolver el ítem desaparecido de SGA:', e);
     let msg = 'No se pudo guardar.';
-    if (e && (e.code === '42883' || e.code === 'PGRST202' || /items_desaparecidos_resolver/i.test(e.message || ''))) msg = 'La base todavía no tiene esta función. Avisale a quien administra el tablero (falta correr el SQL 028).';
+    if (e && (e.code === '42883' || e.code === 'PGRST202' || /items_desaparecidos_resolver/i.test(e.message || ''))) msg = 'La base todavía no tiene esta función. Avisale a quien administra el tablero (falta correr el SQL 028 y el 031).';
     else if (e && e.code === '42501') msg = 'Tu usuario no tiene permiso para resolver esto (hace falta ser Administrador).';
     else if (e && e.message) msg += ' ' + e.message;
     alert(msg);
@@ -6653,6 +6661,9 @@ function showToast(message, kind) {
     ask('Usar el K sugerido — ' + UBIC[u], esc(nombre(c)) + `<br>k actual <b>${k == null ? '—' : k}</b> → k sugerido <b>${s.ks}</b>.<br><span class="code">Ventas ${fmtN(s.cm, 0)} u/mes (${Math.round(s.w * 100)} % últimos 30 días = ${fmtN(s.u30, 0)} + ${Math.round((1 - s.w) * 100)} % promedio de ${s.n} meses = ${fmtN(s.prom, 0)}) × plazo ${s.tr} d / 30 × 2/3${s.raw !== s.ks ? ' = ' + s.raw + ', redondeado a ' + s.ks + ' (pallets de 10)' : ''}${s.via ? ' · incluye las ventas de los aros que usan esta pieza' : ''}.</span>`, [], 'Usar ' + s.ks,
       () => tbl(supabaseClient.from('mec_k').upsert({ ubicacion: u, codigo: c, k: s.ks }, { onConflict: 'ubicacion,codigo' }))); };
   // Para el indicador "A despachar por mes": venta mensual esperada de cada pieza de kanban que se vende directo (mismo criterio ponderado que el K).
+  // estantería kanban donde la pieza lleva k (primero la de Mecanizado, que es la que baja cuando algo sale por SGA)
+  window.cirKanbanInfo = c => { const u = ['kanban', 'sector_z'].find(x => kOf(x, c) != null); return u ? { u, nom: UBIC[u], hay: stock(c, u), k: kOf(u, c) } : null; };
+  window.cirRefreshStock = () => { if (C.loaded) load().catch(() => {}); };
   window.cirEstimadoEnsure = async () => { if (!C.loaded) await load(); return C.loaded; };
   window.cirEstimado = () => {
     if (!C.loaded || !C.ventasOK) return null;
