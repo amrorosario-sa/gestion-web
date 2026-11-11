@@ -3889,10 +3889,14 @@ function openDesapDespacharDialog(id) {
   if (!d) return;
   const abrir = () => {
   const kan = window.cirKanbanInfo ? window.cirKanbanInfo(d.codigo) : null;
+  const dsd = d.desaparecio_dia ? new Date(d.desaparecio_dia + 'T00:00:00').getTime() : null;
+  const yaRem = dsd == null ? [] : (despachosLog || []).filter(x => x.remito_ref && x.codigo === d.codigo && x.dia && Math.abs(new Date(x.dia + 'T00:00:00').getTime() - dsd) <= 20 * 864e5);
+  const avisoRem = yaRem.length ? `<div class="stock-field" style="background:#451a03; border:1px solid #b45309; border-radius:8px; padding:8px 10px; font-size:0.76rem; color:#fde68a;">⚠ Ya registraste ${yaRem.reduce((a, x) => a + (Number(x.cantidad) || 0), 0)} u. de este código desde un remito (${yaRem.map(x => x.dia.split('-').reverse().join('/')).join(', ')}). Si es la misma salida, no la marques otra vez: se contaría dos veces.</div>` : '';
   showStockDialog(`
     <h3>✅ Marcar como despachado</h3>
     <div class="text-dim" style="margin-bottom:12px; line-height:1.5;"><span style="color:#fff;">${escHtml(d.descripcion || d.codigo)}</span><br>${escHtml(d.cliente)} · NV ${escHtml(d.comprobante)} · Cód ${escHtml(d.codigo)}<br>Pendiente cuando desapareció de SGA: ${fmtN(d.pend)} u.</div>
     <div class="stock-field"><label>Cantidad a sumar a Despachado</label><input type="number" id="desap-cant" value="${d.pend}" min="0" max="${d.pend}" step="any"></div>
+    ${avisoRem}
     ${kan ? `<div class="stock-field"><label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer;"><input type="checkbox" id="desap-kan" checked style="margin-top:3px;"> <span>📦 Descontar de la ${escHtml(kan.nom)} (hay ${kan.hay} · k ${kan.k})<br><span class="text-dim" style="font-size:0.72rem;">Esta pieza lleva kanban y salió sin pasar por el tablero. Se baja lo despachado, menos lo que ya se hubiera descontado al preparar el pedido, y nunca más de lo que hay.</span></span></label></div>` : ''}
     <div class="stock-field"><label>Nota (opcional)</label><input type="text" id="desap-nota" autocomplete="off" placeholder="ej. facturado directo en SGA"></div>
     <div class="text-dim" style="font-size:0.75rem; margin-bottom:10px;">Suma esta cantidad al indicador de Kg despachados (de hoy) y sale de esta lista para siempre.</div>
@@ -6680,7 +6684,7 @@ function showToast(message, kind) {
   };
   // ---------- Conciliar remitos (SGA) con los despachos del tablero ----------
   // Lo que salió con remito pero no figura en despachos_log (ventas que nacieron y salieron entre dos actualizaciones del tablero).
-  const CONC = { dias: 30, q: '', lines: [], ign: new Set(), rows: [], sel: new Set(), desde: null, nota: '', cargando: false };
+  const CONC = { dias: 30, desc: true, q: '', lines: [], ign: new Set(), rows: [], sel: new Set(), desde: null, nota: '', cargando: false };
   const concNorm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
   const concRef = l => l.comprobante + '|' + l.linea;
   async function concLoad() {
@@ -6708,16 +6712,24 @@ function showToast(message, kind) {
   // Para cada línea de remito, se descuentan unidades de los despachos del tablero del mismo código (±10 días, primero el mismo cliente). Lo que sobra es lo que falta registrar.
   function concCompute() {
     const logs = (typeof despachosLog !== 'undefined') ? despachosLog : [], DIA = 864e5, VENT = 10 * DIA, pool = {}, yaRef = new Set();
-    logs.forEach(l => { if (l.remito_ref) { yaRef.add(l.remito_ref); return; } (pool[l.codigo] = pool[l.codigo] || []).push({ rem: Number(l.cantidad) || 0, t: kvUTC(l.dia), cli: concNorm(l.cliente) }); });
+    const DES = (typeof itemsDesaparecidosList !== 'undefined' && Array.isArray(itemsDesaparecidosList)) ? itemsDesaparecidosList : [];
+    // despachos creados al resolver un desaparecido de SGA: se resuelven días después del remito, así que se les da más margen hacia adelante
+    const tard = new Set(DES.filter(d => d.resuelto && d.resuelto_como === 'despachado').map(d => d.comprobante + '|' + d.codigo + '|' + Number(d.resuelto_cant)));
+    logs.forEach(l => { if (l.remito_ref) { yaRef.add(l.remito_ref); return; } (pool[l.codigo] = pool[l.codigo] || []).push({ rem: Number(l.cantidad) || 0, t: kvUTC(l.dia), cli: concNorm(l.cliente), tard: tard.has(l.comprobante + '|' + l.codigo + '|' + Number(l.cantidad)) }); });
     const rows = [];
     CONC.lines.slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || a.comprobante.localeCompare(b.comprobante) || a.linea - b.linea).forEach(l => {
       const ref = concRef(l); if (yaRef.has(ref) || CONC.ign.has(ref)) return;
       let need = Number(l.cantidad) || 0; if (need <= 0) return;
       const t = kvUTC(l.fecha), cli = concNorm(l.cliente);
-      (pool[l.codigo] || []).filter(p => p.rem > 0 && Math.abs(p.t - t) <= VENT)
+      (pool[l.codigo] || []).filter(p => p.rem > 0 && p.t - t >= -VENT && p.t - t <= (p.tard ? 45 * DIA : VENT))
         .sort((a, b) => ((b.cli === cli) - (a.cli === cli)) || (Math.abs(a.t - t) - Math.abs(b.t - t)))
         .forEach(p => { if (need <= 0) return; const take = Math.min(need, p.rem); p.rem -= take; need -= take; });
-      if (need > 1e-9) rows.push({ ref, l, falta: need, kg: l.kilos != null && l.cantidad ? Number(l.kilos) * need / Number(l.cantidad) : 0 });
+      if (need > 1e-9) {
+        // desaparecidos de SGA sin resolver que podrían ser esta misma salida (mismo código, desaparecieron cerca de la fecha del remito)
+        const cand = DES.filter(d => !d.resuelto && d.codigo === l.codigo && Number(d.pend) > 0 && d.desaparecio_dia && kvUTC(d.desaparecio_dia) - t >= -5 * DIA && kvUTC(d.desaparecio_dia) - t <= 20 * DIA)
+          .sort((a, b) => ((concNorm(b.cliente) === cli) - (concNorm(a.cliente) === cli)) || (Math.abs(Number(a.pend) - need) - Math.abs(Number(b.pend) - need))).slice(0, 2);
+        rows.push({ ref, l, falta: need, kg: l.kilos != null && l.cantidad ? Number(l.kilos) * need / Number(l.cantidad) : 0, cand });
+      }
     });
     CONC.rows = rows; CONC.sel = new Set([...CONC.sel].filter(r => rows.some(x => x.ref === r)));
   }
@@ -6732,8 +6744,10 @@ function showToast(message, kind) {
     const td = 'padding:5px 8px; font-size:.76rem; border-bottom:1px solid #1e293b;';
     const body = CONC.cargando ? '<tr><td colspan="8" style="padding:16px; color:#94a3b8;">Cargando remitos…</td></tr>'
       : !vis.length ? `<tr><td colspan="8" style="padding:16px; color:#94a3b8;">${CONC.rows.length ? 'Ninguna línea coincide con la búsqueda.' : '✔ No hay remitos sin registrar en este período: todo lo que salió figura en los despachos del tablero.'}</td></tr>`
-      : vis.map(x => `<tr><td style="${td}"><input type="checkbox" ${CONC.sel.has(x.ref) ? 'checked' : ''} onchange="cirConcSel('${esc(x.ref)}',this.checked)"></td><td style="${td}">${kvFecha(x.l.fecha)}</td><td style="${td}">${esc(x.l.comprobante)}</td><td style="${td}">${esc(x.l.cliente || '')}</td><td style="${td}">${esc(x.l.codigo)}</td><td style="${td}">${esc(x.l.descripcion || '')}</td><td style="${td} text-align:right;">${fmtN(x.falta, x.falta % 1 ? 1 : 0)}${x.falta < Number(x.l.cantidad) ? `<div class="code">de ${fmtN(x.l.cantidad)}</div>` : ''}</td><td style="${td} text-align:right;">${fmtN(x.kg, 1)}</td></tr>`).join('');
+      : vis.map(x => `<tr><td style="${td}"><input type="checkbox" ${CONC.sel.has(x.ref) ? 'checked' : ''} onchange="cirConcSel('${esc(x.ref)}',this.checked)"></td><td style="${td}">${kvFecha(x.l.fecha)}</td><td style="${td}">${esc(x.l.comprobante)}</td><td style="${td}">${esc(x.l.cliente || '')}</td><td style="${td}">${esc(x.l.codigo)}</td><td style="${td}">${esc(x.l.descripcion || '')}${x.cand.map(d => `<div style="font-size:.7rem; color:#fbbf24; margin-top:3px;">⚠ Posible desaparecido de SGA: NV ${esc(d.comprobante)} · pendiente ${fmtN(d.pend)} · desapareció el ${kvFecha(d.desaparecio_dia)} ${(typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? `<button onclick="cirConcEsEste('${esc(x.ref)}',${d.id})" style="padding:2px 8px; font-size:.7rem;">Es este</button>` : ''}</div>`).join('')}</td><td style="${td} text-align:right;">${fmtN(x.falta, x.falta % 1 ? 1 : 0)}${x.falta < Number(x.l.cantidad) ? `<div class="code">de ${fmtN(x.l.cantidad)}</div>` : ''}</td><td style="${td} text-align:right;">${fmtN(x.kg, 1)}</td></tr>`).join('');
     const chip = n => `<button class="chip ${CONC.dias === n ? 'active' : ''}" onclick="cirConcDias(${n})">${n} días</button>`;
+    const conKan = CONC.rows.filter(x => CONC.sel.has(x.ref) && ['kanban', 'sector_z'].some(u => kOf(u, x.l.codigo) != null)), uKan = conKan.reduce((a, x) => a + x.falta, 0);
+    const descChk = conKan.length ? `<label style="font-size:.74rem; color:#cbd5e1; display:flex; gap:6px; align-items:center; cursor:pointer;"><input type="checkbox" ${CONC.desc ? 'checked' : ''} onchange="cirConcDesc(this.checked)"> 📦 Descontar de la estantería kanban (${conKan.length} línea${conKan.length === 1 ? '' : 's'} con kanban · ${fmtN(uKan)} u.)</label>` : '';
     ov.innerHTML = `<div style="background:#0f172a; border:1px solid var(--card-border); border-radius:14px; width:min(1040px,100%); max-height:90vh; display:flex; flex-direction:column;">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--card-border);"><div style="font-weight:700; color:#fff;">🧾 Remitos que no figuran como despachados en el tablero</div><button onclick="cirConcClose()" style="background:transparent; border:1px solid var(--card-border); color:#cbd5e1; border-radius:8px; padding:3px 10px; cursor:pointer;">✕</button></div>
       <div style="padding:10px 16px 0;">
@@ -6741,7 +6755,7 @@ function showToast(message, kind) {
         <div class="quick-chips" style="margin:8px 0;">${chip(15)}${chip(30)}${chip(60)}${chip(90)}<input type="search" placeholder="🔎 Buscar cliente, remito, código…" value="${esc(CONC.q)}" oninput="cirConcQ(this.value)" style="flex:1; min-width:180px; background:#0b1220; border:1px solid var(--card-border); color:#fff; border-radius:8px; padding:6px 10px; font-size:.8rem;"></div>
       </div>
       <div class="conc-sc" style="padding:0 16px; overflow:auto; flex:1; min-height:0;"><table style="width:100%; border-collapse:collapse;"><thead><tr><th style="${th}"><input type="checkbox" onchange="cirConcTodos(this.checked)" ${vis.length && vis.every(x => CONC.sel.has(x.ref)) ? 'checked' : ''}></th><th style="${th}">Fecha</th><th style="${th}">Remito</th><th style="${th}">Cliente</th><th style="${th}">Código</th><th style="${th}">Descripción</th><th style="${th} text-align:right;">Sin registrar (u)</th><th style="${th} text-align:right;">Kg</th></tr></thead><tbody>${body}</tbody></table></div>
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 16px; border-top:1px solid var(--card-border);"><div class="text-dim" style="font-size:.76rem;">${vis.length} línea${vis.length === 1 ? '' : 's'} · ${fmtN(tu)} u. · ${fmtN(tk, 1)} Kg · ${nsel} seleccionada${nsel === 1 ? '' : 's'}</div>
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 16px; border-top:1px solid var(--card-border);"><div><div class="text-dim" style="font-size:.76rem;">${vis.length} línea${vis.length === 1 ? '' : 's'} · ${fmtN(tu)} u. · ${fmtN(tk, 1)} Kg · ${nsel} seleccionada${nsel === 1 ? '' : 's'}</div>${descChk}</div>
         <div class="row-actions">${btn('No es un despacho del tablero', 'cirConcIgnorar()', '', !nsel)}${btn('✅ Registrar como despachado', 'cirConcRegistrar()', 'pri', !nsel)}</div></div></div>`;
     const sc1 = ov.querySelector('.conc-sc'); if (sc1) sc1.scrollTop = st0;
   }
@@ -6752,16 +6766,36 @@ function showToast(message, kind) {
   function concDrawKeepFocus(pos) { concDraw(); const i = document.querySelector('#cir-conc-ov input[type=search]'); if (i) { i.focus(); try { i.setSelectionRange(pos, pos); } catch (e) { /* sin cursor */ } } }
   window.cirConcSel = (ref, on) => { if (on) CONC.sel.add(ref); else CONC.sel.delete(ref); concDraw(); };
   window.cirConcTodos = on => { concVisibles().forEach(x => { if (on) CONC.sel.add(x.ref); else CONC.sel.delete(x.ref); }); concDraw(); };
+  window.cirConcDesc = on => { CONC.desc = !!on; };
+  window.cirConcEsEste = async (ref, id) => {
+    const x = CONC.rows.find(r => r.ref === ref), d = x && x.cand.find(c => c.id === id); if (!x || !d) return;
+    const cant = Math.min(x.falta, Number(d.pend));
+    if (!confirm(`Se marca el desaparecido de SGA (NV ${d.comprobante}, ${d.codigo}) como despachado por ${fmtN(cant)} u., y esta línea de remito queda vinculada a él. Si la pieza lleva kanban, se descuenta de la estantería. No se registra nada más por este remito.${cant < x.falta ? '\n\nOjo: el desaparecido tiene menos pendiente (' + fmtN(d.pend) + ') que lo del remito (' + fmtN(x.falta) + '); el resto de la línea queda sin registrar.' : ''}\n\n¿Confirmás?`)) return;
+    try {
+      const { data, error } = await supabaseClient.rpc('items_desaparecidos_resolver', { p_id: id, p_como: 'despachado', p_cant: cant, p_nota: 'Remito ' + x.l.comprobante, p_remito_ref: ref });
+      if (error) throw error;
+      d.resuelto = true; d.resuelto_como = 'despachado'; d.resuelto_cant = cant;
+      if (typeof despachosLog !== 'undefined') despachosLog.push({ id: 'rem-' + ref, itemId: d.item_id, cliente: d.cliente, comprobante: d.comprobante, codigo: d.codigo, descripcion: d.descripcion, cantidad: cant, kg: Math.round(cant * (Number(d.kxu) || 0) * 10) / 10, dia: TODAY(), remito_ref: ref });
+      CONC.sel.delete(ref); concCompute(); concDraw();
+      const dk = data && Number(data.descontado) > 0 ? Number(data.descontado) : 0; if (dk) window.cirRefreshStock();
+      try { if (typeof showToast === 'function') showToast('Vinculado al desaparecido' + (dk ? ' · se descontaron ' + dk + ' de la estantería' : ''), 'success'); } catch (e) { /* sin aviso */ }
+      try { if (typeof actualizarBadgeDesap === 'function') actualizarBadgeDesap(); if (typeof renderIndicadoresPanel === 'function' && typeof currentFilter !== 'undefined' && currentFilter === 'indicadores') renderIndicadoresPanel(); } catch (e) { /* sin refrescar */ }
+    } catch (e) { alert(/Could not find the function|schema cache|p_remito_ref/i.test(e.message || '') ? 'Falta correr el parche 032 en Supabase.' : 'No se pudo vincular: ' + (e.message || e)); }
+  };
   window.cirConcRegistrar = async () => {
     const sel = CONC.rows.filter(x => CONC.sel.has(x.ref)); if (!sel.length) return;
     const u = sel.reduce((a, x) => a + x.falta, 0), kg = sel.reduce((a, x) => a + x.kg, 0);
-    if (!confirm(`Se van a registrar ${sel.length} línea${sel.length === 1 ? '' : 's'} (${fmtN(u)} u. · ${fmtN(kg, 1)} Kg) como despachadas, con la fecha de cada remito. ¿Confirmás?`)) return;
+    const conCand = sel.filter(x => x.cand.length).length, conKan = sel.filter(x => ['kanban', 'sector_z'].some(z => kOf(z, x.l.codigo) != null));
+    if (conCand && !confirm(`${conCand} de las líneas elegidas tienen un posible desaparecido de SGA (aviso amarillo). Si es la misma salida, tocá "Es este" en esa línea en vez de registrarla acá: si no, se cuenta dos veces.\n\n¿Registrar igual?`)) return;
+    if (!confirm(`Se van a registrar ${sel.length} línea${sel.length === 1 ? '' : 's'} (${fmtN(u)} u. · ${fmtN(kg, 1)} Kg) como despachadas, con la fecha de cada remito.${CONC.desc && conKan.length ? '\nSe descuentan de la estantería kanban las piezas que la llevan (hasta lo que haya).' : ''} ¿Confirmás?`)) return;
     try {
-      const { data, error } = await supabaseClient.rpc('remitos_registrar_despachos', { p_lineas: sel.map(x => ({ comprobante: x.l.comprobante, linea: x.l.linea, fecha: x.l.fecha, cliente: x.l.cliente, codigo: x.l.codigo, descripcion: x.l.descripcion, cantidad: x.falta, kg: x.kg })) });
+      const { data, error } = await supabaseClient.rpc('remitos_registrar_despachos', { p_descontar: !!CONC.desc, p_lineas: sel.map(x => ({ comprobante: x.l.comprobante, linea: x.l.linea, fecha: x.l.fecha, cliente: x.l.cliente, codigo: x.l.codigo, descripcion: x.l.descripcion, cantidad: x.falta, kg: x.kg })) });
       if (error) throw error;
       if (typeof despachosLog !== 'undefined') sel.forEach(x => despachosLog.push({ id: 'rem-' + x.ref, itemId: 0, cliente: x.l.cliente, comprobante: 'REM ' + x.l.comprobante, codigo: x.l.codigo, descripcion: x.l.descripcion, cantidad: x.falta, kg: Math.round(x.kg * 10) / 10, dia: x.l.fecha, remito_ref: x.ref }));
       CONC.sel = new Set(); concCompute(); concDraw();
-      try { if (typeof showToast === 'function') showToast('Registrados ' + (data == null ? sel.length : data) + ' despachos desde remitos', 'success'); } catch (e) { /* sin aviso */ }
+      const nReg = data && typeof data === 'object' ? data.registrados : data, nDesc = data && typeof data === 'object' ? Number(data.descontado) || 0 : 0;
+      if (nDesc > 0) window.cirRefreshStock();
+      try { if (typeof showToast === 'function') showToast('Registrados ' + (nReg == null ? sel.length : nReg) + ' despachos desde remitos' + (nDesc ? ' · se descontaron ' + nDesc + ' u. de la estantería' : ''), 'success'); } catch (e) { /* sin aviso */ }
       try { if (typeof renderIndicadoresPanel === 'function' && typeof currentFilter !== 'undefined' && currentFilter === 'indicadores') renderIndicadoresPanel(); } catch (e) { /* sin refrescar */ }
     } catch (e) { alert(/Could not find the function|schema cache/i.test(e.message || '') ? 'Falta correr el parche 030 en Supabase.' : 'No se pudo registrar: ' + (e.message || e)); }
   };
