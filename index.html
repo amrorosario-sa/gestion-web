@@ -77,27 +77,40 @@
   .login-btn:disabled { opacity: 0.6; cursor: wait; }
   .login-error { color: #f87171; font-size: 0.78rem; margin-top: 10px; min-height: 1em; }
   .app-root.hidden { display: none; }
-  /* Menú lateral: siempre visible en pantalla grande; en celular es un cajón con el botón ☰ */
-  .side-menu { position: fixed; left: 0; top: 0; bottom: 0; width: 232px; background: #0b1220; border-right: 1px solid var(--card-border); padding: 12px 8px 18px; overflow-y: auto; z-index: 65; display: none; }
+  /* Menú lateral (V93): grupos que se despliegan, se puede anclar (fijo) o desanclar (se abre y se cierra con ☰ Menú) */
+  .side-menu { position: fixed; left: 0; top: 0; bottom: 0; width: min(280px, 86vw); background: #0b1220; border-right: 1px solid var(--card-border); padding: 10px 8px 18px; overflow-y: auto; z-index: 2000; display: none; transform: translateX(-102%); transition: transform .18s; box-shadow: 6px 0 24px rgba(0,0,0,.5); }
   body.has-side .side-menu { display: block; }
-  .side-menu .sm-brand { display: flex; align-items: center; gap: 8px; padding: 2px 6px 8px; color: #fff; font-weight: 800; font-size: 0.9rem; }
-  .side-menu .sm-brand img { width: 30px; height: 30px; border-radius: 6px; background: #fff; }
-  .side-menu .sm-gt { display: flex; align-items: center; gap: 7px; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.07em; color: #94a3b8; font-weight: 700; padding: 12px 8px 4px; }
-  .side-menu .sm-it { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; background: transparent; border: 0; border-left: 3px solid transparent; color: #e2e8f0; padding: 7px 9px; border-radius: 0 8px 8px 0; cursor: pointer; font-size: 0.84rem; }
+  body.side-open .side-menu { transform: none; }
+  .side-scrim { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 1999; }
+  body.side-open .side-scrim { display: block; }
+  .side-menu .sm-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px 8px; color: #fff; font-weight: 800; font-size: 0.9rem; }
+  .side-menu .sm-head img { width: 30px; height: 30px; border-radius: 6px; background: #fff; }
+  .side-menu .sm-pin { margin-left: auto; background: transparent; border: 1px solid #475569; color: #94a3b8; border-radius: 7px; padding: 4px 8px; font-size: 0.72rem; cursor: pointer; white-space: nowrap; }
+  .side-menu .sm-pin.on { background: #0c2a3f; border-color: var(--accent); color: #fff; }
+  .side-menu .sm-gt { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: transparent; border: 0; color: #e2e8f0; font-size: 0.86rem; font-weight: 700; padding: 9px 8px; border-radius: 8px; cursor: pointer; }
+  .side-menu .sm-gt:hover { background: #16243a; }
+  .side-menu .sm-gt .car { margin-left: auto; font-size: 0.62rem; color: #94a3b8; transition: transform .15s; }
+  .side-menu .sm-grp.open > .sm-gt { color: #fff; }
+  .side-menu .sm-grp.open > .sm-gt .car { transform: rotate(180deg); color: var(--accent); }
+  .side-menu .sm-sub { display: none; padding: 0 0 6px 10px; }
+  .side-menu .sm-grp.open > .sm-sub { display: block; }
+  .side-menu .sm-it { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; background: transparent; border: 0; border-left: 3px solid transparent; color: #cbd5e1; padding: 7px 9px; border-radius: 0 8px 8px 0; cursor: pointer; font-size: 0.84rem; }
   .side-menu .sm-it:hover { background: #16243a; }
   .side-menu .sm-it.on { background: #0c2a3f; border-left-color: var(--accent); color: #fff; font-weight: 600; }
   .side-menu .sm-it .ic { width: 20px; text-align: center; flex: 0 0 auto; }
   .side-burger { display: none; background: #1e293b; border: 1px solid #475569; color: #fff; border-radius: 8px; padding: 7px 11px; font-size: 0.85rem; cursor: pointer; font-weight: 600; }
-  .side-scrim { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 64; }
+  body.has-side .side-burger { display: inline-flex; align-items: center; gap: 6px; }
+  .side-fab { display: none; position: fixed; left: 12px; bottom: 14px; z-index: 1450; background: #0c2a3f; border: 1px solid var(--accent); color: #fff; border-radius: 99px; padding: 10px 16px; font-size: 0.85rem; font-weight: 700; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
+  body.has-side.mod-open .side-fab { display: inline-flex; }
+  body.side-open .side-fab { display: none !important; }
+  .side-pin-only { display: none; }
   @media (min-width: 901px) {
-    body.has-side .app-root { margin-left: 232px; }
-    body.has-side #cir-root, body.has-side #ven-root, body.has-side #pf-root { left: 232px !important; }
-  }
-  @media (max-width: 900px) {
-    body.has-side .side-burger { display: inline-flex; align-items: center; gap: 6px; }
-    .side-menu { transform: translateX(-102%); transition: transform .18s; width: min(280px, 86vw); z-index: 2000; box-shadow: 6px 0 24px rgba(0,0,0,.5); }
-    body.side-open .side-menu { transform: none; }
-    body.side-open .side-scrim { display: block; z-index: 1999; }
+    .side-pin-only { display: inline-block; }
+    body.has-side.side-pinned .side-menu { transform: none; width: 244px; box-shadow: none; z-index: 65; }
+    body.has-side.side-pinned .side-scrim { display: none; }
+    body.has-side.side-pinned .side-burger, body.has-side.side-pinned .side-fab { display: none !important; }
+    body.has-side.side-pinned .app-root { margin-left: 244px; }
+    body.has-side.side-pinned #cir-root, body.has-side.side-pinned #ven-root, body.has-side.side-pinned #pf-root { left: 244px !important; }
   }
   .logout-link { background: transparent; border: 1px solid #475569; color: #94a3b8; font-size: 0.72rem; padding: 5px 10px; border-radius: 6px; cursor: pointer; margin-left: 10px; }
   .logout-link:hover { color: #fff; border-color: var(--accent); }
@@ -479,6 +492,7 @@
 
   <aside class="side-menu" id="side-menu" aria-label="Menú principal"></aside>
   <div class="side-scrim" id="side-scrim" onclick="sideToggle(false)"></div>
+  <button class="side-fab" id="side-fab" onclick="sideToggle(true)">☰ Menú</button>
 
   <div class="header">
     <div>
@@ -2718,43 +2732,57 @@ function applyInspectorVisibility() {
   if (window.sideBuild) window.sideBuild();
 }
 
-// ---- Menú lateral (Version 92): un lugar por sector, siempre a la vista; cada lugar es un permiso propio ----
+// ---- Menú lateral (Version 93): grupos que se despliegan, anclable; cada lugar es un permiso propio ----
 const SIDE_GROUPS = [
-  { ic: '🔩', nombre: 'Mecanizado', items: [
+  { id: 'mec', ic: '🔩', nombre: 'Mecanizado', items: [
     { id: 'mec_plan', ic: '📅', t: 'Armar plan de mecanizado', sec: 'circuito', run: () => window.cirOpen('full', { tab: 'plan' }) },
     { id: 'mec_ver', ic: '⚙️', t: 'Ver plan del día', sec: 'prog_mecanizado', run: () => window.cirOpen('mec') },
     { id: 'mec_stock', ic: '🧰', t: 'Stock en Mecanizado', sec: 'mec_stock', run: () => window.cirOpen('full', { tab: 'mec' }) },
     { id: 'mec_kan', ic: '🏬', t: 'Estantería kanban de Mecanizado', sec: 'kan_mec', run: () => window.cirOpen('kan', { kan: 'kanban' }) },
   ] },
-  { ic: '🔧', nombre: 'Terminación', items: [
+  { id: 'ter', ic: '🔧', nombre: 'Terminación', items: [
     { id: 'ter_ent', ic: '🔧', t: 'Entregas del día', sec: 'prog_terminacion', run: () => window.cirOpen('term') },
     { id: 'ter_stock', ic: '🧰', t: 'Estantería de Terminación', sec: 'ter_stock', run: () => window.cirOpen('full', { tab: 'term' }) },
     { id: 'ter_z', ic: '🗄️', t: 'Sector Z', sec: 'kan_z', run: () => window.cirOpen('kan', { kan: 'sector_z' }) },
+  ] },
+  { id: 'mold', ic: '🧱', nombre: 'Moldeo', items: [
     { id: 'ter_mold', ic: '🏭', t: 'Moldeo / Fusión en curso', sec: 'kanban_moldeo', run: () => window.cirOpen('mold') },
     { id: 'ter_mdia', ic: '🧱', t: 'Moldeo por día', sec: 'moldeo_dia', run: () => window.pfMoldeoOpen && window.pfMoldeoOpen() },
   ] },
-  { ic: '📥', nombre: 'Cargas', items: [
+  { id: 'fus', ic: '🔥', nombre: 'Fusión', items: [
+    { id: 'c_parte', ic: '🔥', t: 'Parte de fusión', sec: 'parte_fusion', run: () => window.pfOpen && window.pfOpen() },
+  ] },
+  { id: 'carg', ic: '📥', nombre: 'Cargas', items: [
     { id: 'c_rem', ic: '🧾', t: 'Cargar remitos (Excel)', sec: 'cargar_remitos', run: () => window.cirCargarRemitos && window.cirCargarRemitos(), noMark: true },
     { id: 'c_conc', ic: '⚖️', t: 'Conciliar remitos', sec: 'conciliar_remitos', run: () => window.cirConciliar && window.cirConciliar(), noMark: true },
-    { id: 'c_parte', ic: '🔥', t: 'Parte de fusión', sec: 'parte_fusion', run: () => window.pfOpen && window.pfOpen() },
-    { id: 'c_mold', ic: '📝', t: 'Cargar piezas a moldeo / fusión', sec: 'kanban_moldeo', run: () => window.cirOpen('mold') },
   ] },
-  { ic: '💰', nombre: 'Comercial', items: [
+  { id: 'com', ic: '💰', nombre: 'Comercial', items: [
     { id: 'ventas', ic: '💰', t: 'Ventas', sec: 'ventas', run: () => window.venOpen && window.venOpen() },
   ] },
-  { ic: '⚙️', nombre: 'Configuración', items: [
+  { id: 'cfg', ic: '⚙️', nombre: 'Configuración', items: [
     { id: 'f_users', ic: '👥', t: 'Usuarios y permisos', admin: true, run: () => openAdminDialog(), noMark: true },
     { id: 'f_areas', ic: '🗂️', t: 'Áreas', admin: true, run: () => openAreaDialog(), noMark: true },
     { id: 'f_art', ic: '📋', t: 'Artículos', sec: 'articulos', run: () => openMecDialog(), noMark: true },
   ] },
 ];
 let SIDE_CUR = null;
+const sideLS = { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* sin guardar */ } } };
+let SIDE_PIN = sideLS.get('amro_side_pin') !== '0';                      // por defecto: anclado (solo cuenta en pantalla grande)
+let SIDE_OPEN = new Set((sideLS.get('amro_side_open') || '').split(',').filter(Boolean));   // grupos desplegados
+const sideDesktop = () => window.matchMedia && window.matchMedia('(min-width: 901px)').matches;
+function sideSaveOpen() { sideLS.set('amro_side_open', [...SIDE_OPEN].join(',')); }
+function sideApplyPin() {
+  document.body.classList.toggle('side-pinned', SIDE_PIN);
+  if (SIDE_PIN && sideDesktop()) document.body.classList.remove('side-open');
+}
 window.sideMarcar = id => { SIDE_CUR = id; document.querySelectorAll('#side-menu .sm-it').forEach(b => b.classList.toggle('on', b.getAttribute('data-id') === id)); };
 window.sideToggle = on => { const o = on === undefined ? !document.body.classList.contains('side-open') : !!on; document.body.classList.toggle('side-open', o); };
+window.sideGroup = id => { if (SIDE_OPEN.has(id)) SIDE_OPEN.delete(id); else SIDE_OPEN.add(id); sideSaveOpen(); const g = document.querySelector('#side-menu .sm-grp[data-g="' + id + '"]'); if (g) g.classList.toggle('open', SIDE_OPEN.has(id)); };
+window.sidePin = () => { SIDE_PIN = !SIDE_PIN; sideLS.set('amro_side_pin', SIDE_PIN ? '1' : '0'); sideApplyPin(); if (!SIDE_PIN) document.body.classList.remove('side-open'); window.sideBuild(); };
 window.sideGo = id => {
   for (const g of SIDE_GROUPS) for (const it of g.items) if (it.id === id) {
-    sideToggle(false);
-    if (!it.noMark) window.sideMarcar(id);
+    if (!(SIDE_PIN && sideDesktop())) sideToggle(false);   // desanclado: se cierra al elegir
+    if (!it.noMark) { if (!SIDE_OPEN.has(g.id)) { SIDE_OPEN.add(g.id); sideSaveOpen(); } window.sideMarcar(id); const el = document.querySelector('#side-menu .sm-grp[data-g="' + g.id + '"]'); if (el) el.classList.add('open'); }
     try { it.run(); } catch (e) { console.error('Menú lateral:', e); }
     return;
   }
@@ -2764,14 +2792,20 @@ window.sideBuild = () => {
   const prof = (typeof CURRENT_PROFILE !== 'undefined') ? CURRENT_PROFILE : null;
   if (!prof) { document.body.classList.remove('has-side'); return; }
   const ok = it => it.admin ? !!prof.es_admin : puedeVer(it.sec);
-  let h = '<div class="sm-brand"><img src="icons/logo-256.png" alt="AMRO"> AMRO Gestión</div>';
+  let h = `<div class="sm-head"><img src="icons/logo-256.png" alt="AMRO"> AMRO Gestión<button class="sm-pin side-pin-only ${SIDE_PIN ? 'on' : ''}" onclick="sidePin()" title="${SIDE_PIN ? 'Desanclar: el menú se abre y se cierra con el botón ☰ Menú' : 'Anclar: el menú queda fijo a la izquierda'}">${SIDE_PIN ? '📌 Anclado' : '📍 Anclar'}</button></div>`;
   SIDE_GROUPS.forEach(g => {
     const its = g.items.filter(ok); if (!its.length) return;
-    h += `<div class="sm-gt"><span>${g.ic}</span>${g.nombre}</div>` + its.map(it => `<button class="sm-it${SIDE_CUR === it.id ? ' on' : ''}" data-id="${it.id}" onclick="sideGo('${it.id}')"><span class="ic">${it.ic}</span>${escHtml(it.t)}</button>`).join('');
+    const abierto = SIDE_OPEN.has(g.id) || its.some(i => i.id === SIDE_CUR);
+    h += `<div class="sm-grp${abierto ? ' open' : ''}" data-g="${g.id}"><button class="sm-gt" onclick="sideGroup('${g.id}')"><span>${g.ic}</span>${g.nombre}<span class="car">▼</span></button><div class="sm-sub">` +
+      its.map(it => `<button class="sm-it${SIDE_CUR === it.id ? ' on' : ''}" data-id="${it.id}" onclick="sideGo('${it.id}')"><span class="ic">${it.ic}</span>${escHtml(it.t)}</button>`).join('') + '</div></div>';
   });
   el.innerHTML = h;
   document.body.classList.toggle('has-side', h.includes('sm-it'));
+  sideApplyPin();
 };
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.body.classList.contains('side-open')) sideToggle(false); });
+setInterval(() => document.body.classList.toggle('mod-open', !!document.querySelector('#cir-root.on, #ven-root.on, #pf-root.on')), 400);   // pantallas a pantalla completa abiertas: botón flotante ☰ para abrir el menú
+if (window.matchMedia) { try { window.matchMedia('(min-width: 901px)').addEventListener('change', sideApplyPin); } catch (e) { /* navegador viejo */ } }
 const PANTALLAS_APARTE = ['indicadores', 'rechazo', 'replanificar', 'sgadesap'];
 function irAPantalla(tipo) {
   if (window.sideMarcar) window.sideMarcar(null);
