@@ -2628,6 +2628,7 @@ const SECCIONES_DEF = [
   ['prog_terminacion', '🔧 Terminación: mis entregas del día'],
   ['ter_stock', '🧰 Terminación: estantería de Terminación'],
   ['kan_z', '🗄️ Terminación: Sector Z (kanban de Terminación: k, stock)'],
+  ['kan_aros', '📦 Kanban y Stock: aros por receta (macho, hembra y aro armado)'],
   ['moldeo_dia', '🧱 Terminación: Moldeo por día'],
   ['ventas', '💰 Ventas (montos: indicador de ventas)'],
   ['kanban_moldeo', '🏭 Moldeo / Fusión: cargar piezas para kanban (menú propio)'],
@@ -2689,7 +2690,7 @@ async function loadAreaPresets() {
 // Los perfiles guardados antes siguen viendo lo mismo (alias) hasta que un admin los guarde en Usuarios y permisos,
 // momento en que quedan con permisos propios y la marca 'menu_v2'.
 const LEGACY_ALIAS = {
-  mec_stock: ['circuito'], ter_stock: ['circuito'], kan_z: ['kanban', 'circuito'], kan_mec: ['kanban', 'circuito'],
+  mec_stock: ['circuito'], ter_stock: ['circuito'], kan_z: ['kanban', 'circuito'], kan_mec: ['kanban', 'circuito'], kan_aros: ['kanban', 'circuito'],
   cargar_remitos: ['kanban'], conciliar_remitos: ['kanban'], moldeo_dia: ['*'], articulos: ['*'], cargar_moldeo: ['parte_fusion'],
 };
 function expandLegacySecs(list) {
@@ -2753,6 +2754,9 @@ const SIDE_GROUPS = [
   { id: 'fus', ic: '🔥', nombre: 'Fusión', items: [
     { id: 'c_parte', ic: '✅', t: 'Listas para fundir y Terminación', sec: 'parte_fusion', run: () => window.pfOpen && window.pfOpen('seg') },
     { id: 'c_falta', ic: '⏳', t: 'Coladas que faltan completar', sec: 'parte_fusion', run: () => window.pfOpen && window.pfOpen('falta') },
+  ] },
+  { id: 'kys', ic: '📦', nombre: 'Kanban y Stock', items: [
+    { id: 'kys_aros', ic: '🔩', t: 'Aros por receta', sec: 'kan_aros', run: () => window.cirOpen('aros') },
   ] },
   { id: 'carg', ic: '📥', nombre: 'Cargas', items: [
     { id: 'c_rem', ic: '🧾', t: 'Cargar remitos (Excel)', sec: 'cargar_remitos', run: () => window.cirCargarRemitos && window.cirCargarRemitos(), noMark: true },
@@ -7182,6 +7186,77 @@ function showToast(message, kind) {
   window.cirKanTab = t => { C.kanTab = t; render(); };
   window.cirKanFilter = f => { C.kanFilter = f; render(); };
   window.cirKanQ = t => { C.kanQ = t; render(); const e = document.getElementById('kan-q'); if (e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); } };
+  // ---------- Kanban y Stock › Aros por receta: cada aro con su macho y su hembra juntos (las piezas compartidas, una sola vez) ----------
+  (function () { const st = document.createElement('style'); st.textContent = `
+  #cir-root .ar-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:12px} #cir-root .ar-kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;cursor:pointer;color:inherit;text-align:left;font:inherit}
+  #cir-root .ar-kpi b{display:block;font-size:1.4rem;color:#fff} #cir-root .ar-kpi span{font-size:.74rem;color:var(--dim)} #cir-root .ar-kpi.ro b{color:var(--bad)} #cir-root .ar-kpi.am b{color:var(--warn)} #cir-root .ar-kpi.ok b{color:var(--ok)}
+  #cir-root .ar-fam{background:var(--card);border:1px solid var(--line);border-radius:10px;margin-bottom:12px;overflow:hidden}
+  #cir-root .ar-h{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:9px 12px;background:#17233a} #cir-root .ar-h b{font-size:.92rem}
+  #cir-root .ar-ch{display:flex;gap:6px;flex-wrap:wrap} #cir-root .ar-c{border-radius:99px;padding:2px 10px;font-size:.74rem;font-weight:700;background:#0f172a;border:1px solid var(--line)}
+  #cir-root .ar-c.ro{background:rgba(248,113,113,.15);color:var(--bad);border-color:transparent} #cir-root .ar-c.am{background:rgba(251,191,36,.15);color:var(--warn);border-color:transparent} #cir-root .ar-c.ok{background:rgba(52,211,153,.15);color:var(--ok);border-color:transparent}
+  #cir-root .ar-tw{overflow-x:auto} #cir-root .ar-tw table{min-width:900px} #cir-root .ar-tw td,#cir-root .ar-tw th{padding:5px 8px;white-space:nowrap} #cir-root .ar-aro td{background:#142032}
+  #cir-root .artag{display:inline-block;border-radius:5px;padding:1px 7px;font-size:.7rem;font-weight:800;margin-right:6px} #cir-root .artag.m{background:rgba(56,189,248,.18);color:#7dd3fc} #cir-root .artag.h{background:rgba(192,132,252,.2);color:#d8b4fe} #cir-root .artag.a{background:rgba(249,115,22,.2);color:#fdba74}
+  #cir-root .arp{display:inline-block;border-radius:99px;padding:1px 9px;font-size:.68rem;font-weight:800} #cir-root .arp.ok{background:rgba(52,211,153,.15);color:var(--ok)} #cir-root .arp.am{background:rgba(251,191,36,.15);color:var(--warn)} #cir-root .arp.ro{background:rgba(248,113,113,.15);color:var(--bad)} #cir-root .arp.nd{background:#26303b;color:var(--dim)}
+  #cir-root .ar-f{padding:7px 12px;border-top:1px dashed var(--line);font-size:.78rem;color:var(--dim);display:flex;gap:16px;flex-wrap:wrap} #cir-root .ar-f b{color:#fff}`; document.head.appendChild(st); })();
+  const NIVP = { verde: ['ok', 'OK'], amarillo: ['am', 'AMARILLA'], rojo: ['ro', 'ROJA'] };
+  function arPieza(c, rol) {
+    const aro = rol === 'a', u = aro ? 'kanban' : (kRow('sector_z', c) ? 'sector_z' : kRow('kanban', c) ? 'kanban' : 'sector_z');
+    const k = kOf(u, c), es = stock(c, u), te = aro ? 0 : stock(c, 'terminacion'), me = aro ? 0 : stock(c, 'mecanizado');
+    const fu = aro ? 0 : (u === 'sector_z' ? enMoldeo(c) + pfZ(c) : enMoldeo(c) + pfK(c).pend);
+    const vir = k != null ? sv(u, c) : es + te + fu, nV = k != null ? nivelV(k, vir) : null;
+    return { c, rol, u, k, fu, te, es, me, vir, nE: k != null ? nivel(u, c) : null, nV, lote: k != null && nV !== 'verde' ? lote(u, c) : 0, disp: te + es + me, conF: te + es + me + fu };
+  }
+  function arFamilias() {
+    const R = C.recetas || []; if (!R.length) return [];
+    const par = new Map(R.map(r => [r.id, r.id])), find = x => { while (par.get(x) !== x) { par.set(x, par.get(par.get(x))); x = par.get(x); } return x; };
+    const usos = new Map(); R.forEach(r => [r.macho, r.hembra].forEach(c => { if (!usos.has(c)) usos.set(c, []); usos.get(c).push(r); }));
+    usos.forEach(rs => rs.slice(1).forEach(r => par.set(find(r.id), find(rs[0].id))));
+    const gr = new Map(); R.forEach(r => { const g = find(r.id); if (!gr.has(g)) gr.set(g, []); gr.get(g).push(r); });
+    return [...gr.values()].map(rs => {
+      const comp = [...new Set(rs.flatMap(r => [r.macho, r.hembra]))].filter(c => usos.get(c).length > 1);
+      const pz = new Map(); rs.forEach(r => { if (!pz.has(r.macho)) pz.set(r.macho, arPieza(r.macho, 'm')); if (!pz.has(r.hembra)) pz.set(r.hembra, arPieza(r.hembra, 'h')); });
+      const aros = rs.map(r => ({ r, a: arPieza(r.salida, 'a'), m: pz.get(r.macho), h: pz.get(r.hembra) }));
+      const chips = []; let armHoy, armF, def = false;
+      if (!comp.length) { const x = aros[0], d = x.m.disp - x.h.disp; armHoy = Math.min(x.m.disp, x.h.disp); armF = Math.min(x.m.conF, x.h.conF);
+        def = Math.abs(d) >= Math.max(10, .5 * Math.max(x.m.disp, x.h.disp)); chips.push({ cls: def ? 'am' : 'ok', t: d === 0 ? '⚖️ parejo' : d > 0 ? `⚖️ sobran <b>${d}</b> machos` : `⚖️ sobran <b>${-d}</b> hembras` }); }
+      else {
+        comp.forEach(c => { const S = pz.get(c), otros = rs.filter(r => r.macho === c || r.hembra === c).map(r => pz.get(S.rol === 'm' ? r.hembra : r.macho)), nec = otros.reduce((a, p) => a + p.disp, 0), d = S.disp - nec, kS = S.rol === 'm' ? 'machos' : 'hembras', kO = S.rol === 'm' ? 'hembras' : 'machos';
+          const dd = Math.abs(d) >= Math.max(10, .5 * Math.max(S.disp, nec)); def = def || dd;
+          chips.push({ cls: dd ? 'am' : 'ok', t: d === 0 ? '⚖️ parejo' : d > 0 ? `⚖️ sobran <b>${d}</b> ${kS}` : `⚖️ faltan <b>${-d}</b> ${kS} para las ${kO} de todos los aros` });
+          S._nec = nec; S._otrosK = otros.reduce((a, p) => a + (p.k || 0), 0); });
+        if (comp.length === 1) { const S = pz.get(comp[0]), O = aros.map(x => (S.rol === 'm' ? x.h : x.m)); armHoy = Math.min(S.disp, O.reduce((a, p) => a + p.disp, 0)); armF = Math.min(S.conF, O.reduce((a, p) => a + p.conF, 0)); }
+        else { armHoy = aros.reduce((a, x) => a + Math.min(x.m.disp, x.h.disp), 0); armF = aros.reduce((a, x) => a + Math.min(x.m.conF, x.h.conF), 0); }
+      }
+      const piezas = [...pz.values()], alerta = piezas.some(p => p.nV && p.nV !== 'verde');
+      return { rs, comp, pz, aros, chips, armHoy, armF, def, alerta, titulo: rs.map(r => r.nombre).join(' · ') };
+    }).sort((a, b) => (b.alerta - a.alerta) || (b.def - a.def) || a.titulo.localeCompare(b.titulo, 'es'));
+  }
+  function arRow(p, nom, ind, extra) {
+    const pill = n => n ? `<span class="arp ${NIVP[n][0]}">${NIVP[n][1]}</span>` : '<span class="arp nd">SIN K</span>', aro = p.rol === 'a';
+    return `<tr class="${aro ? 'ar-aro' : ''}"><td style="padding-left:${ind ? 26 : 6}px"><span class="artag ${p.rol}">${aro ? 'Aro' : p.rol === 'm' ? 'Macho' : 'Hembra'}</span><b>${esc(String(nom).slice(0, 70))}</b>${extra || ''}<div class="code">${esc(p.c)}</div></td>
+      <td class="num">${aro ? '' : p.fu}</td><td class="num">${aro ? '' : p.te}</td><td class="num"><b>${p.es}</b></td><td class="num">${aro ? '' : p.me}</td><td class="num"><b>${p.vir}</b></td><td class="num">${p.k == null ? '—' : p.k}</td><td>${pill(p.nE)}</td><td>${pill(p.nV)}</td><td class="num">${p.lote ? `<b class="rep">${p.lote}</b>` : '<span class="code">—</span>'}</td></tr>`;
+  }
+  function vAros() {
+    if (!C.recetas.length) return '<div class="panel"><div class="empty">Todavía no hay recetas cargadas (macho + hembra → aro armado). Cargalas en Programación mecanizado › Recetas.</div></div>';
+    const fl = C.arFilter || 'todos', q = sane(C.arQ), all = arFamilias();
+    const okQ = f => q.every(w => (f.titulo + ' ' + [...f.pz.values()].map(p => nombre(p.c) + ' ' + p.c).join(' ')).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(w));
+    const L = all.filter(f => (fl === 'todos' || (fl === 'def' ? f.def : f.alerta)) && okQ(f));
+    const kp = (cls, key, n, t) => `<button class="ar-kpi ${cls}" onclick="cirArFilter('${key}')"><b>${n}</b><span>${t}</span></button>`;
+    const fb = (k, t) => `<button class="tab ${fl === k ? 'on' : ''}" onclick="cirArFilter('${k}')">${t}</button>`;
+    return `<div class="sub" style="color:var(--dim);margin-bottom:10px">Cada aro armado con su macho y su hembra. Una pieza que sirve para varios aros aparece <b>una sola vez</b> y se compara contra la <b>suma</b> de lo que necesitan. Disponible = terminación + estantería + mecanizado. Tarjeta roja bajo K, amarilla hasta 2K. Lote = 2,5K + (2K − stock virtual).</div>
+      <div class="ar-kpis">${kp('ro', 'alerta', all.filter(f => f.alerta).length, '⚠️ familias con alerta')}${kp('am', 'def', all.filter(f => f.def).length, '⚖️ con desfasaje')}<div class="ar-kpi ok" style="cursor:default"><b>${all.reduce((a, f) => a + f.armHoy, 0)}</b><span>aros armables hoy (suma)</span></div><div class="ar-kpi" style="cursor:default"><b>${all.length}</b><span>familias / recetas</span></div></div>
+      <div class="row-actions" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">${fb('todos', 'Todas')}${fb('def', '⚖️ Con desfasaje')}${fb('alerta', '⚠️ Con alerta')}<input id="ar-q" class="kq" placeholder="Buscar aro, macho o hembra…" value="${esc(C.arQ || '')}" oninput="cirArQ(this.value)"></div>
+      ${L.map(f => { const comp = new Set(f.comp);
+        let body = '', foot = '';
+        if (!comp.size) { const x = f.aros[0]; body = arRow(x.a, nombre(x.a.c), false) + arRow(x.m, nombre(x.m.c), true) + arRow(x.h, nombre(x.h.c), true); foot = `<span>Machos disponibles: <b>${x.m.disp}</b> · hembras: <b>${x.h.disp}</b></span>`; }
+        else { body = f.comp.map(c => arRow(f.pz.get(c), nombre(c), false, ` <span class="code">compartido por ${f.rs.filter(r => r.macho === c || r.hembra === c).length} aros</span>`)).join('')
+          + f.aros.map(x => arRow(x.a, nombre(x.a.c), false) + [x.m, x.h].filter(p => !comp.has(p.c)).map(p => arRow(p, nombre(p.c), true)).join('')).join('');
+          foot = f.comp.map(c => { const S = f.pz.get(c); return `<span>${S.rol === 'm' ? 'Machos' : 'Hembras'} (${esc(nombre(c).slice(0, 34))}) disponibles: <b>${S.disp}</b> · ${S.rol === 'm' ? 'hembras' : 'machos'} de todos los aros sumadas: <b>${S._nec}</b>${S._otrosK ? ` · K del compartido: <b>${S.k == null ? '—' : S.k}</b> · suma de K de las otras: <b>${S._otrosK}</b>` : ''}</span>`; }).join(''); }
+        return `<div class="ar-fam"><div class="ar-h"><b>🔩 ${esc(f.titulo.slice(0, 120))}</b><div class="ar-ch">${f.chips.map(c => `<span class="ar-c ${c.cls}">${c.t}</span>`).join('')}<span class="ar-c">armables hoy: <b>${f.armHoy}</b></span><span class="ar-c">con lo de fusión: <b>${f.armF}</b></span>${f.alerta ? '<span class="ar-c ro">⚠️ ALERTA</span>' : '<span class="ar-c ok">OK</span>'}</div></div>
+          <div class="ar-tw"><table><tr><th>Pieza</th><th class="num">Fusión</th><th class="num">Terminación</th><th class="num">Estantería</th><th class="num">Mecanizado</th><th class="num">Stock virtual</th><th class="num">K</th><th>Tarjeta estantería</th><th>Tarjeta virtual</th><th class="num">Lote</th></tr>${body}</table></div><div class="ar-f">${foot}</div></div>`; }).join('') || '<div class="panel"><div class="empty">Nada con este filtro.</div></div>'}`;
+  }
+  window.cirArFilter = f => { C.arFilter = f; render(); };
+  window.cirArQ = t => { C.arQ = t; render(); const e = document.getElementById('ar-q'); if (e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); } };
 
   function vPlan() {
     const mon = mondayOf(TODAY()), cells = [];
@@ -7517,10 +7592,11 @@ function showToast(message, kind) {
     { key: 'mec', sec: 'prog_mecanizado', label: '⚙️ Mecanizado — mi programa del día', desc: 'Solo lo que Mecanizado tiene que armar, resaltado por día', title: '⚙️ Mecanizado' },
     { key: 'term', sec: 'prog_terminacion', label: '🔧 Terminación — mis entregas del día', desc: 'Solo lo que Terminación tiene que entregar hoy', title: '🔧 Terminación' },
     { key: 'mold', sec: 'kanban_moldeo', label: '🏭 Moldeo / Fusión — cargar piezas', desc: 'Cargar lo que se manda a moldear y fundir para kanban y ver lo que está en curso', title: '🏭 Moldeo / Fusión para kanban' },
+    { key: 'aros', sec: 'kan_aros', label: '📦 Kanban y Stock — aros por receta', desc: 'Cada aro armado con su macho y su hembra: stock, K, tarjetas y desfasajes', title: '📦 Kanban y Stock › Aros por receta' },
     { key: 'kan', sec: 'kanban', label: '🏬 Kanban — configuración y stock', desc: 'Piezas con kanban de Terminación y de Mecanizado: k, stock físico y virtual', title: '🏬 Kanban — configuración y stock' },
   ];
   const puede = sec => (typeof puedeVer === 'function') ? puedeVer(sec) : false;
-  const misVistas = () => VIEWS.filter(v => v.key !== 'mold' && v.key !== 'kan' && puede(v.sec));   // menú de Programación mecanizado
+  const misVistas = () => VIEWS.filter(v => v.key !== 'mold' && v.key !== 'kan' && v.key !== 'aros' && puede(v.sec));   // menú de Programación mecanizado
   window.cirRefreshBtn = () => {
     if (window.sideBuild) window.sideBuild();
     const kc = document.getElementById('card-kanban'), mc = document.getElementById('card-mecanizado');
@@ -7652,7 +7728,7 @@ function showToast(message, kind) {
       document.getElementById('cir-flow').innerHTML = ''; document.getElementById('cir-tabs').innerHTML = '';
       if (C.error) { screen.innerHTML = `<div class="err">${esc(C.error)}</div>`; return; }
       if (!C.loaded) { screen.innerHTML = '<div class="empty">Cargando…</div>'; return; }
-      try { screen.innerHTML = ({ mec: vDiaMec, term: vDiaTerm, mold: vMold, kan: vKan }[C.mode] || vDiaTerm)(); rtMobile(screen); if (C.mode === 'mold' && C.moldTab === 'plan' && puede('plan_moldeo')) plMount(); } catch (e) { console.error('Programación mecanizado:', e); screen.innerHTML = '<div class="err">Error al mostrar esta pantalla: ' + esc(e.message) + '</div>'; }
+      try { screen.innerHTML = ({ mec: vDiaMec, term: vDiaTerm, mold: vMold, kan: vKan, aros: vAros }[C.mode] || vDiaTerm)(); rtMobile(screen); if (C.mode === 'mold' && C.moldTab === 'plan' && puede('plan_moldeo')) plMount(); } catch (e) { console.error('Programación mecanizado:', e); screen.innerHTML = '<div class="err">Error al mostrar esta pantalla: ' + esc(e.message) + '</div>'; }
       return;
     }
     if (C.error) { document.getElementById('cir-flow').innerHTML = ''; document.getElementById('cir-tabs').innerHTML = ''; screen.innerHTML = `<div class="err">${esc(C.error)}</div>`; return; }
