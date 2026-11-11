@@ -6845,10 +6845,11 @@ function showToast(message, kind) {
     // despachos creados al resolver un desaparecido de SGA: se resuelven días después del remito, así que se les da más margen hacia adelante
     const tard = new Set(DES.filter(d => d.resuelto && d.resuelto_como === 'despachado').map(d => d.comprobante + '|' + d.codigo + '|' + Number(d.resuelto_cant)));
     logs.forEach(l => { if (l.remito_ref) { yaRef.add(l.remito_ref); return; } (pool[l.codigo] = pool[l.codigo] || []).push({ rem: Number(l.cantidad) || 0, t: kvUTC(l.dia), cli: concNorm(l.cliente), tard: tard.has(l.comprobante + '|' + l.codigo + '|' + Number(l.cantidad)) }); });
-    const rows = [];
+    const rows = []; CONC.sinKg = 0;
     CONC.lines.slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || a.comprobante.localeCompare(b.comprobante) || a.linea - b.linea).forEach(l => {
       const ref = concRef(l); if (yaRef.has(ref) || CONC.ign.has(ref)) return;
       let need = Number(l.cantidad) || 0; if (need <= 0) return;
+      if (l.kilos != null && Number(l.kilos) === 0) { CONC.sinKg++; return; }   // servicios (p. ej. perforado): sin kilos no hay nada que sumar al indicador
       const t = kvUTC(l.fecha), cli = concNorm(l.cliente);
       (pool[l.codigo] || []).filter(p => p.rem > 0 && p.t - t >= -VENT && p.t - t <= (p.tard ? 45 * DIA : VENT))
         .sort((a, b) => ((b.cli === cli) - (a.cli === cli)) || (Math.abs(a.t - t) - Math.abs(b.t - t)))
@@ -6857,6 +6858,11 @@ function showToast(message, kind) {
         // desaparecidos de SGA sin resolver que podrían ser esta misma salida (mismo código, desaparecieron cerca de la fecha del remito)
         const cand = DES.filter(d => !d.resuelto && d.codigo === l.codigo && Number(d.pend) > 0 && d.desaparecio_dia && kvUTC(d.desaparecio_dia) - t >= -5 * DIA && kvUTC(d.desaparecio_dia) - t <= 20 * DIA)
           .sort((a, b) => ((concNorm(b.cliente) === cli) - (concNorm(a.cliente) === cli)) || (Math.abs(Number(a.pend) - need) - Math.abs(Number(b.pend) - need))).slice(0, 2);
+        // bajas parciales del pendiente en SGA sin confirmar (misma salida vista desde el pedido que sigue abierto)
+        const BAJ = (typeof itemsBajasList !== 'undefined' && Array.isArray(itemsBajasList)) ? itemsBajasList : [];
+        BAJ.filter(b => !b.resuelto && b.codigo === l.codigo && Number(b.sin_registrar) > 0 && b.dia && kvUTC(b.dia) - t >= -5 * DIA && kvUTC(b.dia) - t <= 20 * DIA)
+          .sort((a, b) => ((concNorm(b.cliente) === cli) - (concNorm(a.cliente) === cli)) || (Math.abs(Number(a.sin_registrar) - need) - Math.abs(Number(b.sin_registrar) - need))).slice(0, 2)
+          .forEach(b => cand.push({ baja: true, id: b.id, comprobante: b.comprobante, pend: b.sin_registrar, desaparecio_dia: b.dia }));
         rows.push({ ref, l, falta: need, kg: l.kilos != null && l.cantidad ? Number(l.kilos) * need / Number(l.cantidad) : 0, cand });
       }
     });
@@ -6873,14 +6879,14 @@ function showToast(message, kind) {
     const td = 'padding:5px 8px; font-size:.76rem; border-bottom:1px solid #1e293b;';
     const body = CONC.cargando ? '<tr><td colspan="8" style="padding:16px; color:#94a3b8;">Cargando remitos…</td></tr>'
       : !vis.length ? `<tr><td colspan="8" style="padding:16px; color:#94a3b8;">${CONC.rows.length ? 'Ninguna línea coincide con la búsqueda.' : '✔ No hay remitos sin registrar en este período: todo lo que salió figura en los despachos del tablero.'}</td></tr>`
-      : vis.map(x => `<tr><td style="${td}"><input type="checkbox" ${CONC.sel.has(x.ref) ? 'checked' : ''} onchange="cirConcSel('${esc(x.ref)}',this.checked)"></td><td style="${td}">${kvFecha(x.l.fecha)}</td><td style="${td}">${esc(x.l.comprobante)}</td><td style="${td}">${esc(x.l.cliente || '')}</td><td style="${td}">${esc(x.l.codigo)}</td><td style="${td}">${esc(x.l.descripcion || '')}${x.cand.map(d => `<div style="font-size:.7rem; color:#fbbf24; margin-top:3px;">⚠ Posible desaparecido de SGA: NV ${esc(d.comprobante)} · pendiente ${fmtN(d.pend)} · desapareció el ${kvFecha(d.desaparecio_dia)} ${(typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? `<button onclick="cirConcEsEste('${esc(x.ref)}',${d.id})" style="padding:2px 8px; font-size:.7rem;">Es este</button>` : ''}</div>`).join('')}</td><td style="${td} text-align:right;">${fmtN(x.falta, x.falta % 1 ? 1 : 0)}${x.falta < Number(x.l.cantidad) ? `<div class="code">de ${fmtN(x.l.cantidad)}</div>` : ''}</td><td style="${td} text-align:right;">${fmtN(x.kg, 1)}</td></tr>`).join('');
+      : vis.map(x => `<tr><td style="${td}"><input type="checkbox" ${CONC.sel.has(x.ref) ? 'checked' : ''} onchange="cirConcSel('${esc(x.ref)}',this.checked)"></td><td style="${td}">${kvFecha(x.l.fecha)}</td><td style="${td}">${esc(x.l.comprobante)}</td><td style="${td}">${esc(x.l.cliente || '')}</td><td style="${td}">${esc(x.l.codigo)}</td><td style="${td}">${esc(x.l.descripcion || '')}${x.cand.map(d => `<div style="font-size:.7rem; color:#fbbf24; margin-top:3px;">${d.baja ? `⚠ Posible entrega parcial hecha en SGA: NV ${esc(d.comprobante)} · bajó el pendiente (${fmtN(d.pend)} u. sin registrar) · detectado el ${kvFecha(d.desaparecio_dia)}` : `⚠ Posible desaparecido de SGA: NV ${esc(d.comprobante)} · pendiente ${fmtN(d.pend)} · desapareció el ${kvFecha(d.desaparecio_dia)}`} ${(typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? `<button onclick="cirConcEsEste('${esc(x.ref)}',${d.id},${d.baja ? 'true' : 'false'})" style="padding:2px 8px; font-size:.7rem;">${d.baja ? 'Es esta' : 'Es este'}</button>` : ''}</div>`).join('')}</td><td style="${td} text-align:right;">${fmtN(x.falta, x.falta % 1 ? 1 : 0)}${x.falta < Number(x.l.cantidad) ? `<div class="code">de ${fmtN(x.l.cantidad)}</div>` : ''}</td><td style="${td} text-align:right;">${fmtN(x.kg, 1)}</td></tr>`).join('');
     const chip = n => `<button class="chip ${CONC.dias === n ? 'active' : ''}" onclick="cirConcDias(${n})">${n} días</button>`;
     const conKan = CONC.rows.filter(x => CONC.sel.has(x.ref) && ['kanban', 'sector_z'].some(u => kOf(u, x.l.codigo) != null)), uKan = conKan.reduce((a, x) => a + x.falta, 0);
     const descChk = conKan.length ? `<label style="font-size:.74rem; color:#cbd5e1; display:flex; gap:6px; align-items:center; cursor:pointer;"><input type="checkbox" ${CONC.desc ? 'checked' : ''} onchange="cirConcDesc(this.checked)"> 📦 Descontar de la estantería kanban (${conKan.length} línea${conKan.length === 1 ? '' : 's'} con kanban · ${fmtN(uKan)} u.)</label>` : '';
     ov.innerHTML = `<div style="background:#0f172a; border:1px solid var(--card-border); border-radius:14px; width:min(1040px,100%); max-height:90vh; display:flex; flex-direction:column;">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--card-border);"><div style="font-weight:700; color:#fff;">🧾 Remitos que no figuran como despachados en el tablero</div><button onclick="cirConcClose()" style="background:transparent; border:1px solid var(--card-border); color:#cbd5e1; border-radius:8px; padding:3px 10px; cursor:pointer;">✕</button></div>
       <div style="padding:10px 16px 0;">
-        <div class="text-dim" style="font-size:.74rem; line-height:1.45;">Compara el Informe de Remitos cargado${CONC.hasta ? ` (hasta el ${kvFecha(CONC.hasta)})` : ''} contra los despachos del tablero: mismo código, mismas unidades, con hasta 10 días de diferencia. Lo que queda acá salió con remito y el tablero no lo sabe: al registrarlo suma a Despachado (indicadores) con la fecha del remito.${CONC.nota ? `<br>ℹ ${esc(CONC.nota)}` : ''}${CONC.ignOK === false ? '<br>⚠ Falta correr el parche 030 en Supabase para registrar o ignorar.' : ''}</div>
+        <div class="text-dim" style="font-size:.74rem; line-height:1.45;">Compara el Informe de Remitos cargado${CONC.hasta ? ` (hasta el ${kvFecha(CONC.hasta)})` : ''} contra los despachos del tablero: mismo código, mismas unidades, con hasta 10 días de diferencia. Lo que queda acá salió con remito y el tablero no lo sabe: al registrarlo suma a Despachado (indicadores) con la fecha del remito.${CONC.nota ? `<br>ℹ ${esc(CONC.nota)}` : ''}${CONC.sinKg ? `<br>ℹ ${CONC.sinKg} línea${CONC.sinKg === 1 ? '' : 's'} de remito sin kilos (servicios, p. ej. perforado) no se listan: no suman al indicador.` : ''}${CONC.ignOK === false ? '<br>⚠ Falta correr el parche 030 en Supabase para registrar o ignorar.' : ''}</div>
         <div class="quick-chips" style="margin:8px 0;">${chip(15)}${chip(30)}${chip(60)}${chip(90)}<input type="search" placeholder="🔎 Buscar cliente, remito, código…" value="${esc(CONC.q)}" oninput="cirConcQ(this.value)" style="flex:1; min-width:180px; background:#0b1220; border:1px solid var(--card-border); color:#fff; border-radius:8px; padding:6px 10px; font-size:.8rem;"></div>
       </div>
       <div class="conc-sc" style="padding:0 16px; overflow:auto; flex:1; min-height:0;"><table style="width:100%; border-collapse:collapse;"><thead><tr><th style="${th}"><input type="checkbox" onchange="cirConcTodos(this.checked)" ${vis.length && vis.every(x => CONC.sel.has(x.ref)) ? 'checked' : ''}></th><th style="${th}">Fecha</th><th style="${th}">Remito</th><th style="${th}">Cliente</th><th style="${th}">Código</th><th style="${th}">Descripción</th><th style="${th} text-align:right;">Sin registrar (u)</th><th style="${th} text-align:right;">Kg</th></tr></thead><tbody>${body}</tbody></table></div>
@@ -6896,9 +6902,24 @@ function showToast(message, kind) {
   window.cirConcSel = (ref, on) => { if (on) CONC.sel.add(ref); else CONC.sel.delete(ref); concDraw(); };
   window.cirConcTodos = on => { concVisibles().forEach(x => { if (on) CONC.sel.add(x.ref); else CONC.sel.delete(x.ref); }); concDraw(); };
   window.cirConcDesc = on => { CONC.desc = !!on; };
-  window.cirConcEsEste = async (ref, id) => {
-    const x = CONC.rows.find(r => r.ref === ref), d = x && x.cand.find(c => c.id === id); if (!x || !d) return;
+  window.cirConcEsEste = async (ref, id, baja) => {
+    const x = CONC.rows.find(r => r.ref === ref), d = x && x.cand.find(c => c.id === id && !!c.baja === !!baja); if (!x || !d) return;
     const cant = Math.min(x.falta, Number(d.pend));
+    if (d.baja) {
+      const b = itemsBajasList.find(z => z.id === id); if (!b) return;
+      if (!confirm(`Se confirma la baja del pendiente de SGA (NV ${d.comprobante}, ${b.codigo}) como despachada por ${fmtN(cant)} u., con la fecha del remito (${kvFecha(x.l.fecha)}). Si la pieza lleva kanban, se descuenta de la estantería. Este remito deja de figurar como pendiente de registrar.\n\n¿Confirmás?`)) return;
+      try {
+        const { data, error } = await supabaseClient.rpc('items_bajas_resolver', { p_ids: [id], p_como: 'despachado', p_cant: cant, p_nota: 'Remito ' + x.l.comprobante, p_dia: x.l.fecha });
+        if (error) throw error;
+        b.resuelto = true; b.resuelto_como = 'despachado'; b.resuelto_cant = cant; b.resuelto_kg = Math.round(cant * (Number(b.kxu) || 0) * 10) / 10;
+        if (typeof despachosLog !== 'undefined') despachosLog.push({ id: 'baj-' + id, itemId: b.item_id, cliente: b.cliente, comprobante: b.comprobante, codigo: b.codigo, descripcion: b.descripcion, cantidad: cant, kg: b.resuelto_kg, dia: x.l.fecha });
+        CONC.sel.delete(ref); concCompute(); concDraw();
+        const dk = data && Number(data.descontado) > 0 ? Number(data.descontado) : 0; if (dk) window.cirRefreshStock();
+        try { if (typeof showToast === 'function') showToast('Baja confirmada' + (dk ? ' · se descontaron ' + dk + ' de la estantería' : ''), 'success'); } catch (e) { /* sin aviso */ }
+        try { if (typeof actualizarBadgeDesap === 'function') actualizarBadgeDesap(); if (typeof renderIndicadoresPanel === 'function' && typeof currentFilter !== 'undefined' && currentFilter === 'indicadores') renderIndicadoresPanel(); } catch (e) { /* sin refrescar */ }
+      } catch (e) { alert(/Could not find the function|schema cache|items_bajas_resolver/i.test(e.message || '') ? 'Falta correr el SQL 033 en Supabase.' : 'No se pudo vincular: ' + (e.message || e)); }
+      return;
+    }
     if (!confirm(`Se marca el desaparecido de SGA (NV ${d.comprobante}, ${d.codigo}) como despachado por ${fmtN(cant)} u., y esta línea de remito queda vinculada a él. Si la pieza lleva kanban, se descuenta de la estantería. No se registra nada más por este remito.${cant < x.falta ? '\n\nOjo: el desaparecido tiene menos pendiente (' + fmtN(d.pend) + ') que lo del remito (' + fmtN(x.falta) + '); el resto de la línea queda sin registrar.' : ''}\n\n¿Confirmás?`)) return;
     try {
       const { data, error } = await supabaseClient.rpc('items_desaparecidos_resolver', { p_id: id, p_como: 'despachado', p_cant: cant, p_nota: 'Remito ' + x.l.comprobante, p_remito_ref: ref });
@@ -6915,7 +6936,7 @@ function showToast(message, kind) {
     const sel = CONC.rows.filter(x => CONC.sel.has(x.ref)); if (!sel.length) return;
     const u = sel.reduce((a, x) => a + x.falta, 0), kg = sel.reduce((a, x) => a + x.kg, 0);
     const conCand = sel.filter(x => x.cand.length).length, conKan = sel.filter(x => ['kanban', 'sector_z'].some(z => kOf(z, x.l.codigo) != null));
-    if (conCand && !confirm(`${conCand} de las líneas elegidas tienen un posible desaparecido de SGA (aviso amarillo). Si es la misma salida, tocá "Es este" en esa línea en vez de registrarla acá: si no, se cuenta dos veces.\n\n¿Registrar igual?`)) return;
+    if (conCand && !confirm(`${conCand} de las líneas elegidas tienen un posible desaparecido o entrega parcial de SGA (aviso amarillo). Si es la misma salida, tocá "Es este" / "Es esta" en esa línea en vez de registrarla acá: si no, se cuenta dos veces.\n\n¿Registrar igual?`)) return;
     if (!confirm(`Se van a registrar ${sel.length} línea${sel.length === 1 ? '' : 's'} (${fmtN(u)} u. · ${fmtN(kg, 1)} Kg) como despachadas, con la fecha de cada remito.${CONC.desc && conKan.length ? '\nSe descuentan de la estantería kanban las piezas que la llevan (hasta lo que haya).' : ''} ¿Confirmás?`)) return;
     try {
       const { data, error } = await supabaseClient.rpc('remitos_registrar_despachos', { p_descontar: !!CONC.desc, p_lineas: sel.map(x => ({ comprobante: x.l.comprobante, linea: x.l.linea, fecha: x.l.fecha, cliente: x.l.cliente, codigo: x.l.codigo, descripcion: x.l.descripcion, cantidad: x.falta, kg: x.kg })) });
