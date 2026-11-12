@@ -5930,6 +5930,8 @@ function showToast(message, kind) {
         const ok = await markHojaItemsPrepared(s.items, s.numeroHoja);
         if (ok) {
           try { await guardarKgNuevos(s.items); } catch (e) { /* el peso de la hoja ya quedó guardado */ }
+          try { if (window.pfCerrarTerminacion) { for (const it of s.items) await window.pfCerrarTerminacion(baseRow(it.id), hojaRenglonTotal(it)); } }
+          catch (e) { console.warn('No se pudo cerrar Terminación en el parte de fusión:', e && e.message); }
           const totalCant = s.items.reduce((sum, it) => sum + hojaRenglonTotal(it), 0);
           const totalKg = s.items.reduce((sum, it) => sum + it.renglones.reduce((s2, rg) => s2 + (parseFloat(rg.pesoReal) || 0), 0), 0);
           showToast(`✅ Hoja Nº ${s.numeroHoja} confirmada — ${totalCant.toLocaleString()} u. (${fmt1(totalKg)} Kg)`, 'success');
@@ -8798,6 +8800,21 @@ function showToast(message, kind) {
     const m = new Map();
     vinc(r).filter(l => l.probeta && Number(l.fundido) - Number(l.consumido) > 0).forEach(l => m.set(l.probeta, (m.get(l.probeta) || 0) + Number(l.fundido) - Number(l.consumido)));
     return [...m.entries()].map(([probeta, n]) => ({ probeta, n }));
+  };
+  // Al confirmar una hoja de pesada, lo pesado ya está listo para despachar: se cierra su paso "Terminó Terminación"
+  // en el parte de fusión (solo piezas de pedido con destino "Lista para despacho"; las que van a Mecanizado no se tocan).
+  window.pfCerrarTerminacion = async (row, cant) => {
+    if (!P.loaded || P.error || !row || !P.idx) return 0;
+    let resto = Number(cant) || 0, hecho = 0;
+    const ls = vinc(row).filter(x => term(x) > 0 && destDe(x) === 'pedido').sort((x, y) => x.id - y.id);
+    for (const l of ls) {
+      if (resto <= 0) break;
+      const n = Math.min(resto, term(l));
+      await rpc('pf_terminar', { p_linea: l.id, p_cant: n, p_destino: 'pedido' });
+      resto -= n; hecho += n;
+    }
+    if (hecho > 0) await recargar();
+    return hecho;
   };
   window.pfRowOf = key => {
     const l = P.L.find(x => rKey(x) === key); if (!l) return null;
