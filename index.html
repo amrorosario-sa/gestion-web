@@ -6812,6 +6812,34 @@ function showToast(message, kind) {
   }
   const shelfHead = (u, titulo) => `<div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>${titulo}</h2><div class="row-actions">${puedePlanificar() ? btn('+ Definir k', `cir_kNuevo('${u}')`) + btn('Ajustar stock', `cir_ajustar('${u}')`) : ''}</div></div>`;
 
+  // ---------- resumen de arriba (solo nombre y cantidad) ----------
+  // Nombres abreviados: por código o por nombre completo en MAYÚSCULAS. Si no hay, se muestra el nombre del catálogo.
+  const ALIAS = {};
+  const corto = c => { const n = nombre(c); return ALIAS[c] || ALIAS[String(n).toUpperCase().trim()] || n; };
+  const rsItem = (c, n, cls) => `<div class="rs-i ${cls || ''}" title="${esc(nombre(c))}"><span>${esc(corto(c))}</span><b>${n}</b></div>`;
+  const rsBox = (titulo, sub, items, vacio, max) => { max = max || 24;
+    const mas = items.length > max ? `<details class="rs-more"><summary>Ver las ${items.length - max} restantes</summary><div class="rs">${items.slice(max).join('')}</div></details>` : '';
+    return `<div class="panel"><div class="rs-tit"><h2>${titulo}</h2><span class="code">${sub || ''}</span></div>${items.length ? `<div class="rs">${items.slice(0, max).join('')}</div>${mas}` : `<div class="empty">${vacio}</div>`}</div>`; };
+  const alertasDet = (u, html) => { const n = alertas(u).length; return n ? `<details style="margin-bottom:12px;"><summary style="cursor:pointer; font-weight:700; color:#fff; padding:6px 0;">⚠️ Alertas y acciones para reponer (${n}) — tocá para ver el detalle</summary>${html}</details>` : ''; };
+  const ORD_NIV = { rojo: 0, amarillo: 1, verde: 2 };
+  function resumenShelf(u, titulo) {
+    const L = C.k.filter(r => r.ubicacion === u).map(r => ({ c: r.codigo, n: stock(r.codigo, u), niv: nivel(u, r.codigo) || 'verde' }))
+      .sort((a, b) => ORD_NIV[a.niv] - ORD_NIV[b.niv] || nombre(a.c).localeCompare(nombre(b.c), 'es'));
+    const cnt = k => L.filter(x => x.niv === k).length;
+    return rsBox(titulo, `🔴 ${cnt('rojo')} · 🟡 ${cnt('amarillo')} · 🟢 ${cnt('verde')}`, L.map(x => rsItem(x.c, x.n, x.niv)), 'Todavía no hay piezas con k definido.', 30);
+  }
+  function resumenTerm() {
+    const L = Object.keys(C.stock.terminacion || {}).filter(c => stock(c, 'terminacion') > 0).map(c => ({ c, n: stock(c, 'terminacion') })).sort((a, b) => b.n - a.n);
+    return rsBox('🔧 Qué hay en Terminación', `${L.reduce((a, x) => a + x.n, 0)} piezas en total`, L.map(x => rsItem(x.c, x.n)), 'No hay piezas en Terminación.', 24);
+  }
+  function resumenMec() {
+    const ya = C.recetas.map(r => ({ c: r.salida, n: Math.min(stock(r.macho, 'mecanizado'), stock(r.hembra, 'mecanizado')) })).filter(x => x.n > 0).sort((a, b) => b.n - a.n);
+    const pl = {}; C.planes.forEach(p => { const r = rec(p.receta); if (r && pendPlan(p) > 0) pl[r.salida] = (pl[r.salida] || 0) + pendPlan(p); });
+    const pp = Object.keys(pl).map(c => ({ c, n: pl[c] })).sort((a, b) => b.n - a.n);
+    return rsBox('⚙️ Aros que podés armar YA (hay macho y hembra en Mecanizado)', `${ya.reduce((a, x) => a + x.n, 0)} aros`, ya.map(x => rsItem(x.c, x.n, 'verde')), 'Ahora no hay macho y hembra juntos para armar.', 24)
+      + rsBox('📅 Planificado, todavía sin armar', `${pp.reduce((a, x) => a + x.n, 0)} aros`, pp.map(x => rsItem(x.c, x.n)), 'No hay aros planificados pendientes.', 24);
+  }
+
   function vTerm() {
     const rows = [];
     planesOrd().filter(p => pendPlan(p) > 0 && rec(p.receta)).forEach(p => { const r = rec(p.receta);
@@ -6822,7 +6850,7 @@ function showToast(message, kind) {
           <td>${falta ? (puedeOperar() ? btn('Entregar ' + Math.min(falta, disp), `cir_entregar(${p.id},'${esc(c)}')`, 'pri', !disp) : '') + (disp < falta ? `<div class="code">faltan ${falta - disp} por terminar</div>` : '') : '<span class="ok">✔ entregado</span>'}</td></tr>`); }); });
     const term = Object.keys(C.stock.terminacion || {}).filter(c => stock(c, 'terminacion') > 0).map(c => `<tr><td>${nameCell(c)}</td><td class="num">${stock(c, 'terminacion')}</td><td><div class="row-actions">${puedeOperar() ? btn('Terminé piezas…', `cir_terminar('${esc(c)}')`) : ''}${puedePlanificar() ? btn('Ajustar', `cir_ajustar('terminacion','${esc(c)}')`) : ''}</div></td></tr>`).join('');
     const mold = C.moldeos.map(o => `<tr><td>${nameCell(o.codigo)}${o.nota ? `<div class="code">${esc(o.nota)}</div>` : ''}</td><td class="num">${o.cantidad}</td><td>${fmt(o.fecha)}</td><td><div class="row-actions">${puedeOperar() ? btn('Pasó a Terminación…', `cir_pasoTerm(${o.id})`) : ''}${puedePlanificar() ? btn('🗑', `cir_delMoldeo(${o.id})`) : ''}</div></td></tr>`).join('');
-    return alertPanel('sector_z', 'Terminación tiene que reponer esta estantería.', false) +
+    return resumenTerm() + alertasDet('sector_z', alertPanel('sector_z', 'Terminación tiene que reponer esta estantería.', false)) +
       `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>🏭 En moldeo / fusión (cargado a mano, anterior al parte)</h2><span class="code">Lo nuevo entra por el 🔥 Parte de fusión</span></div>
         <div class="sub">Pedidos internos de kanban que no vienen de SGA: se cargan a mano. Cuentan en el stock virtual de Sector Z.</div>
         ${mold ? `<table><tr><th>Pieza</th><th class="num">Cantidad</th><th>Cargado</th><th></th></tr>${mold}</table>` : '<div class="empty">No hay moldeos cargados.</div>'}</div>
@@ -6832,12 +6860,12 @@ function showToast(message, kind) {
         ${term ? `<table><tr><th>Pieza</th><th class="num">Cantidad</th><th></th></tr>${term}</table>` : '<div class="empty">No hay piezas en Terminación.</div>'}</div>`;
   }
   function vZ() {
-    return alertPanel('sector_z', 'Terminación tiene que reponer esta estantería.', false) +
+    return resumenShelf('sector_z', '🗄️ Qué hay en Sector Z') + alertasDet('sector_z', alertPanel('sector_z', 'Terminación tiene que reponer esta estantería.', false)) +
       `<div class="panel">${shelfHead('sector_z', '🗄️ Sector Z — kanban de piezas que llevan mecanizado')}<div class="sub">Plazo de reposición: <b>${C.cfg.plazo_sector_z || '—'} días</b>. Nivel según k: verde 2k o más, amarillo entre 1k y 2k (avisa reponer), rojo menos de 1k. Stock virtual: estantería + en Terminación + en moldeo/fusión − aros planificados sin entregar.</div>
         ${shelf('sector_z', c => puedeOperar() ? btn('→ Mecanizado (suelto)', `cir_zaM('${esc(c)}')`, '', !stock(c, 'sector_z')) : '')}</div>`;
   }
   function vK() {
-    return alertPanel('kanban', 'Planificación / Mecanizado tienen que reponer esta estantería.', true) +
+    return resumenShelf('kanban', '🏬 Qué hay en la estantería kanban') + alertasDet('kanban', alertPanel('kanban', 'Planificación / Mecanizado tienen que reponer esta estantería.', true)) +
       `<div class="panel">${shelfHead('kanban', '🏬 Estantería kanban — después de Mecanizado')}<div class="sub">Producto terminado que se usa para kanban. Los pedidos retiran de acá. Plazo de reposición: <b>${C.cfg.plazo_kanban || '—'} días</b>. Stock virtual: estantería + planificado en Mecanizado − aros en notas de pedido.</div>
         ${shelf('kanban', c => puedeOperar() ? btn('Retirar para pedido…', `cir_retirar('${esc(c)}')`, 'pri', !stock(c, 'kanban') || !pedidosAbiertos(c).length) : '')}</div>`;
   }
@@ -7353,7 +7381,7 @@ function showToast(message, kind) {
       const fm = pendPlan(p) - p.hold_macho, fh = pendPlan(p) - p.hold_hembra;
       return `<tr><td><b>${p.fecha === TODAY() ? '<span class="soon">HOY</span> · ' : ''}${fmt(p.fecha)}</b>${p.fecha < TODAY() ? '<div class="late">de días anteriores</div>' : ''}</td><td>Plan #${p.id} · ${esc(r.nombre)}</td><td class="num">${pendPlan(p)}</td><td class="num">${p.hold_macho}</td><td class="num">${p.hold_hembra}</td>
         <td><div class="row-actions">${puedeOperar() ? btn('Armar' + (max ? ' hasta ' + max : ''), `cir_armar(${p.id})`, 'pri', !max) + btn('Rechazar…', `cir_rechazarPlan(${p.id})`, '', !(p.hold_macho || p.hold_hembra)) : ''}</div>${(fm > 0 || fh > 0) ? `<div class="code">falta que Terminación entregue ${Math.max(fm, 0)} machos / ${Math.max(fh, 0)} hembras (el ${fmt(dueOf(p))})</div>` : ''}</td></tr>`; }).join('');
-    return alertPanel('kanban', 'Hay que armar aros para reponerla.', false) + `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>⚙️ Armado de aros — por fecha</h2>${puedePlanificar() ? btn('📋 Contar / ajustar stock', 'cir_ajustarMec()') : ''}</div><div class="sub">Lo planificado para cada día. Cuando Terminación entrega los machos y hembras, se arma. El aro sale a la estantería kanban o directo a un pedido (venta en caliente).</div>
+    return resumenMec() + alertasDet('kanban', alertPanel('kanban', 'Hay que armar aros para reponerla.', false)) + `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>⚙️ Armado de aros — por fecha</h2>${puedePlanificar() ? btn('📋 Contar / ajustar stock', 'cir_ajustarMec()') : ''}</div><div class="sub">Lo planificado para cada día. Cuando Terminación entrega los machos y hembras, se arma. El aro sale a la estantería kanban o directo a un pedido (venta en caliente).</div>
       ${planes ? `<table><tr><th>Armar el</th><th>Plan</th><th class="num">Faltan armar</th><th class="num">Machos acá</th><th class="num">Hembras acá</th><th></th></tr>${planes}</table>` : '<div class="empty">No hay planes pendientes.</div>'}</div>` + sueltasPanel() + rechazosPanel();
   }
 
@@ -7742,6 +7770,9 @@ function showToast(message, kind) {
   #cir-root .alert { background:rgba(248,113,113,.1); border:1px solid #7f1d1d; border-radius:8px; padding:8px 12px; margin-bottom:8px; font-size:.8rem; display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
   #cir-root .log { max-height:220px; overflow:auto; font-size:.76rem; color:var(--dim); } #cir-root .log div { padding:2px 0; border-bottom:1px solid #263449; } #cir-root .err { color:var(--bad); padding:20px 0; }
 
+  #cir-root .rs { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:8px; } #cir-root .rs-i { display:flex; justify-content:space-between; align-items:center; gap:10px; background:#0f172a; border:1px solid var(--line); border-left:5px solid var(--line); border-radius:8px; padding:8px 11px; }
+  #cir-root .rs-i.rojo { border-left-color:var(--bad); } #cir-root .rs-i.amarillo { border-left-color:var(--warn); } #cir-root .rs-i.verde { border-left-color:var(--ok); } #cir-root .rs-i span { font-size:.84rem; line-height:1.2; } #cir-root .rs-i b { font-size:1.35rem; color:#fff; font-variant-numeric:tabular-nums; }
+  #cir-root .rs-tit { display:flex; justify-content:space-between; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:8px; } #cir-root .rs-tit h2 { margin:0; } #cir-root .rs-more { margin-top:8px; } #cir-root .rs-more summary { cursor:pointer; color:var(--acc); font-size:.8rem; padding:4px 0; }
   #cir-root .dia-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
   #cir-root .dia-tiles { display:flex; gap:8px; flex-wrap:wrap; } #cir-root .tile { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 14px; text-align:center; min-width:110px; }
   #cir-root .tile .n { font-size:1.7rem; font-weight:800; color:#fff; } #cir-root .tile .l { font-size:.72rem; color:var(--dim); }
