@@ -2746,11 +2746,13 @@ const SIDE_GROUPS = [
     { id: 'mec_stock', ic: '🧰', t: 'Stock en Mecanizado', sec: 'mec_stock', run: () => window.cirOpen('full', { tab: 'mec' }) },
     { id: 'mec_kan', ic: '🏬', t: 'Estantería kanban de Mecanizado', sec: 'kan_mec', run: () => window.cirOpen('kan', { kan: 'kanban' }) },
     { id: 'mec_armados', ic: '📊', t: 'Aros armados por día', sec: 'mec_stock', run: () => window.cirOpen('armados') },
+    { id: 'mec_cargar', ic: '📋', t: 'Cargar / contar stock', sec: 'mec_stock', edit: true, run: () => window.cirCargarStock && window.cirCargarStock('mecanizado'), noMark: true },
   ] },
   { id: 'ter', ic: '🔧', nombre: 'Terminación', items: [
     { id: 'ter_ent', ic: '🔧', t: 'Entregas del día', sec: 'prog_terminacion', run: () => window.cirOpen('term') },
     { id: 'ter_stock', ic: '🧰', t: 'Estantería de Terminación', sec: 'ter_stock', run: () => window.cirOpen('full', { tab: 'term' }) },
     { id: 'ter_z', ic: '🗄️', t: 'Sector Z', sec: 'kan_z', run: () => window.cirOpen('kan', { kan: 'sector_z' }) },
+    { id: 'ter_cargar', ic: '📋', t: 'Cargar / contar stock', sec: 'ter_stock', edit: true, run: () => window.cirCargarStock && window.cirCargarStock('terminacion'), noMark: true },
   ] },
   { id: 'mold', ic: '🧱', nombre: 'Moldeo', items: [
     { id: 'ter_mold', ic: '🏭', t: 'Moldeo / Fusión en curso', sec: 'kanban_moldeo', run: () => window.cirOpen('mold') },
@@ -2803,7 +2805,7 @@ window.sideBuild = () => {
   const el = document.getElementById('side-menu'); if (!el) return;
   const prof = (typeof CURRENT_PROFILE !== 'undefined') ? CURRENT_PROFILE : null;
   if (!prof) { document.body.classList.remove('has-side'); return; }
-  const ok = it => it.admin ? !!prof.es_admin : puedeVer(it.sec);
+  const ok = it => it.admin ? !!prof.es_admin : (puedeVer(it.sec) && (!it.edit || prof.es_admin || prof.rol === 'editor'));
   let h = `<div class="sm-head"><img src="icons/logo-256.png" alt="AMRO"> AMRO Gestión<button class="sm-pin side-pin-only ${SIDE_PIN ? 'on' : ''}" onclick="sidePin()" title="${SIDE_PIN ? 'Desanclar: el menú se abre y se cierra con el botón ☰ Menú' : 'Anclar: el menú queda fijo a la izquierda'}">${SIDE_PIN ? '📌 Anclado' : '📍 Anclar'}</button></div>`;
   SIDE_GROUPS.forEach(g => {
     const its = g.items.filter(ok); if (!its.length) return;
@@ -6652,7 +6654,7 @@ function showToast(message, kind) {
 
   // ---------- modal ----------
   function ask(title, desc, fields, okText, onOk) {
-    const m = document.getElementById('cir-modal');
+    const m = document.getElementById('cir-modal'); m.style.maxWidth = '';
     m.innerHTML = `<h3>${title}</h3><div class="d">${desc || ''}</div>` + fields.map(f => {
       if (f.type === 'select') return `<label>${f.label}</label><select id="cf_${f.id}">${f.options.map(o => `<option value="${esc(o[0])}"${o[0] === f.value ? ' selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`;
       if (f.type === 'date') return `<label>${f.label}</label><input id="cf_${f.id}" type="date" value="${f.value}" oninput="cirDateHint()"><div class="d" id="cir-datehint" style="margin:4px 0 0;"></div>`;
@@ -6678,7 +6680,7 @@ function showToast(message, kind) {
       catch (e) { err.textContent = e.message || String(e); btn.disabled = false; }
     };
   }
-  window.cirCloseAsk = () => document.getElementById('cir-ov').classList.remove('on');
+  window.cirCloseAsk = () => { document.getElementById('cir-ov').classList.remove('on'); const m = document.getElementById('cir-modal'); if (m) m.style.maxWidth = ''; };
   window.cirDateHint = () => {
     const e = document.querySelector('#cir-modal input[type=date]'), h = document.getElementById('cir-datehint');
     if (!e || !h) return;
@@ -6730,6 +6732,34 @@ function showToast(message, kind) {
   };
   A.entregarParte = (pid, c) => { const p = C.planes.find(x => x.id === pid); if (!p) return; const falta = Math.max(0, pendPlan(p) - holdOf(p, c)), disp = stock(c, 'sector_z') + stock(c, 'terminacion'), max = Math.min(falta, disp);
     ask('Entregar una parte a Mecanizado', esc(nombre(c)) + `<br>Plan #${pid} · falta entregar ${falta} · disponible ${disp}. El resto se entrega después.`, [{ id: 'n', label: 'Cantidad que entregás ahora (máx. ' + max + ')', value: max, max }], 'Entregar', v => rpc('mec_entregar', { p_plan: pid, p_codigo: c, p_cant: v.n })); };
+  // Detalle de un día del calendario: lo que entrega Terminación y lo que arma Mecanizado, con las acciones ahí mismo.
+  let DIA_SEL = null;
+  A.dia = d => {
+    DIA_SEL = d;
+    const m = document.getElementById('cir-modal'); if (!m) return;
+    const entr = planesOrd().filter(p => dueOf(p) === d && pendPlan(p) > 0 && rec(p.receta));
+    const arma = planesOrd().filter(p => p.fecha === d && pendPlan(p) > 0 && rec(p.receta));
+    let hayParaEntregar = false;
+    const bloquesE = entr.map(p => { const r = rec(p.receta);
+      const filas = [r.macho, r.hembra].map(c => { const falta = Math.max(0, pendPlan(p) - holdOf(p, c)), disp = stock(c, 'sector_z') + stock(c, 'terminacion'), mx = Math.min(falta, disp); if (mx > 0) hayParaEntregar = true;
+        const acc = !falta ? '<span class="ok">✔ entregado</span>' : (puedeOperar() ? btn('Entregar ' + mx, `cir_diaEntregar(${p.id},'${esc(c)}')`, 'pri', !mx) + (mx > 1 ? btn('Una parte…', `cir_entregarParte(${p.id},'${esc(c)}')`) : '') : '') + (falta > disp ? `<div class="code">faltan ${falta - disp} por terminar</div>` : '');
+        return `<tr><td>${nameCell(c)}</td><td class="num">${pendPlan(p)}</td><td class="num">${holdOf(p, c)}</td><td class="num"><b style="color:${falta ? 'var(--warn)' : 'var(--ok)'}">${falta}</b></td><td class="num">${stock(c, 'sector_z')} / ${stock(c, 'terminacion')}</td><td>${acc}</td></tr>`; }).join('');
+      return `<div style="margin:8px 0 4px"><b>${esc(recNom(r))}</b> <span class="code">· plan #${p.id} · arma Mecanizado el ${fmt(p.fecha)} · ${pendPlan(p)} aros</span></div><table><tr><th>Pieza</th><th class="num">Necesita</th><th class="num">Ya en Mecanizado</th><th class="num">Falta entregar</th><th class="num">Disp. Z / Term.</th><th></th></tr>${filas}</table>`; }).join('');
+    const bloquesA = arma.map(p => { const r = rec(p.receta), mx = Math.min(p.hold_macho, p.hold_hembra, pendPlan(p));
+      return `<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;padding:5px 0;border-top:1px solid #263449;flex-wrap:wrap"><span><b>${pendPlan(p)} × ${esc(recNom(r))}</b> <span class="code">· plan #${p.id} · hay en Mecanizado: ${p.hold_macho} machos / ${p.hold_hembra} hembras</span></span>${puedeOperar() && mx > 0 ? btn('Armar ' + mx + '…', `cir_armar(${p.id})`) : ''}</div>`; }).join('');
+    m.style.maxWidth = '860px';
+    m.innerHTML = `<h3>📅 ${fmt(d)}${d === TODAY() ? ' · hoy' : ''}</h3><div class="d">Lo que se entrega a Mecanizado y lo que se arma ese día. Entregá desde acá, sin ir a la tabla de abajo.</div>
+      <div style="font-weight:700;margin-top:4px">🔧 Terminación entrega a Mecanizado</div>${bloquesE || '<div class="empty" style="padding:6px 0">No hay entregas pendientes este día.</div>'}
+      ${puedeOperar() && hayParaEntregar && entr.length > 1 ? `<div style="margin-top:8px">${btn('Entregar todo lo disponible', 'cir_diaTodo()', 'pri')}</div>` : ''}
+      <div style="font-weight:700;margin-top:14px">⚙️ Mecanizado arma</div>${bloquesA || '<div class="empty" style="padding:6px 0">No hay armado planificado este día.</div>'}
+      <div class="cir-err" id="cir-err"></div><div class="btns"><button onclick="cirCloseAsk()">Cerrar</button></div>`;
+    document.getElementById('cir-ov').classList.add('on');
+  };
+  A.diaEntregar = async (pid, c) => { try { await rpc('mec_entregar', { p_plan: pid, p_codigo: c, p_cant: null }); await reload(); A.dia(DIA_SEL); } catch (e) { alert(e.message); } };
+  A.diaTodo = async () => { const d = DIA_SEL; let n = 0; const errs = [];
+    for (const p of planesOrd().filter(x => dueOf(x) === d && pendPlan(x) > 0 && rec(x.receta))) { const r = rec(p.receta);
+      for (const c of [r.macho, r.hembra]) { const falta = Math.max(0, pendPlan(p) - holdOf(p, c)), disp = stock(c, 'sector_z') + stock(c, 'terminacion'); if (falta > 0 && disp > 0) { try { await rpc('mec_entregar', { p_plan: p.id, p_codigo: c, p_cant: null }); n++; } catch (e) { errs.push(e.message); } try { await reload(); } catch (e) { /* sigue */ } } } }
+    A.dia(d); if (errs.length) alert('Algunas entregas no se pudieron hacer:\n' + errs.join('\n')); };
   A.entregar = async (pid, c) => { try { await rpc('mec_entregar', { p_plan: pid, p_codigo: c, p_cant: null }); await reload(); } catch (e) { alert(e.message); } };
   A.zaM = c => ask('Entregar a Mecanizado', esc(nombre(c)) + '<br>Entrega suelta, sin plan.', [{ id: 'n', label: 'Cantidad (máx. ' + stock(c, 'sector_z') + ')', value: Math.min(stock(c, 'sector_z'), 5), max: stock(c, 'sector_z') }], 'Entregar',
     v => rpc('mec_mover', { p_codigo: c, p_desde: 'sector_z', p_hasta: 'mecanizado', p_cant: v.n, p_motivo: 'entrega suelta a Mecanizado' }));
@@ -6756,8 +6786,8 @@ function showToast(message, kind) {
       v => tbl(supabaseClient.from('mec_config').upsert({ clave: key, valor: v.n }, { onConflict: 'clave' }))); };
   A.kNuevo = u => ask('Definir k — ' + UBIC[u], 'Elegí la pieza y su k (consumo durante el plazo de reposición).', [{ type: 'pieza', id: 'c', label: 'Pieza', value: '' }, { id: 'n', label: 'k (unidades)', value: 10, max: 99999 }], 'Guardar',
     v => tbl(supabaseClient.from('mec_k').upsert({ ubicacion: u, codigo: v.c, k: v.n }, { onConflict: 'ubicacion,codigo' })));
-  A.ajustar = (u, cod, areas) => { const ars = areas || [u];
-    const campos = (ars.length > 1 ? [{ type: 'select', id: 'u', label: 'Área que contaste', options: ars.map(a => [a, UBIC[a]]), value: u }] : []).concat([
+  A.ajustar = (u, cod, areas, labels) => { const ars = areas || [u]; labels = labels || {};
+    const campos = (ars.length > 1 ? [{ type: 'select', id: 'u', label: labels.__q || 'Área que contaste', options: ars.map(a => [a, labels[a] || UBIC[a]]), value: u }] : []).concat([
       { type: 'pieza', id: 'c', label: 'Pieza', value: cod || '' },
       { type: 'select', id: 'm', label: '¿Qué cargás?', options: [['contado', 'Lo que conté (la cantidad real que hay ahora)'], ['dif', 'Una diferencia (+ suma / − resta)']], value: 'contado' },
       { id: 'n', label: 'Cantidad contada (o diferencia)', value: cod ? stock(cod, u) : 0, max: 99999, min: -99999 }, { type: 'text', id: 'x', label: 'Motivo', value: 'conteo físico' }]);
@@ -6766,7 +6796,8 @@ function showToast(message, kind) {
         if (v.m === 'contado') { if (v.n < 0) throw new Error('Lo contado no puede ser negativo.'); const cur = stock(v.c, ub); delta = v.n - cur; if (!delta) throw new Error('Ya figura esa cantidad (' + cur + '): no hay nada que ajustar.'); }
         else if (!delta) throw new Error('La diferencia no puede ser 0.');
         return rpc('mec_ajustar', { p_codigo: v.c, p_ubic: ub, p_delta: delta, p_motivo: v.x || 'ajuste' }); }); };
-  A.ajustarMec = () => A.ajustar('mecanizado');
+  // En Mecanizado hay dos instancias: lo que entró y todavía está SIN mecanizar, y lo ya MECANIZADO (estantería kanban).
+  A.ajustarMec = () => A.ajustar('mecanizado', '', ['mecanizado', 'kanban'], { __q: '¿Qué contaste?', mecanizado: '⚙️ En Mecanizado — sin mecanizar', kanban: '🏬 Estantería — ya mecanizadas' });
   A.ajustarTerm = () => A.ajustar('terminacion', '', ['terminacion', 'sector_z']);
   A.nuevoPlan = (def, cod, ot) => {
     if (!C.recetas.length) { alert('Primero cargá una receta (macho + hembra → aro armado) en la sección Recetas.'); return; }
@@ -6887,11 +6918,24 @@ function showToast(message, kind) {
   // ---------- vistas ----------
   const nameCell = c => ALIAS[c] ? `<b title="${esc(nombreFull(c))} · ${esc(c)}">${esc(ALIAS[c])}</b>` : `<b>${esc(nombre(c))}</b><div class="code">${esc(c)}</div>`;
   const btn = (txt, js, cls, dis) => `<button class="${cls || ''}" ${dis ? 'disabled' : ''} onclick="${js}">${txt}</button>`;
+  // Lo que hay que reponer (rojo / amarillo): tabla compacta, lo más urgente arriba. La cuenta del stock virtual se abre al tocar la fila.
   function alertPanel(u, quien, conPlan) {
-    return alertas(u).map(c => { const n = nivel(u, c), L = lote(u, c);
-      const b = L <= 0 ? '' : (u === 'sector_z' ? (puedePlanificar() ? btn(`Lanzar OI por ${L}`, `cir_moldeo(${L},'${esc(c)}',1)`, 'pri') : '') : (conPlan && puedePlanificar() ? btn(`Lanzar OT por ${L}`, `cir_nuevoPlan(${L},'${esc(c)}',1)`, 'pri') : ''));
-      return `<div class="alert"><div>${n === 'rojo' ? '🔴' : '🟡'} <b>${UBIC[u]} en ${n}</b> — ${esc(nombre(c))}: hay <b>${stock(c, u)}</b> (k = ${kOf(u, c)}). ${quien}<br><span class="code">Stock virtual <b>${sv(u, c)}</b></span>${svRows(u, c)}${L > 0 ? '' : '<b>Ya hay suficiente en proceso: no hace falta pedir más.</b>'}</div>${b}</div>`; }).join('');
+    const L = alertas(u).map(c => { const k = kOf(u, c), v = sv(u, c); return { c, k, v, h: stock(c, u), n: nivel(u, c), L: lote(u, c) }; })
+      .sort((a, b) => (a.n === 'rojo' ? 0 : 1) - (b.n === 'rojo' ? 0 : 1) || (a.v / (a.k || 1)) - (b.v / (b.k || 1)));
+    if (!L.length) return '';
+    const nr = L.filter(x => x.n === 'rojo').length, na = L.length - nr, nv = C.k.filter(r => r.ubicacion === u && nivel(u, r.codigo) === 'verde').length, ya = L.filter(x => x.L <= 0).length;
+    const col = n => n === 'rojo' ? 'var(--bad)' : 'var(--warn)';
+    const accion = x => x.L <= 0 ? '<span class="ok">✔ ya hay en proceso</span>' : (u === 'sector_z' ? (puedePlanificar() ? btn(`Lanzar OI por ${x.L}`, `cir_moldeo(${x.L},'${esc(x.c)}',1)`, 'pri') : '') : (conPlan && puedePlanificar() ? btn(`Lanzar OT por ${x.L}`, `cir_nuevoPlan(${x.L},'${esc(x.c)}',1)`, 'pri') : ''));
+    const rows = L.map(x => `<tr class="rj-r" onclick="cirSv(this)" title="${esc(svTxt(u, x.c))}"><td><span style="color:${col(x.n)}">●</span> <b title="${esc(nombreFull(x.c))}">${esc(nombre(x.c))}</b></td>
+        <td class="rj-bar"><div class="rj-gb"><i style="width:${Math.min(100, Math.round(100 * x.h / (2 * x.k)))}%;background:${col(x.n)}"></i><u></u></div><div class="code">hay <b>${x.h}</b> · k ${x.k}</div></td>
+        <td class="num"><b>${x.v}</b></td><td class="num">${x.L > 0 ? `<b style="color:#fff;font-size:1rem">${x.L}</b>` : '<span class="code">—</span>'}</td><td>${accion(x)}</td></tr>
+      <tr class="rj-d" style="display:none"><td colspan="5">${svRows(u, x.c)}</td></tr>`).join('');
+    return `<div class="panel"><div class="rs-tit"><h2>${u === 'sector_z' ? '🗄️' : '🏬'} ${UBIC[u]} — a reponer</h2><span class="code">${esc(quien)}</span></div>
+      <div class="rj-chips"><span class="rj-chip" style="color:var(--bad);border-color:#7f1d1d">🔴 ${nr} en rojo</span><span class="rj-chip" style="color:var(--warn);border-color:#78350f">🟡 ${na} en amarillo</span><span class="rj-chip" style="color:var(--ok);border-color:#14532d">🟢 ${nv} bien</span>${ya ? `<span class="rj-chip" style="color:var(--dim)">✔ ${ya} ya en proceso</span>` : ''}</div>
+      <table class="rj"><tr><th>Pieza</th><th>En estantería <span class="code">(raya blanca = k)</span></th><th class="num">Stock virtual</th><th class="num">Hay que reponer</th><th></th></tr>${rows}</table>
+      <div class="code" style="margin-top:6px">Tocá una fila para ver la cuenta del stock virtual (estantería + planificados − pedidos).</div></div>`;
   }
+  window.cirSv = tr => { const d = tr.nextElementSibling; if (d) d.style.display = d.style.display === 'none' ? '' : 'none'; };
   function shelf(u, actions) {
     const cs = [...new Set([...Object.keys(C.stock[u] || {}).filter(c => stock(c, u) > 0), ...C.k.filter(r => r.ubicacion === u).map(r => r.codigo)])];
     const rows = cs.map(c => { const hk = kOf(u, c) != null, n = nivel(u, c);
@@ -7443,8 +7487,10 @@ function showToast(message, kind) {
     const cell = d => { const off = !isBiz(d);
       const arma = C.planes.filter(p => p.fecha === d && pendPlan(p) > 0), entr = C.planes.filter(p => dueOf(p) === d && pendPlan(p) > 0);
       const aros = arma.reduce((a, p) => a + pendPlan(p), 0), pzs = entr.reduce((a, p) => a + pendPlan(p), 0);
-      return `<div class="day ${d === TODAY() ? 'today' : ''} ${off ? 'off' : ''} ${d < TODAY() ? 'past' : ''}"><h4>${fmt(d)}${d === TODAY() ? ' · hoy' : ''}</h4>` + (off ? `<div class="why">🚫 ${esc(whyOff(d) || 'no hábil')}</div>`
-        : (aros ? `<div class="a">⚙️ Mecanizado arma: <b>${aros}</b> aros</div>` : '<div class="none">⚙️ sin armado</div>') + (pzs ? `<div class="t">🔧 Terminación entrega: <b>${pzs}</b> machos + <b>${pzs}</b> hembras</div>` : '<div class="none">🔧 sin entregas</div>')) + '</div>'; };
+      const fM = entr.reduce((a, p) => a + Math.max(0, pendPlan(p) - p.hold_macho), 0), fH = entr.reduce((a, p) => a + Math.max(0, pendPlan(p) - p.hold_hembra), 0);
+      const click = !off && (aros || pzs);
+      return `<div class="day ${d === TODAY() ? 'today' : ''} ${off ? 'off' : ''} ${d < TODAY() ? 'past' : ''} ${click ? 'click' : ''}"${click ? ` onclick="cir_dia('${d}')" title="Tocá para ver y hacer las entregas de este día"` : ''}><h4>${fmt(d)}${d === TODAY() ? ' · hoy' : ''}</h4>` + (off ? `<div class="why">🚫 ${esc(whyOff(d) || 'no hábil')}</div>`
+        : (aros ? `<div class="a">⚙️ Mecanizado arma: <b>${aros}</b> aros</div>` : '<div class="none">⚙️ sin armado</div>') + (pzs ? ((fM || fH) ? `<div class="t">🔧 Terminación entrega: <b>${fM}</b> machos + <b>${fH}</b> hembras</div>` : `<div class="ok">🔧 ✔ todo entregado</div>`) : '<div class="none">🔧 sin entregas</div>') + (click ? '<div class="code" style="margin-top:4px">👆 tocá para entregar</div>' : '')) + '</div>'; };
     const rows = planesOrd().map(p => { const r = rec(p.receta), pd = pendPlan(p), pct = p.cantidad ? Math.round(100 * p.armados / p.cantidad) : 100;
       return `<tr><td><b>${fmt(p.fecha)}</b>${isBiz(p.fecha) ? '' : `<div class="late">no es día hábil (${esc(whyOff(p.fecha))})</div>`}</td><td>${dueTxt(dueOf(p))}</td><td><b>Plan #${p.id}</b> · ${esc(r ? recNom(r) : '?')}</td><td class="num">${p.cantidad}</td><td class="num">${p.armados}</td>
         <td><div class="bar"><i style="width:${pct}%"></i></div></td><td><div class="row-actions">${pd > 0 && puedePlanificar() ? btn('Cambiar fecha', `cir_cambiarFecha(${p.id})`) + btn('Cerrar', `cir_cerrarPlan(${p.id})`) : (pd <= 0 ? '<span class="ok">' + (p.cantidad ? '✔ completo' : 'cerrado') + '</span>' : '')}${puedePlanificar() && !p.armados && !p.hold_macho && !p.hold_hembra ? btn('🗑', `cir_delPlan(${p.id})`) : ''}</div></td></tr>`; }).join('');
@@ -7853,12 +7899,13 @@ function showToast(message, kind) {
   #cir-root button { background:#334155; color:#fff; border:none; border-radius:7px; padding:6px 11px; font-size:.8rem; cursor:pointer; } #cir-root button:hover:not(:disabled) { background:#475569; } #cir-root button.pri { background:var(--acc); color:#0f172a; font-weight:700; } #cir-root button:disabled { opacity:.4; cursor:default; }
   #cir-root .bar { height:7px; background:#0f172a; border-radius:99px; overflow:hidden; min-width:80px; } #cir-root .bar > i { display:block; height:100%; background:var(--ok); } #cir-root .row-actions { display:flex; gap:6px; flex-wrap:wrap; }
   #cir-root .week { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin-bottom:8px; } @media (max-width:900px){ #cir-root .week { grid-template-columns:repeat(2,1fr); } }
-  #cir-root .day { background:#0f172a; border:1px solid var(--line); border-radius:8px; padding:7px 9px; min-height:92px; font-size:.76rem; } #cir-root .day.today { border-color:var(--acc); } #cir-root .day.off { opacity:.55; background:#111c30; } #cir-root .day.past { opacity:.4; }
+  #cir-root .day { background:#0f172a; border:1px solid var(--line); border-radius:8px; padding:7px 9px; min-height:92px; font-size:.76rem; } #cir-root .day.today { border-color:var(--acc); } #cir-root .day.off { opacity:.55; background:#111c30; } #cir-root .day.past { opacity:.4; } #cir-root .day.click { cursor:pointer; } #cir-root .day.click:hover { border-color:var(--acc); background:#16233b; }
   #cir-root .day h4 { margin:0 0 4px; font-size:.78rem; text-transform:capitalize; } #cir-root .day .a { color:var(--warn); } #cir-root .day .t { color:#7dd3fc; } #cir-root .day .none { color:#475569; } #cir-root .day .why { color:#a78bfa; }
   #cir-root .late { color:var(--bad); font-weight:700; } #cir-root .soon { color:var(--warn); font-weight:700; } #cir-root .ok { color:var(--ok); } #cir-root .rep { color:var(--bad); font-weight:700; }
   #cir-root .alert { background:rgba(248,113,113,.1); border:1px solid #7f1d1d; border-radius:8px; padding:8px 12px; margin-bottom:8px; font-size:.8rem; display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
   #cir-root .log { max-height:220px; overflow:auto; font-size:.76rem; color:var(--dim); } #cir-root .log div { padding:2px 0; border-bottom:1px solid #263449; } #cir-root .err { color:var(--bad); padding:20px 0; }
 
+  #cir-root .rj { width:100%; border-collapse:collapse; } #cir-root .rj td, #cir-root .rj th { padding:7px 10px; border-bottom:1px solid #263449; text-align:left; font-size:.84rem; vertical-align:middle; } #cir-root .rj th { color:var(--dim); font-size:.7rem; text-transform:uppercase; letter-spacing:.04em; } #cir-root .rj .num { text-align:right; font-variant-numeric:tabular-nums; } #cir-root .rj-r { cursor:pointer; } #cir-root .rj-r:hover td { background:#16233b; } #cir-root .rj-bar { width:34%; } #cir-root .rj-gb { position:relative; height:14px; background:#0f172a; border:1px solid #334155; border-radius:7px; overflow:hidden; min-width:120px; } #cir-root .rj-gb i { position:absolute; left:0; top:0; bottom:0; } #cir-root .rj-gb u { position:absolute; left:50%; top:0; bottom:0; width:2px; background:#e2e8f0; opacity:.85; } #cir-root .rj-d td { background:#0f172a; } #cir-root .rj-chips { display:flex; gap:8px; flex-wrap:wrap; margin:4px 0 10px; } #cir-root .rj-chip { padding:3px 11px; border-radius:999px; font-weight:700; font-size:.78rem; border:1px solid var(--line); }
   #cir-root .rs { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:8px; } #cir-root .rs-i { display:flex; justify-content:space-between; align-items:center; gap:10px; background:#0f172a; border:1px solid var(--line); border-left:5px solid var(--line); border-radius:8px; padding:8px 11px; }
   #cir-root .rs-i.rojo { border-left-color:var(--bad); } #cir-root .rs-i.amarillo { border-left-color:var(--warn); } #cir-root .rs-i.verde { border-left-color:var(--ok); } #cir-root .rs-i span { font-size:.84rem; line-height:1.2; } #cir-root .rs-i b { font-size:1.35rem; color:#fff; font-variant-numeric:tabular-nums; }
   #cir-root .rs-tit { display:flex; justify-content:space-between; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:8px; } #cir-root .rs-tit h2 { margin:0; } #cir-root .rs-more { margin-top:8px; } #cir-root .rs-more summary { cursor:pointer; color:var(--acc); font-size:.8rem; padding:4px 0; }
@@ -7983,6 +8030,13 @@ function showToast(message, kind) {
   window.cirTab = t => { C.tab = t; render(); };
   window.cirOpen = async (mode, opt) => { C.tile = {}; C.moldTab = 'curso'; C.kanOnly = (opt && opt.kan) || null; if (opt && opt.kan) C.kanTab = opt.kan; if (opt && opt.tab) C.tab = opt.tab; C.mode = (typeof mode === 'string' && VIEWS.some(v => v.key === mode)) ? mode : 'full'; ensureDom(); document.getElementById('cir-root').classList.add('on'); render(); await reload(); };
   window.cirClose = () => { const r = document.getElementById('cir-root'); if (r) r.classList.remove('on'); if (window.sideMarcar) window.sideMarcar(null); paintCards(); };
+  // Cargar / contar stock de Terminación (y Sector Z) o de Mecanizado directo desde el menú: abre el diálogo de ajuste.
+  window.cirCargarStock = async u => {
+    if (!puedePlanificar()) { alert('Para cargar o contar stock hace falta el rol Editor.'); return; }
+    ensureDom();
+    try { if (!C.loaded) await load(); } catch (e) { /* sigue */ }
+    if (u === 'mecanizado') A.ajustarMec(); else A.ajustarTerm();
+  };
   // Cargar remitos (Excel de ventas) desde el menú: abre el selector de archivo; el resto lo hace cirVentasFile
   window.cirCargarRemitos = async () => {
     if (!puedePlanificar()) { alert('Para cargar remitos hace falta el rol Editor.'); return; }
