@@ -495,12 +495,14 @@
   <button class="side-fab" id="side-fab" onclick="sideToggle(true)">☰ Menú</button>
 
   <div class="header">
-    <div>
-      <h1><img src="icons/logo-256.png" alt="AMRO" style="width:44px; height:44px; border-radius:8px; background:#fff;"> Tablero Comercial & Control de Despachos</h1>
-      <div class="subtitle">Monitoreo por áreas de fabricación, cálculo de Kg y anticipación comercial — datos de SGA (Perfil Planeamiento, desde 01/02/2026)</div>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <button class="side-burger" id="side-burger" onclick="sideToggle()">☰ Menú</button>
+      <div>
+        <h1><img src="icons/logo-256.png" alt="AMRO" style="width:44px; height:44px; border-radius:8px; background:#fff;"> Tablero Comercial & Control de Despachos</h1>
+        <div class="subtitle">Monitoreo por áreas de fabricación, cálculo de Kg y anticipación comercial — datos de SGA (Perfil Planeamiento, desde 01/02/2026)</div>
+      </div>
     </div>
     <div style="display:flex; align-items:center; flex-wrap:wrap; gap:6px 0;">
-      <button class="side-burger" id="side-burger" onclick="sideToggle()">☰ Menú</button>
       <button class="hdr-btn install" id="install-btn" onclick="onInstallClick()" title="Instalar el tablero como app en tu pantalla de inicio">⬇️ Instalar app</button>
       <span class="badge-live" id="asof-badge">ACTUALIZADO</span>
       <span class="user-pill" id="user-pill" style="margin-left:10px;"></span>
