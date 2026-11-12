@@ -233,9 +233,13 @@
   .prioridad-select.prioridad-alta { border-color: var(--danger); color: #f87171; font-weight: 700; }
   .prioridad-select.prioridad-media { border-color: var(--warning); color: #fbbf24; font-weight: 700; }
 
-  tr.row-prepared td { opacity: 0.45; }
+  /* Fila ya preparada: se atenúa solo la info de lectura; la celda "Preparado p/ Despacho" y la prioridad quedan a pleno (son lo que se toca) */
+  tr.row-prepared td { opacity: 0.7; }
+  tr.row-prepared td.col-prep, tr.row-prepared td.col-prioridad { opacity: 1; }
+  tr.row-prepared { background: rgba(16, 185, 129, 0.05); }
+  tr.row-prepared td.col-prep { background: rgba(16, 185, 129, 0.09); }
   .prep-cell { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
-  .prep-input { width: 54px; background: #0f172a; border: 1px solid var(--card-border); color: #fff; border-radius: 6px; padding: 5px 4px; font-size: 0.8rem; text-align: right; }
+  .prep-input { width: 54px; background: #1e293b; border: 1px solid #64748b; color: #fff; border-radius: 6px; padding: 5px 4px; font-size: 0.8rem; text-align: right; }
   .prep-input:focus { border-color: var(--accent); outline: none; }
   .prep-of { font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; }
   .prep-btn { background: var(--accent); color: #0f172a; border: none; border-radius: 6px; padding: 6px 10px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
@@ -244,6 +248,8 @@
   .prep-na { color: var(--text-muted); font-size: 0.78rem; }
   .desp-btn { background: #a855f7; color: #fff; border: none; border-radius: 6px; padding: 6px 10px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
   .desp-btn:hover { background: #c084fc; }
+  .hoja-term-btn { background: #0ea5e9; color: #fff; border: none; border-radius: 6px; padding: 6px 10px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
+  .hoja-term-btn:hover { background: #38bdf8; }
   .desp-btn:disabled { opacity: 0.5; cursor: wait; }
 
   .pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 6px; font-size: 0.72rem; font-weight: 600; white-space: nowrap; }
@@ -399,7 +405,7 @@
       display: grid; grid-template-columns: 1fr auto; column-gap: 10px; row-gap: 2px;
     }
     tr:hover td { background: transparent; }
-    tr.row-prepared { opacity: 0.55; }
+    tr.row-prepared { opacity: 1; border-left: 3px solid #10b981; }
     tr::after { content: '›'; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 1.3rem; line-height: 1; }
     td.col-prioridad, td.col-comprobante, td.col-alerta, td.col-kilos, td.col-estado, td.col-flujo, td.col-prep { display: none; }
     td { padding: 0; border: none; text-align: left; }
@@ -4965,6 +4971,10 @@ function buildPrepCellHtml(r) {
     ? `<div style="margin-top:6px;"><button class="desp-btn" onclick="openDespachoDialog('${key}')">🚚 Despachar (${disponibleDespacho.toLocaleString()})</button></div>
        <label style="display:flex; gap:5px; align-items:center; margin-top:5px; font-size:0.7rem; color:#c4b5fd; cursor:pointer;" onclick="event.stopPropagation()"><input type="checkbox" ${despSel.has(String(key)) ? 'checked' : ''} onchange="toggleDespSel('${key}', this.checked)"> Despachar junto con otros</label>`
     : '';
+  const hojaTermHtml = puedeArmarHojaDesdeTerm(r)
+    ? `<div style="margin-top:6px;"><button class="hoja-term-btn" onclick="armarHojaTerm(${r.id})">⚖️ Armar hoja de pesada (${termHojaDisp(baseRow(r.id)).toLocaleString()})</button></div>
+       <label style="display:flex; gap:5px; align-items:center; margin-top:5px; font-size:0.7rem; color:#7dd3fc; cursor:pointer;" onclick="event.stopPropagation()"><input type="checkbox" ${termHojaSel.has(Number(r.id)) ? 'checked' : ''} onchange="toggleTermHoja(${r.id}, this.checked)"> Armar hoja junto con otros</label>`
+    : '';
   return `
     <div>
       ${doneBadge}
@@ -4974,6 +4984,7 @@ function buildPrepCellHtml(r) {
         <span class="prep-of">/ ${r.pend.toLocaleString()}</span>
         <button class="prep-btn" onclick="savePrep('${key}', ${r.pend}, this.parentElement)">Guardar</button>
       </div>
+      ${hojaTermHtml}
       ${despBtnHtml}
     </div>`;
 }
@@ -5586,9 +5597,9 @@ function showToast(message, kind) {
       return out.length ? out : [makeHojaRenglon(r.kxu, disponible)];
     }
 
-    async function openHojaModal() {
+    async function openHojaModal(desdeTerm) {
       if (selectedHojaIds.size === 0) return;
-      const items = [...selectedHojaIds].map(id => baseRow(id)).filter(Boolean);
+      const items = [...selectedHojaIds].map(id => baseRow(id)).filter(Boolean).filter(r => !desdeTerm || termHojaDisp(r) > 0);
       if (!items.length) return;
       const cliente = items[0].cliente;
       // precios (Importe Final + Moneda + unidad de venta): si la tabla no existe todavía, la hoja sale como antes
@@ -5607,8 +5618,9 @@ function showToast(message, kind) {
         condPago: '',
         mail: '',
         confirmed: false,
+        desdeTerminacion: !!desdeTerm,
         items: items.map(r => {
-          const disponible = Math.max(0, Math.round(prepSinHojaDisponible(r)));
+          const disponible = Math.max(0, Math.round(desdeTerm ? termHojaDisp(r) : prepSinHojaDisponible(r)));
           return {
             id: r.id,
             comprobante: r.comprobante,
@@ -5764,6 +5776,7 @@ function showToast(message, kind) {
         </div>
         <div class="hoja-note">${s.confirmed
           ? `Ya quedó registrado el pesaje de esta hoja, con su trazabilidad de probetas. Descargá el PDF las veces que necesites con <b>"Descargar PDF"</b> y usá <b>"Abrir Gmail"</b> para armar el mail con el destinatario y el texto ya listos — el PDF se adjunta a mano (clip de Gmail) antes de enviar, ningún sitio web puede adjuntar un archivo solo, es una restricción de seguridad de todos los navegadores/webmails.`
+          : s.desdeTerminacion ? `<b>"✅ Confirmar"</b> registra el pesaje y la trazabilidad de probetas de esta hoja y deja estas piezas como <b>Preparadas, listas para despachar</b> (lo que todavía no estaba cargado en "Preparado" se carga solo) — hacelo cuando ya pesaste todo y es definitivo. El botón para descargar el PDF aparece recién después de confirmar. <b>"Abrir Gmail"</b> lo podés usar ya mismo.`
           : `<b>"✅ Confirmar"</b> registra el pesaje y la trazabilidad de probetas de esta hoja — hacelo cuando ya pesaste todo y es definitivo; estas piezas ya estaban sumadas a "Preparado para Despacho" desde que se cargaron en la tabla, así que esto no las vuelve a sumar. El botón para descargar el PDF aparece recién después de confirmar. <b>"Abrir Gmail"</b> lo podés usar ya mismo, abre un mensaje nuevo con el destinatario y el texto ya armados.`
         }</div>
       `;
@@ -5884,6 +5897,14 @@ function showToast(message, kind) {
       if (btn) { btn.disabled = true; btn.textContent = 'Confirmando...'; }
       try {
         if (!s.numeroHoja) s.numeroHoja = String(await getNextHojaNumber()).padStart(4, '0');
+        if (s.desdeTerminacion && !s.prepCargado) {
+          try { await prepararParaHoja(s.items); s.prepCargado = true; }
+          catch (e) {
+            console.error('No se pudo cargar Preparado desde la hoja:', e && e.code, e && e.message);
+            alert('No se pudo dejar las piezas como preparadas, así que la hoja NO se confirmó. Probá de nuevo.' + ((e && e.message) ? '\n\nDetalle: ' + e.message : ''));
+            hojaConfirmPending = false; renderHojaModal(); return;
+          }
+        }
         const ok = await markHojaItemsPrepared(s.items, s.numeroHoja);
         if (ok) {
           try { await guardarKgNuevos(s.items); } catch (e) { /* el peso de la hoja ya quedó guardado */ }
@@ -5896,6 +5917,8 @@ function showToast(message, kind) {
           hojaValidationError = null;
           clearHojaSelection();
           armarHojaSelIds.clear();
+          termHojaSel.clear(); renderTermHojaBar();
+          if (s.desdeTerminacion) { try { renderKpis(); applyFilters(); } catch (e) { /* se actualiza solo */ } }
           renderHojaModal();
         }
       } catch (e) {
@@ -6126,6 +6149,71 @@ function showToast(message, kind) {
         <div style="margin-top:14px; display:flex; justify-content:flex-end;">
           <button class="view-toggle-btn" id="armar-hoja-btn-start" ${n === 0 ? 'disabled' : ''} onclick="startArmarHojaFromSelection()">🧾 Armar Hoja de Pesada con ${n} ítem${n === 1 ? '' : 's'} seleccionado${n === 1 ? '' : 's'}</button>
         </div>`;
+    }
+
+    // ---- Armar la hoja de pesada DIRECTO desde Terminación (sin cargar "Preparado" antes) ----
+    // Solo para quien tiene la sección 'armar_hoja' (Inspección Final y administradores).
+    // Al confirmar la hoja, lo que todavía no estaba preparado se carga como Preparado (igual que "Guardar"
+    // en la celda, incluida la baja de la estantería kanban) y queda listo para Despachar.
+    let termHojaSel = new Set();   // ids de ítem tildados
+    function termHojaDisp(b) {
+      if (!b) return 0;
+      return Math.max(0, prepSinHojaDisponible(b) + Math.max(0, (Number(b.pend) || 0) - prepCantClamped(b)));
+    }
+    function puedeArmarHojaDesdeTerm(r) {
+      if (!r || r.area_actual !== 'En Terminación' || !puedeVer('armar_hoja')) return false;
+      const b = baseRow(r.id);
+      return !!b && termHojaDisp(b) > 0.0001;
+    }
+    function toggleTermHoja(id, on) {
+      id = Number(id);
+      if (on) {
+        const b = baseRow(id);
+        const otro = [...termHojaSel].map(x => baseRow(x)).find(x => x && b && x.cliente !== b.cliente);
+        if (otro) { alert('Una hoja de pesada es de un solo cliente. Ya tenés tildadas piezas de ' + otro.cliente + '.'); applyFilters(); return; }
+        termHojaSel.add(id);
+      } else termHojaSel.delete(id);
+      renderTermHojaBar();
+    }
+    function clearTermHoja() { termHojaSel.clear(); renderTermHojaBar(); applyFilters(); }
+    function renderTermHojaBar() {
+      const ids = [...termHojaSel].filter(id => { const b = baseRow(id); return b && termHojaDisp(b) > 0.0001; });
+      termHojaSel = new Set(ids);
+      let bar = document.getElementById('term-hoja-bar');
+      if (!ids.length) { if (bar) bar.style.display = 'none'; return; }
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'term-hoja-bar';
+        bar.style.cssText = 'position:fixed; left:50%; bottom:72px; transform:translateX(-50%); z-index:90; background:#0c2a3f; border:1px solid #0ea5e9; color:#fff; border-radius:12px; padding:10px 14px; display:flex; gap:12px; align-items:center; box-shadow:0 8px 30px rgba(0,0,0,.5); font-size:0.82rem; max-width:94vw; flex-wrap:wrap;';
+        document.body.appendChild(bar);
+      }
+      const u = ids.reduce((a, id) => a + termHojaDisp(baseRow(id)), 0);
+      bar.innerHTML = `<span><b>${ids.length}</b> ítem${ids.length === 1 ? '' : 's'} · ${u.toLocaleString()} u. · ${escHtml(baseRow(ids[0]).cliente)}</span>
+        <button class="hoja-term-btn" onclick="armarHojaTerm()">⚖️ Armar hoja de pesada</button>
+        <button class="hoja-term-btn" style="background:#475569;" onclick="clearTermHoja()" title="Quitar la selección">✕</button>`;
+      bar.style.display = 'flex';
+    }
+    function armarHojaTerm(id) {
+      if (id != null && !termHojaSel.has(Number(id))) selectedHojaIds = new Set([Number(id)]);
+      else selectedHojaIds = new Set(termHojaSel);
+      if (!selectedHojaIds.size) return;
+      return openHojaModal(true);
+    }
+    // Carga como Preparado lo que falta para cubrir lo que se está pesando (misma lógica que "Guardar" en la celda Preparado).
+    async function prepararParaHoja(items) {
+      for (const it of items) {
+        const b = baseRow(it.id);
+        if (!b) continue;
+        const w = hojaRenglonTotal(it);
+        const extra = Math.max(0, w - prepSinHojaDisponible(b));
+        if (extra <= 0) continue;
+        const totalAntes = prepCant(it.id), total = totalAntes + extra;
+        await dbRef.collection('preparados').doc(String(it.id)).set({ cant: total, ts: new Date().toISOString() });
+        preparadosMap[String(it.id)] = { ...(preparadosMap[String(it.id)] || {}), cant: total };
+        let kan = null;
+        if (b.codigo) { try { const r = await supabaseClient.rpc('mec_prep_kanban', { p_item: Number(it.id), p_prev: totalAntes, p_new: total }); if (!r.error) kan = r.data; } catch (e) { kan = null; } }
+        if (kan && kan.descontado > 0 && window.cirAvisoKanban) window.cirAvisoKanban(b.codigo, kan.descontado);
+      }
     }
 
     function startArmarHojaFromSelection() {
