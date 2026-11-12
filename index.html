@@ -6932,18 +6932,25 @@ function showToast(message, kind) {
   function kvParse(rows) {
     const fechaDe = v => { if (v instanceof Date) return v.toISOString().slice(0, 10);
       const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(String(v == null ? '' : v)); return m ? m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0') : null; };
-    const out = new Map(), rem = new Set(); let hdr = null, linea = 0, items = false, ign = 0;
+    const out = new Map(), rem = new Set(); let hdr = null, linea = 0, items = false, ign = 0, idxOC = -1, idxMat = -1;
     for (const r of rows) {
       const f0 = typeof r[0] === 'number' ? null : fechaDe(r[0]);
-      if (String(r[0]).trim() === 'Kilos') { items = true; continue; }
+      if (String(r[0]).trim() === 'Kilos') {          // fila de títulos de columna de este remito: ubicar OC y Material por nombre (no por posición fija)
+        items = true;
+        const cols = r.map(v => String(v == null ? '' : v).trim().toLowerCase());
+        idxOC = cols.indexOf('oc'); idxMat = cols.indexOf('material');
+        continue;
+      }
       if (f0 && String(r[4]).trim() !== '') {        // cabecera de remito
-        hdr = { fecha: f0, comp: [r[2], r[3], r[4]].map(x => String(x).trim()).join('-'), cliente: String(r[5] || '').trim() }; linea = 0; items = false; continue; }
+        hdr = { fecha: f0, comp: [r[2], r[3], r[4]].map(x => String(x).trim()).join('-'), cliente: String(r[5] || '').trim() }; linea = 0; items = false; idxOC = -1; idxMat = -1; continue; }
       if (!items || !hdr) continue;
       const cant = Number(r[1]); let cod = typeof r[3] === 'number' ? String(r[3]).padStart(12, '0') : String(r[3] == null ? '' : r[3]).trim();
       if (!cod || !isFinite(cant) || r[1] === '') { if (cod || r[0] !== '') ign++; continue; }
       linea++; if (!cant) continue;
       const kg = Number(r[0]);
-      out.set(hdr.comp + '|' + linea, { fecha: hdr.fecha, comprobante: hdr.comp, linea, codigo: cod, descripcion: String(r[5] || '').trim(), cantidad: cant, kilos: isFinite(kg) && r[0] !== '' ? kg : null, cliente: hdr.cliente });
+      const oc = idxOC >= 0 ? String(r[idxOC] == null ? '' : r[idxOC]).trim() : '';
+      const material = idxMat >= 0 ? String(r[idxMat] == null ? '' : r[idxMat]).trim() : '';
+      out.set(hdr.comp + '|' + linea, { fecha: hdr.fecha, comprobante: hdr.comp, linea, codigo: cod, descripcion: String(r[5] || '').trim(), cantidad: cant, kilos: isFinite(kg) && r[0] !== '' ? kg : null, cliente: hdr.cliente, oc: oc || null, material: material || null });
       rem.add(hdr.comp);
     }
     const arr = [...out.values()]; arr.sort((a, b) => a.fecha.localeCompare(b.fecha));
@@ -7001,7 +7008,7 @@ function showToast(message, kind) {
       CONC.desde = desde; CONC.hasta = hasta;
       const out = [];
       for (let from = 0; ; from += 1000) {
-        const { data, error } = await supabaseClient.from('kanban_ventas').select('comprobante,linea,fecha,codigo,descripcion,cantidad,kilos,cliente').gte('fecha', desde).order('id').range(from, from + 999);
+        const { data, error } = await supabaseClient.from('kanban_ventas').select('comprobante,linea,fecha,codigo,descripcion,cantidad,kilos,cliente,oc,material').gte('fecha', desde).order('id').range(from, from + 999);
         if (error) throw error; out.push(...(data || [])); if (!data || data.length < 1000) break;
       }
       CONC.lines = out;
@@ -7053,9 +7060,9 @@ function showToast(message, kind) {
     const vis = concVisibles(), tk = vis.reduce((a, x) => a + x.kg, 0), tu = vis.reduce((a, x) => a + x.falta, 0), nsel = CONC.sel.size;
     const th = 'text-align:left; padding:6px 8px; font-size:.66rem; text-transform:uppercase; color:#94a3b8; border-bottom:1px solid #334155; white-space:nowrap; position:sticky; top:0; background:#0f172a;';
     const td = 'padding:5px 8px; font-size:.76rem; border-bottom:1px solid #1e293b;';
-    const body = CONC.cargando ? '<tr><td colspan="8" style="padding:16px; color:#94a3b8;">Cargando remitos…</td></tr>'
-      : !vis.length ? `<tr><td colspan="8" style="padding:16px; color:#94a3b8;">${CONC.rows.length ? 'Ninguna línea coincide con la búsqueda.' : '✔ No hay remitos sin registrar en este período: todo lo que salió figura en los despachos del tablero.'}</td></tr>`
-      : vis.map(x => `<tr><td style="${td}"><input type="checkbox" ${CONC.sel.has(x.ref) ? 'checked' : ''} onchange="cirConcSel('${esc(x.ref)}',this.checked)"></td><td style="${td}">${kvFecha(x.l.fecha)}</td><td style="${td}">${esc(x.l.comprobante)}</td><td style="${td}">${esc(x.l.cliente || '')}</td><td style="${td}">${esc(x.l.codigo)}</td><td style="${td}">${esc(x.l.descripcion || '')}${x.cand.map(d => `<div style="font-size:.7rem; color:#fbbf24; margin-top:3px;">${d.baja ? `⚠ Posible entrega parcial hecha en SGA: NV ${esc(d.comprobante)} · bajó el pendiente (${fmtN(d.pend)} u. sin registrar) · detectado el ${kvFecha(d.desaparecio_dia)}` : `⚠ Posible desaparecido de SGA: NV ${esc(d.comprobante)} · pendiente ${fmtN(d.pend)} · desapareció el ${kvFecha(d.desaparecio_dia)}`} ${(typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? `<button onclick="cirConcEsEste('${esc(x.ref)}',${d.id},${d.baja ? 'true' : 'false'})" style="padding:2px 8px; font-size:.7rem;">${d.baja ? 'Es esta' : 'Es este'}</button>` : ''}</div>`).join('')}</td><td style="${td} text-align:right;">${fmtN(x.falta, x.falta % 1 ? 1 : 0)}${x.falta < Number(x.l.cantidad) ? `<div class="code">de ${fmtN(x.l.cantidad)}</div>` : ''}</td><td style="${td} text-align:right;">${fmtN(x.kg, 1)}</td></tr>`).join('');
+    const body = CONC.cargando ? '<tr><td colspan="9" style="padding:16px; color:#94a3b8;">Cargando remitos…</td></tr>'
+      : !vis.length ? `<tr><td colspan="9" style="padding:16px; color:#94a3b8;">${CONC.rows.length ? 'Ninguna línea coincide con la búsqueda.' : '✔ No hay remitos sin registrar en este período: todo lo que salió figura en los despachos del tablero.'}</td></tr>`
+      : vis.map(x => `<tr><td style="${td}"><input type="checkbox" ${CONC.sel.has(x.ref) ? 'checked' : ''} onchange="cirConcSel('${esc(x.ref)}',this.checked)"></td><td style="${td}">${kvFecha(x.l.fecha)}</td><td style="${td}">${esc(x.l.comprobante)}</td><td style="${td}">${x.l.oc ? esc(x.l.oc) : '<span style="color:#64748b;">sin OC</span>'}</td><td style="${td}">${esc(x.l.cliente || '')}</td><td style="${td}">${esc(x.l.codigo)}</td><td style="${td}">${esc(x.l.descripcion || '')}${x.cand.map(d => `<div style="font-size:.7rem; color:#fbbf24; margin-top:3px;">${d.baja ? `⚠ Posible entrega parcial hecha en SGA: NV ${esc(d.comprobante)} · bajó el pendiente (${fmtN(d.pend)} u. sin registrar) · detectado el ${kvFecha(d.desaparecio_dia)}` : `⚠ Posible desaparecido de SGA: NV ${esc(d.comprobante)} · pendiente ${fmtN(d.pend)} · desapareció el ${kvFecha(d.desaparecio_dia)}`} ${(typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? `<button onclick="cirConcEsEste('${esc(x.ref)}',${d.id},${d.baja ? 'true' : 'false'})" style="padding:2px 8px; font-size:.7rem;">${d.baja ? 'Es esta' : 'Es este'}</button>` : ''}</div>`).join('')}</td><td style="${td} text-align:right;">${fmtN(x.falta, x.falta % 1 ? 1 : 0)}${x.falta < Number(x.l.cantidad) ? `<div class="code">de ${fmtN(x.l.cantidad)}</div>` : ''}</td><td style="${td} text-align:right;">${fmtN(x.kg, 1)}</td></tr>`).join('');
     const toks = concNorm(CONC.q).split(' ').filter(Boolean);
     const est = CONC.estado.filter(x => !toks.length || toks.every(t => concNorm([x.l.cliente, x.l.comprobante, x.l.codigo, x.l.descripcion].join(' ')).includes(t)));
     const estTabla = `<div style="margin:16px 0 6px; font-weight:700; color:#fff; font-size:.82rem;">Líneas de remito que NO figuran arriba (${est.length}) y por qué</div><table style="width:100%; border-collapse:collapse;"><thead><tr><th style="${th}">Fecha</th><th style="${th}">Remito</th><th style="${th}">Cliente</th><th style="${th}">Código</th><th style="${th}">Descripción</th><th style="${th} text-align:right;">Cant.</th><th style="${th}">Estado</th></tr></thead><tbody>${est.length ? est.map(x => `<tr><td style="${td}">${kvFecha(x.l.fecha)}</td><td style="${td}">${esc(x.l.comprobante)}</td><td style="${td}">${esc(x.l.cliente || '')}</td><td style="${td}">${esc(x.l.codigo)}</td><td style="${td}">${esc(x.l.descripcion || '')}</td><td style="${td} text-align:right;">${fmtN(x.l.cantidad, x.l.cantidad % 1 ? 1 : 0)}</td><td style="${td} color:#94a3b8;">${x.txt}${x.forz && (typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE && (CURRENT_PROFILE.es_admin || ['colaborador', 'editor'].includes(CURRENT_PROFILE.rol))) ? ` <button onclick="cirConcForzar('${esc(x.ref)}')" style="padding:2px 8px; font-size:.7rem;" title="Si esa salida NO era la de este remito, registrarlo igual">No es ese despacho: registrar igual</button>` : ''}</td></tr>`).join('') : `<tr><td colspan="7" style="padding:12px; color:#94a3b8;">Ninguna.</td></tr>`}</tbody></table>`;
@@ -7069,7 +7076,7 @@ function showToast(message, kind) {
         <div class="quick-chips" style="margin:8px 0;">${chip(15)}${chip(30)}${chip(60)}${chip(90)}<input type="search" placeholder="🔎 Buscar cliente, remito, código…" value="${esc(CONC.q)}" oninput="cirConcQ(this.value)" style="flex:1; min-width:180px; background:#0b1220; border:1px solid var(--card-border); color:#fff; border-radius:8px; padding:6px 10px; font-size:.8rem;"></div>
         <label style="font-size:.74rem; color:#cbd5e1; display:flex; gap:6px; align-items:center; cursor:pointer; margin-bottom:6px;"><input type="checkbox" ${CONC.todas ? 'checked' : ''} onchange="cirConcTodas(this.checked)"> Ver también las líneas de remito que no aparecen (ya registradas, cubiertas por un despacho del tablero, ignoradas) y el motivo</label>
       </div>
-      <div class="conc-sc" style="padding:0 16px; overflow:auto; flex:1; min-height:0;"><table style="width:100%; border-collapse:collapse;"><thead><tr><th style="${th}"><input type="checkbox" onchange="cirConcTodos(this.checked)" ${vis.length && vis.every(x => CONC.sel.has(x.ref)) ? 'checked' : ''}></th><th style="${th}">Fecha</th><th style="${th}">Remito</th><th style="${th}">Cliente</th><th style="${th}">Código</th><th style="${th}">Descripción</th><th style="${th} text-align:right;">Sin registrar (u)</th><th style="${th} text-align:right;">Kg</th></tr></thead><tbody>${body}</tbody></table>${CONC.todas ? estTabla : ''}</div>
+      <div class="conc-sc" style="padding:0 16px; overflow:auto; flex:1; min-height:0;"><table style="width:100%; border-collapse:collapse;"><thead><tr><th style="${th}"><input type="checkbox" onchange="cirConcTodos(this.checked)" ${vis.length && vis.every(x => CONC.sel.has(x.ref)) ? 'checked' : ''}></th><th style="${th}">Fecha</th><th style="${th}">Remito</th><th style="${th}">OC</th><th style="${th}">Cliente</th><th style="${th}">Código</th><th style="${th}">Descripción</th><th style="${th} text-align:right;">Sin registrar (u)</th><th style="${th} text-align:right;">Kg</th></tr></thead><tbody>${body}</tbody></table>${CONC.todas ? estTabla : ''}</div>
       <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 16px; border-top:1px solid var(--card-border);"><div><div class="text-dim" style="font-size:.76rem;">${vis.length} línea${vis.length === 1 ? '' : 's'} · ${fmtN(tu)} u. · ${fmtN(tk, 1)} Kg · ${nsel} seleccionada${nsel === 1 ? '' : 's'}</div>${descChk}</div>
         <div class="row-actions">${btn('No es un despacho del tablero', 'cirConcIgnorar()', '', !nsel)}${btn('✅ Registrar como despachado', 'cirConcRegistrar()', 'pri', !nsel)}</div></div></div>`;
     const sc1 = ov.querySelector('.conc-sc'); if (sc1) sc1.scrollTop = st0;
@@ -7088,7 +7095,7 @@ function showToast(message, kind) {
     const l = CONC.lines.find(x => concRef(x) === ref); if (!l) return;
     if (!confirm(`Se va a registrar este remito aunque el tablero ya tenga un despacho parecido: ${fmtN(l.cantidad)} u. · ${fmtN(l.kilos || 0, 1)} Kg de ${l.codigo}, con fecha ${kvFecha(l.fecha)}${CONC.desc && ['kanban', 'sector_z'].some(u => kOf(u, l.codigo) != null) ? ', y se descuenta de la estantería kanban' : ''}.\n\nSi en realidad es la MISMA salida que ya estaba registrada, se cuenta dos veces.\n\n¿Confirmás?`)) return;
     try {
-      const { data, error } = await supabaseClient.rpc('remitos_registrar_despachos', { p_descontar: !!CONC.desc, p_lineas: [{ comprobante: l.comprobante, linea: l.linea, fecha: l.fecha, cliente: l.cliente, codigo: l.codigo, descripcion: l.descripcion, cantidad: l.cantidad, kg: l.kilos || 0 }] });
+      const { data, error } = await supabaseClient.rpc('remitos_registrar_despachos', { p_descontar: !!CONC.desc, p_lineas: [{ comprobante: l.comprobante, linea: l.linea, fecha: l.fecha, cliente: l.cliente, codigo: l.codigo, descripcion: l.descripcion, cantidad: l.cantidad, kg: l.kilos || 0, oc: l.oc, material: l.material }] });
       if (error) throw error;
       if (typeof despachosLog !== 'undefined') despachosLog.push({ id: 'rem-' + ref, itemId: 0, cliente: l.cliente, comprobante: 'REM ' + l.comprobante, codigo: l.codigo, descripcion: l.descripcion, cantidad: l.cantidad, kg: Math.round((l.kilos || 0) * 10) / 10, dia: l.fecha, remito_ref: ref });
       concCompute(); concDraw();
@@ -7134,7 +7141,7 @@ function showToast(message, kind) {
     if (conCand && !confirm(`${conCand} de las líneas elegidas tienen un posible desaparecido o entrega parcial de SGA (aviso amarillo). Si es la misma salida, tocá "Es este" / "Es esta" en esa línea en vez de registrarla acá: si no, se cuenta dos veces.\n\n¿Registrar igual?`)) return;
     if (!confirm(`Se van a registrar ${sel.length} línea${sel.length === 1 ? '' : 's'} (${fmtN(u)} u. · ${fmtN(kg, 1)} Kg) como despachadas, con la fecha de cada remito.${CONC.desc && conKan.length ? '\nSe descuentan de la estantería kanban las piezas que la llevan (hasta lo que haya).' : ''} ¿Confirmás?`)) return;
     try {
-      const { data, error } = await supabaseClient.rpc('remitos_registrar_despachos', { p_descontar: !!CONC.desc, p_lineas: sel.map(x => ({ comprobante: x.l.comprobante, linea: x.l.linea, fecha: x.l.fecha, cliente: x.l.cliente, codigo: x.l.codigo, descripcion: x.l.descripcion, cantidad: x.falta, kg: x.kg })) });
+      const { data, error } = await supabaseClient.rpc('remitos_registrar_despachos', { p_descontar: !!CONC.desc, p_lineas: sel.map(x => ({ comprobante: x.l.comprobante, linea: x.l.linea, fecha: x.l.fecha, cliente: x.l.cliente, codigo: x.l.codigo, descripcion: x.l.descripcion, cantidad: x.falta, kg: x.kg, oc: x.l.oc, material: x.l.material })) });
       if (error) throw error;
       if (typeof despachosLog !== 'undefined') sel.forEach(x => despachosLog.push({ id: 'rem-' + x.ref, itemId: 0, cliente: x.l.cliente, comprobante: 'REM ' + x.l.comprobante, codigo: x.l.codigo, descripcion: x.l.descripcion, cantidad: x.falta, kg: Math.round(x.kg * 10) / 10, dia: x.l.fecha, remito_ref: x.ref }));
       CONC.sel = new Set(); concCompute(); concDraw();
