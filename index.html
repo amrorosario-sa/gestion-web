@@ -6739,11 +6739,12 @@ function showToast(message, kind) {
     ask('Armar aros fuera de plan', 'Mecanizado hizo algo que no estaba planificado. Consume 1 macho + 1 hembra sueltos por aro (no toca lo reservado para un plan).', [
       { type: 'select', id: 'r', label: 'Aro armado', options: rs.map(x => [x.r.id, `${x.r.nombre} (se pueden armar hasta ${x.max})`]), value: first.r.id },
       { id: 'n', label: 'Aros armados', value: first.max, max: 99999 },
-      { type: 'select', id: 'd', label: '¿A dónde sale?', options: [['kanban', '🏬 Estantería kanban']].concat(peds.length ? [['pedido', '📦 Directo al pedido más próximo de ese aro']] : []), value: 'kanban' }], 'Registrar',
+      { type: 'select', id: 'd', label: '¿A dónde sale?', options: [['kanban', '🏬 Estantería kanban']].concat(peds.length ? [['pedido', '📦 Directo al pedido más próximo de ese aro']] : []), value: 'kanban' },
+      { type: 'date', id: 'f', label: 'Fecha en que se armó (hoy por defecto; cambiala si fue otro día)', value: TODAY() }], 'Registrar',
       async v => { const x = rs.find(z => z.r.id === v.r); if (!x) throw new Error('Receta inválida.'); if (v.n > x.max) throw new Error('Solo hay piezas sueltas para ' + x.max + ' aros de ese tipo.');
         let row = null;
         if (v.d === 'pedido') { const ps = pedidosAbiertos(x.r.salida); if (!ps.length) throw new Error('No hay pedidos pendientes de ese aro; mandalo a la estantería kanban.'); row = ps[0]; if (v.n > remainingPend(row)) throw new Error('El pedido más próximo (' + row.comprobante + ') necesita ' + remainingPend(row) + ' aros.'); }
-        await rpc('mec_armar_libre', { p_receta: v.r, p_cant: v.n, p_destino: v.d, p_pedido: row ? row.comprobante : null });
+        await rpc('mec_armar_libre', { p_receta: v.r, p_cant: v.n, p_destino: v.d, p_pedido: row ? row.comprobante : null, p_fecha: v.f });
         if (row) { try { await marcarPreparado(row, v.n); } catch (e) { throw new Error('Se registró el armado pero no se pudo marcar el pedido como preparado. Avisale a quien administra el tablero.'); } } });
   };
   A.salidaLibre = c => {
@@ -7329,7 +7330,9 @@ function showToast(message, kind) {
     const prox = Object.keys(FERIADOS).filter(f => f >= TODAY()).sort().slice(0, 4).map(f => `${fmt(f)} · ${esc(FERIADOS[f])}`).join(' &nbsp;|&nbsp; ');
     const exc = C.exc.slice().sort((a, b) => a.fecha.localeCompare(b.fecha)).map(e => `<div style="display:flex; gap:8px; align-items:center; padding:3px 0;"><span>${fmt(e.fecha)} — <b>${e.tipo === 'no' ? 'no se trabaja' : 'sí se trabaja'}</b>${e.nota ? ' · ' + esc(e.nota) : ''}</span>${puedePlanificar() ? btn('Quitar', `cir_quitarExc('${e.fecha}')`) : ''}</div>`).join('');
     const recs = C.recetas.map(r => `<tr><td><b>${esc(r.nombre)}</b></td><td>${nameCell(r.macho)}</td><td>${nameCell(r.hembra)}</td><td>${nameCell(r.salida)}</td><td>${puedePlanificar() ? btn('🗑', `cir_delReceta('${esc(r.id)}')`) : ''}</td></tr>`).join('');
-    const movs = C.movs.map(m => `<div>${new Date(m.ts).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} · <b>${esc(UBIC[m.ubicacion])}</b> ${m.cantidad > 0 ? '+' : ''}${m.cantidad} × ${esc(nombre(m.codigo))} — ${esc(m.motivo || '')}${m.pedido_ref ? ' (' + esc(m.pedido_ref) + ')' : ''}</div>`).join('');
+    const movs = C.movs.map(m => { const diaTxt = m.dia ? String(m.dia).split('-').reverse().join('/') : new Date(m.ts).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' });
+      const cargadoOtroDia = m.dia && m.dia !== new Date(m.ts).toISOString().slice(0, 10);
+      return `<div>${diaTxt} ${new Date(m.ts).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} · <b>${esc(UBIC[m.ubicacion])}</b> ${m.cantidad > 0 ? '+' : ''}${m.cantidad} × ${esc(nombre(m.codigo))} — ${esc(m.motivo || '')}${m.pedido_ref ? ' (' + esc(m.pedido_ref) + ')' : ''}${cargadoOtroDia ? ' <span class="dim" style="font-size:.7rem;">(cargado después)</span>' : ''}</div>`; }).join('');
     return `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>📅 Planificación por fecha (4 semanas)</h2>${puedePlanificar() ? btn('+ Nuevo plan', 'cir_nuevoPlan()', 'pri') : ''}</div>
         <div class="sub">Cuántos aros arma Mecanizado cada día. La entrega de Terminación se calcula sola: el día hábil anterior. Los días apagados no son hábiles y se saltan.</div><div class="week">${cells.map(cell).join('')}</div></div>
       <div class="panel"><h2>Planes cargados</h2>${rows ? `<table><tr><th>Mecanizado arma</th><th>Terminación entrega</th><th>Plan</th><th class="num">Aros</th><th class="num">Armados</th><th>Avance</th><th></th></tr>${rows}</table>` : '<div class="empty">Sin planes.</div>'}</div>` +
@@ -7925,8 +7928,12 @@ function showToast(message, kind) {
   }
 
   // cartera = lo que todavía falta entregar según SGA, valorizado con el precio final
+  // Usa DATA (no BASE): un ítem dividido en entregas parciales (ver 005_entregas_parciales.sql)
+  // tiene que entrar como una fila por entrega, cada una con su propia fecha y su propia
+  // cantidad pendiente — si se usara BASE, todo el pedido caería junto bajo la única fecha
+  // de SGA, ignorando la división hecha desde "Dividir en entregas".
   function cartera() {
-    const items = (typeof BASE !== 'undefined' && BASE) ? BASE : (typeof DATA !== 'undefined' ? DATA : []);
+    const items = (typeof DATA !== 'undefined' && DATA) ? DATA : (typeof BASE !== 'undefined' ? BASE : []);
     const etapas = {}, clientes = {}; const tot = { USD: 0, ARS: 0 }; let sin = 0, n = 0;
     items.forEach(it => {
       if (!it || it.estado_general === 'Cancelado' || !(it.pend > 0)) return;
@@ -7945,7 +7952,9 @@ function showToast(message, kind) {
 
   // ---------- estimación por fecha de entrega + detalle ----------
   const fEnt = it => { const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(it.fecha_entrega || '')); return m ? m[1] : ''; };
-  const itemsBase = () => (typeof BASE !== 'undefined' && BASE) ? BASE : (typeof DATA !== 'undefined' ? DATA : []);
+  // Igual que en cartera(): DATA trae una fila por entrega (fecha y cantidad propias) cuando
+  // el pedido está dividido en entregas parciales; BASE lo trae todo junto, con la fecha única de SGA.
+  const itemsBase = () => (typeof DATA !== 'undefined' && DATA) ? DATA : (typeof BASE !== 'undefined' ? BASE : []);
   // renglón pendiente valorizado: { it, monto, m, val, f, atras }
   function pendItems() {
     const out = [];
