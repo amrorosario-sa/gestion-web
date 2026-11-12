@@ -6489,13 +6489,14 @@ function showToast(message, kind) {
   }
   async function load() {
     try {
-      const [st, planes, moldeos, k, exc, recetas, cfg, movs] = await Promise.all([
+      const [st, planes, moldeos, k, exc, recetas, cfg, movs, armados] = await Promise.all([
         fetchAll('mec_stock'), fetchAll('mec_planes', { col: 'id' }), fetchAll('mec_moldeos', { col: 'id' }), fetchAll('mec_k'), fetchAll('mec_excepciones'),
         fetchAll('mec_recetas'), fetchAll('mec_config'),
         supabaseClient.from('mec_movimientos').select('*').order('id', { ascending: false }).limit(40).then(r => { if (r.error) throw r.error; return r.data || []; }),
+        supabaseClient.from('mec_movimientos').select('*').in('motivo', ['aro armado', 'aro armado fuera de plan']).order('dia', { ascending: false }).order('id', { ascending: false }).limit(400).then(r => { if (r.error) throw r.error; return r.data || []; }),
       ]);
       C.stock = {}; st.forEach(r => { (C.stock[r.ubicacion] = C.stock[r.ubicacion] || {})[r.codigo] = Number(r.cantidad); });
-      C.planes = planes; C.moldeos = moldeos; C.k = k; C.exc = exc; C.recetas = recetas; C.movs = movs;
+      C.planes = planes; C.moldeos = moldeos; C.k = k; C.exc = exc; C.recetas = recetas; C.movs = movs; C.armados = armados;
       C.cfg = {}; cfg.forEach(r => { C.cfg[r.clave] = r.valor; });
       await kvLoad();
       try { const rr = await supabaseClient.from('mec_rechazos').select('*').order('id', { ascending: false }).limit(30); C.rechazos = rr.error ? [] : (rr.data || []); } catch (e) { C.rechazos = []; }
@@ -6543,7 +6544,7 @@ function showToast(message, kind) {
     const need = new Set();
     const add = c => { if (c && !NAMES[c] && !(typeof catalogoByCodigo !== 'undefined' && catalogoByCodigo && catalogoByCodigo.get(c))) need.add(c); };
     Object.values(C.stock).forEach(o => Object.keys(o).forEach(add)); C.k.forEach(r => add(r.codigo)); C.moldeos.forEach(r => add(r.codigo)); C.movs.forEach(r => add(r.codigo));
-    C.recetas.forEach(r => { add(r.macho); add(r.hembra); add(r.salida); }); C.rechazos.forEach(r => add(r.codigo));
+    C.recetas.forEach(r => { add(r.macho); add(r.hembra); add(r.salida); }); C.rechazos.forEach(r => add(r.codigo)); (C.armados || []).forEach(r => add(r.codigo));
     const list = [...need]; if (!list.length) return;
     try { for (let i = 0; i < list.length; i += 100) { const { data } = await supabaseClient.from('catalogo_articulos').select('codigo,descripcion').in('codigo', list.slice(i, i + 100)); (data || []).forEach(r => { NAMES[r.codigo] = r.descripcion; }); } } catch (e) { /* los códigos se muestran tal cual */ }
   }
@@ -7350,7 +7351,7 @@ function showToast(message, kind) {
       return `<tr><td><b>${p.fecha === TODAY() ? '<span class="soon">HOY</span> · ' : ''}${fmt(p.fecha)}</b>${p.fecha < TODAY() ? '<div class="late">de días anteriores</div>' : ''}</td><td>Plan #${p.id} · ${esc(r.nombre)}</td><td class="num">${pendPlan(p)}</td><td class="num">${p.hold_macho}</td><td class="num">${p.hold_hembra}</td>
         <td><div class="row-actions">${puedeOperar() ? btn('Armar' + (max ? ' hasta ' + max : ''), `cir_armar(${p.id})`, 'pri', !max) + btn('Rechazar…', `cir_rechazarPlan(${p.id})`, '', !(p.hold_macho || p.hold_hembra)) : ''}</div>${(fm > 0 || fh > 0) ? `<div class="code">falta que Terminación entregue ${Math.max(fm, 0)} machos / ${Math.max(fh, 0)} hembras (el ${fmt(dueOf(p))})</div>` : ''}</td></tr>`; }).join('');
     return alertPanel('kanban', 'Hay que armar aros para reponerla.', false) + `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>⚙️ Armado de aros — por fecha</h2>${puedePlanificar() ? btn('📋 Contar / ajustar stock', 'cir_ajustarMec()') : ''}</div><div class="sub">Lo planificado para cada día. Cuando Terminación entrega los machos y hembras, se arma. El aro sale a la estantería kanban o directo a un pedido (venta en caliente).</div>
-      ${planes ? `<table><tr><th>Armar el</th><th>Plan</th><th class="num">Faltan armar</th><th class="num">Machos acá</th><th class="num">Hembras acá</th><th></th></tr>${planes}</table>` : '<div class="empty">No hay planes pendientes.</div>'}</div>` + sueltasPanel() + rechazosPanel();
+      ${planes ? `<table><tr><th>Armar el</th><th>Plan</th><th class="num">Faltan armar</th><th class="num">Machos acá</th><th class="num">Hembras acá</th><th></th></tr>${planes}</table>` : '<div class="empty">No hay planes pendientes.</div>'}</div>` + armadosPanel() + sueltasPanel() + rechazosPanel();
   }
 
   // ---------- vistas simples del día (supervisor de Mecanizado / Terminación) ----------
@@ -7369,6 +7370,21 @@ function showToast(message, kind) {
     return `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>🧰 Fuera de plan — piezas sueltas en Mecanizado</h2>${puedeOperar() ? btn('Armar aros fuera de plan…', 'cir_armarLibre()', hayArmable ? 'pri' : '') : ''}</div>
       <div class="sub">Si hacés algo distinto de lo planificado, cargalo acá. Son las piezas que Terminación entregó sin plan o lo que sobró de un plan cerrado.</div>
       ${sueltas ? `<table><tr><th>Pieza</th><th class="num">Sueltas</th><th></th></tr>${sueltas}</table>` : '<div class="empty">No hay piezas sueltas en Mecanizado.</div>'}</div>`;
+  }
+  // Aros armados por día (de plan + fuera de plan): un <details> por día, tocalo para ver el detalle.
+  function armadosPanel() {
+    const porDia = {};
+    (C.armados || []).forEach(m => { const d = m.dia || String(m.ts).slice(0, 10); (porDia[d] = porDia[d] || []).push(m); });
+    const dias = Object.keys(porDia).sort((a, b) => b.localeCompare(a)).slice(0, 60);
+    const diaBlock = d => { const movs = porDia[d], total = movs.reduce((a, m) => a + Number(m.cantidad), 0);
+      const porAro = {};
+      movs.forEach(m => { const libre = m.motivo === 'aro armado fuera de plan', key = m.codigo + '|' + (libre ? 'libre' : 'plan' + (m.plan_id || ''));
+        (porAro[key] = porAro[key] || { codigo: m.codigo, libre, plan: m.plan_id, cant: 0 }).cant += Number(m.cantidad); });
+      const filas = Object.values(porAro).sort((a, b) => nombre(a.codigo).localeCompare(nombre(b.codigo), 'es'))
+        .map(x => `<tr><td>${nameCell(x.codigo)}</td><td class="num"><b>${x.cant}</b></td><td>${x.libre ? '<span class="code">fuera de plan</span>' : (x.plan ? '<span class="code">Plan #' + x.plan + '</span>' : '')}</td></tr>`).join('');
+      return `<details style="margin-bottom:6px;"${d === TODAY() ? ' open' : ''}><summary style="cursor:pointer; font-weight:700; color:#fff; padding:4px 0;">${fmt(d)}${d === TODAY() ? ' · hoy' : ''} — <b>${total}</b> aro${total === 1 ? '' : 's'} armado${total === 1 ? '' : 's'}</summary>
+        <table><tr><th>Aro</th><th class="num">Cantidad</th><th></th></tr>${filas}</table></details>`; };
+    return `<div class="panel"><h2>📦 Aros armados por día</h2><div class="sub">De plan y fuera de plan juntos. Tocá un día para ver qué aros se armaron ese día.</div>${dias.length ? dias.map(diaBlock).join('') : '<div class="empty">Todavía no hay armados registrados.</div>'}</div>`;
   }
 
   // ---------- tarjetas resumen (Mecanizado / Terminación): se toca una para ver el detalle ----------
