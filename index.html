@@ -6505,7 +6505,13 @@ function showToast(message, kind) {
   const puedePlanificar = () => admin() || rol() === 'editor';
 
   const NAMES = {};
-  const nombre = c => { if (NAMES[c]) return NAMES[c]; const it = (typeof catalogoByCodigo !== 'undefined' && catalogoByCodigo && catalogoByCodigo.get(c)); if (it) return it[1]; const d = (typeof DATA !== 'undefined') && DATA.find(r => r.codigo === c); return d ? d.descripcion : c; };
+  // Nombres abreviados (los que cargó Martin en el Excel): por código. Se usan en TODAS las pantallas; el nombre completo queda en el tooltip y en las búsquedas.
+  const ALIAS = { 'R0002': "SH 90", 'R0003': "SH 70", 'R0004': "DH 90", 'R0007': "DH 90 C/T NOD", 'R0023': "DH 70", 'R0042': "DH 80", 'R0045': "LIV 90 C/T", 'R0047': "LIV 70", 'R0052': "LIV 70 C/T", 'R0053': "DH 90 NOD S/T", 'R0054': "LIV 90 S/T", 'R0059': "DH 1100 (RANDON)", 'R0060': "SH 90 MIXTO", 'R0061': "DH 100", '000000970015': "MSH", '000000970034': "MDH", '000000970076': "M LIV 70/90 S/T", '000000970165': "MSH P/MIXTO", '000000970176': "M LIV 70 C/T", '030000970169': "M LIV 90 C/T", '030000970203': "MDH 90 NOD", '030000970205': "MDH 90 NOD C/T", '050000970178': "M 1100", '000000970013': "HSH 90", '000000970014': "HSH 70", '000000970035': "HDH 90", '000000970042': "HDH 70", '000000970075': "H LIV 90", '000000970077': "HDH 80", '020000970175': "H LIV 70", '030000970202': "HDH 90 NOD", '050000970173': "HDH 100", '050000970187': "H 1100" };
+  window.cirAlias = c => ALIAS[c] || '';
+  const nombreFull = c => { if (NAMES[c]) return NAMES[c]; const it = (typeof catalogoByCodigo !== 'undefined' && catalogoByCodigo && catalogoByCodigo.get(c)); if (it) return it[1]; const d = (typeof DATA !== 'undefined') && DATA.find(r => r.codigo === c); return d ? d.descripcion : c; };
+  const nombre = c => ALIAS[c] || nombreFull(c);
+  const recNom = r => (r && (ALIAS[r.salida] || r.nombre)) || '?';
+  const buscable = c => nombreFull(c) + ' ' + (ALIAS[c] || '') + ' ' + c;
   const stock = (c, u) => (C.stock[u] && C.stock[u][c]) || 0;
   const rec = id => C.recetas.find(r => r.id === id);
   const planesOrd = () => C.planes.slice().sort((a, b) => a.fecha.localeCompare(b.fecha) || a.id - b.id);
@@ -6640,7 +6646,7 @@ function showToast(message, kind) {
   const toks = d => new Set(sane(d).filter(w => !STOP.has(w) && !/^0\d{3}$/.test(w)));
   function parecido(a, b) { const A = toks(a), B = toks(b); if (!A.size || !B.size) return 0; let i = 0; A.forEach(w => { if (B.has(w)) i++; }); return i / (A.size + B.size - i); }
   async function sugerencias(kind, salidaCod) {
-    const rows = await catSearch(kind, '', 500), ref = NAMES[salidaCod] || nombre(salidaCod);
+    const rows = await catSearch(kind, '', 500), ref = NAMES[salidaCod] || nombreFull(salidaCod);
     return rows.map(r => ({ r, sc: parecido(ref, r.descripcion) })).sort((x, y) => y.sc - x.sc);
   }
 
@@ -6651,7 +6657,7 @@ function showToast(message, kind) {
       if (f.type === 'select') return `<label>${f.label}</label><select id="cf_${f.id}">${f.options.map(o => `<option value="${esc(o[0])}"${o[0] === f.value ? ' selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`;
       if (f.type === 'date') return `<label>${f.label}</label><input id="cf_${f.id}" type="date" value="${f.value}" oninput="cirDateHint()"><div class="d" id="cir-datehint" style="margin:4px 0 0;"></div>`;
       if (f.type === 'text') return `<label>${f.label}</label><input id="cf_${f.id}" type="text" value="${esc(f.value || '')}" placeholder="${esc(f.ph || '')}">`;
-      if (f.type === 'pieza') return `<label>${f.label}</label><input id="cf_${f.id}" type="text" data-kind="${f.kind || ''}" data-cod="${esc(f.value || '')}" value="${esc(f.value ? f.value + ' — ' + nombre(f.value) : '')}" placeholder="${f.kind ? 'Tocá para ver la lista, o escribí para filtrar' : 'Escribí nombre o código y elegí'}" autocomplete="off" oninput="cirPiezaSearch('${f.id}')" onfocus="cirPiezaSearch('${f.id}', true)"><div class="cir-res" id="cr_${f.id}"></div>`;
+      if (f.type === 'pieza') return `<label>${f.label}</label><input id="cf_${f.id}" type="text" data-kind="${f.kind || ''}" data-cod="${esc(f.value || '')}" value="${esc(f.value ? f.value + ' — ' + nombreFull(f.value) : '')}" placeholder="${f.kind ? 'Tocá para ver la lista, o escribí para filtrar' : 'Escribí nombre o código y elegí'}" autocomplete="off" oninput="cirPiezaSearch('${f.id}')" onfocus="cirPiezaSearch('${f.id}', true)"><div class="cir-res" id="cr_${f.id}"></div>`;
       if (f.type === 'dec') return `<label>${f.label}</label><input id="cf_${f.id}" type="text" inputmode="decimal" value="${f.value == null ? '' : f.value}" placeholder="${esc(f.ph || '')}">`;
       return `<label>${f.label}</label><input id="cf_${f.id}" type="number" min="${f.min == null ? 1 : f.min}" max="${f.max}" value="${f.value}">`;
     }).join('') + `<div class="cir-err" id="cir-err"></div><div class="btns"><button onclick="cirCloseAsk()">Cancelar</button><button class="pri" id="cir-ok">${okText}</button></div>`;
@@ -6700,11 +6706,11 @@ function showToast(message, kind) {
     } catch (e) { if (my === psSeq) box.innerHTML = '<div class="late" style="padding:4px 0;">No se pudo buscar: ' + esc(e.message || e) + '</div>'; }
   };
   window.cirPiezaPick = async (id, cod) => {
-    const inp = document.getElementById('cf_' + id); inp.dataset.cod = cod; inp.value = cod + ' — ' + nombre(cod);
+    const inp = document.getElementById('cf_' + id); inp.dataset.cod = cod; inp.value = cod + ' — ' + nombreFull(cod);
     document.getElementById('cr_' + id).innerHTML = '';
     // receta: al elegir el aro armado se completan solos el nombre y (si hay un candidato claro) macho y hembra
     if (id === 's' && inp.dataset.kind === 'aro') {
-      const n = document.getElementById('cf_n'); if (n && !n.value.trim()) n.value = nombre(cod);
+      const n = document.getElementById('cf_n'); if (n && !n.value.trim()) n.value = nombreFull(cod);
       for (const [fid, kind] of [['m', 'macho'], ['h', 'hembra']]) {
         const e = document.getElementById('cf_' + fid); if (!e || e.dataset.cod) continue;
         try { const sg = await sugerencias(kind, cod); const top = sg[0];
@@ -6767,16 +6773,16 @@ function showToast(message, kind) {
     const rDe = cod ? C.recetas.find(r => r.salida === cod) : null;
     if (cod && !rDe) { alert('Esta pieza todavía no tiene receta (macho + hembra → aro armado). Cargala primero en Programación mecanizado → Recetas y después creá el plan.'); return; }
     ask(ot ? 'Lanzar OT — ' + (nombre(cod) || 'Mecanizado') : 'Nuevo plan de armado', ot ? 'Orden de trabajo de Mecanizado para reponer el kanban. La cantidad sugerida sale del stock virtual; podés cambiarla. Terminación entrega el día hábil anterior.' : 'Cuántos aros arma Mecanizado y para qué día. Terminación entrega el día hábil anterior. Si ya hay machos y hembras sueltos en Mecanizado, se reservan solos para este plan.', [
-      { type: 'select', id: 'r', label: 'Aro a armar', options: C.recetas.map(r => [r.id, r.nombre]), value: (rDe || C.recetas[0]).id }, { id: 'n', label: ot ? 'Cantidad a lanzar' : 'Cantidad de aros', value: def || 10, max: 9999 }, { type: 'date', id: 'f', label: 'Fecha en que Mecanizado lo arma', value: bizN(4) }], ot ? 'Lanzar OT' : 'Crear plan',
+      { type: 'select', id: 'r', label: 'Aro a armar', options: C.recetas.map(r => [r.id, recNom(r)]), value: (rDe || C.recetas[0]).id }, { id: 'n', label: ot ? 'Cantidad a lanzar' : 'Cantidad de aros', value: def || 10, max: 9999 }, { type: 'date', id: 'f', label: 'Fecha en que Mecanizado lo arma', value: bizN(4) }], ot ? 'Lanzar OT' : 'Crear plan',
       v => tbl(supabaseClient.from('mec_planes').insert({ receta: v.r, cantidad: v.n, fecha: v.f })));
   };
   A.cambiarFecha = pid => { const p = C.planes.find(x => x.id === pid);
-    ask('Cambiar fecha del plan #' + pid, `${p.cantidad} × ${esc(rec(p.receta).nombre)}`, [{ type: 'date', id: 'f', label: 'Nueva fecha en Mecanizado', value: p.fecha }], 'Guardar', v => tbl(supabaseClient.from('mec_planes').update({ fecha: v.f }).eq('id', pid))); };
+    ask('Cambiar fecha del plan #' + pid, `${p.cantidad} × ${esc(recNom(rec(p.receta)))}`, [{ type: 'date', id: 'f', label: 'Nueva fecha en Mecanizado', value: p.fecha }], 'Guardar', v => tbl(supabaseClient.from('mec_planes').update({ fecha: v.f }).eq('id', pid))); };
   A.delPlan = async pid => { if (!confirm('¿Borrar el plan #' + pid + '?')) return; try { await tbl(supabaseClient.from('mec_planes').delete().eq('id', pid)); await reload(); } catch (e) { alert(e.message); } };
   A.receta = () => ask('Nueva receta de aro', 'Primero elegí el aro que se vende (el aro armado, sin macho ni hembra en el nombre). Después el macho y la hembra con que se arma: la app te propone los que más se parecen.', [
     { type: 'pieza', kind: 'aro', id: 's', label: 'Aro armado (el que se vende)', value: '' }, { type: 'pieza', kind: 'macho', id: 'm', label: 'Aro macho', value: '' }, { type: 'pieza', kind: 'hembra', id: 'h', label: 'Aro hembra', value: '' },
     { type: 'text', id: 'n', label: 'Nombre de la receta', ph: 'Se completa solo al elegir el aro' }], 'Guardar',
-    v => { const nom = v.n.trim() || nombre(v.s); if (!nom) throw new Error('Falta el nombre.'); return tbl(supabaseClient.from('mec_recetas').insert({ id: 'r' + Date.now().toString(36), nombre: nom, macho: v.m, hembra: v.h, salida: v.s })); });
+    v => { const nom = v.n.trim() || nombreFull(v.s); if (!nom) throw new Error('Falta el nombre.'); return tbl(supabaseClient.from('mec_recetas').insert({ id: 'r' + Date.now().toString(36), nombre: nom, macho: v.m, hembra: v.h, salida: v.s })); });
   A.delReceta = async id => { if (!confirm('¿Borrar la receta?')) return; try { await tbl(supabaseClient.from('mec_recetas').delete().eq('id', id)); await reload(); } catch (e) { alert('No se pudo borrar (¿tiene planes?): ' + e.message); } };
   A.excepcion = () => ask('Agregar excepción de día', 'Los sábados, domingos y feriados nacionales ya se descuentan solos. Usá esto cuando un día cambia respecto del calendario.', [
     { type: 'date', id: 'f', label: 'Fecha', value: bizN(5) },
@@ -6806,7 +6812,7 @@ function showToast(message, kind) {
     const max = Math.min(p.hold_macho, p.hold_hembra, pendPlan(p));
     const sug = (kOf('kanban', r.salida) != null && nivel('kanban', r.salida) !== 'verde') ? 'kanban' : 'pedido';
     const peds = pedidoOpts(r.salida);
-    ask('Armar aros — plan #' + pid, `${esc(r.nombre)}: consume 1 macho + 1 hembra por aro.` + (sug === 'kanban' ? '<br>🏬 La estantería kanban no está en verde: se sugiere reponerla.' : ''), [
+    ask('Armar aros — plan #' + pid, `${esc(recNom(r))}: consume 1 macho + 1 hembra por aro.` + (sug === 'kanban' ? '<br>🏬 La estantería kanban no está en verde: se sugiere reponerla.' : ''), [
       { id: 'n', label: 'Aros armados (máx. ' + max + ')', value: max, max },
       { type: 'select', id: 'd', label: '¿A dónde sale el aro armado?', options: [['kanban', '🏬 Estantería kanban']].concat(peds.length ? [['pedido', '📦 Directo a un pedido (venta en caliente)']] : []), value: (sug === 'pedido' && !peds.length) ? 'kanban' : sug }]
         .concat(peds.length ? [{ type: 'select', id: 'p', label: 'Pedido (si va directo)', options: peds, value: peds[0][0] }] : []), 'Registrar',
@@ -6825,7 +6831,7 @@ function showToast(message, kind) {
     if (!rs.length) { alert('No hay machos y hembras sueltos para armar. Terminación tiene que entregarlos primero (Entrega suelta).'); return; }
     const first = rs[0], peds = pedidoOpts(first.r.salida);
     ask('Armar aros fuera de plan', 'Mecanizado hizo algo que no estaba planificado. Consume 1 macho + 1 hembra sueltos por aro (no toca lo reservado para un plan).', [
-      { type: 'select', id: 'r', label: 'Aro armado', options: rs.map(x => [x.r.id, `${x.r.nombre} (se pueden armar hasta ${x.max})`]), value: first.r.id },
+      { type: 'select', id: 'r', label: 'Aro armado', options: rs.map(x => [x.r.id, `${recNom(x.r)} (se pueden armar hasta ${x.max})`]), value: first.r.id },
       { id: 'n', label: 'Aros armados', value: first.max, max: 99999 },
       { type: 'select', id: 'd', label: '¿A dónde sale?', options: [['kanban', '🏬 Estantería kanban']].concat(peds.length ? [['pedido', '📦 Directo al pedido más próximo de ese aro']] : []), value: 'kanban' },
       { type: 'date', id: 'f', label: 'Fecha en que se armó (hoy por defecto; cambiala si fue otro día)', value: TODAY() }], 'Registrar',
@@ -6870,7 +6876,7 @@ function showToast(message, kind) {
   // piezas reservadas por un plan (aunque sea de un día anterior): el plan vuelve a pedir la reposición
   A.rechazarPlan = async pid => { const p = C.planes.find(x => x.id === pid), r = p && rec(p.receta); if (!r) return; const mot = await motivosLista();
     const opts = [[r.macho, `Macho — ${nombre(r.macho)} (en Mecanizado para este plan: ${p.hold_macho})`], [r.hembra, `Hembra — ${nombre(r.hembra)} (en Mecanizado para este plan: ${p.hold_hembra})`]];
-    ask('Rechazar piezas del plan #' + pid, `${esc(r.nombre)} · plan del ${fmt(p.fecha)}.<br>Lo rechazado se descuenta de lo entregado a este plan: Terminación tiene que volver a entregarlo.`,
+    ask('Rechazar piezas del plan #' + pid, `${esc(recNom(r))} · plan del ${fmt(p.fecha)}.<br>Lo rechazado se descuenta de lo entregado a este plan: Terminación tiene que volver a entregarlo.`,
       [{ type: 'select', id: 'c', label: 'Pieza', options: opts, value: r.macho }].concat(rechazarFields(Math.max(p.hold_macho, p.hold_hembra, 1), r.macho, mot)),
       'Registrar rechazo', v => rechazarRpc(v.c, pid, v)); };
   A.cerrarPlan = pid => { const p = C.planes.find(x => x.id === pid); if (!p) return;
@@ -6879,7 +6885,7 @@ function showToast(message, kind) {
   Object.keys(A).forEach(k => { window['cir_' + k] = A[k]; });
 
   // ---------- vistas ----------
-  const nameCell = c => `<b>${esc(nombre(c))}</b><div class="code">${esc(c)}</div>`;
+  const nameCell = c => ALIAS[c] ? `<b title="${esc(nombreFull(c))} · ${esc(c)}">${esc(ALIAS[c])}</b>` : `<b>${esc(nombre(c))}</b><div class="code">${esc(c)}</div>`;
   const btn = (txt, js, cls, dis) => `<button class="${cls || ''}" ${dis ? 'disabled' : ''} onclick="${js}">${txt}</button>`;
   function alertPanel(u, quien, conPlan) {
     return alertas(u).map(c => { const n = nivel(u, c), L = lote(u, c);
@@ -6898,9 +6904,8 @@ function showToast(message, kind) {
 
   // ---------- resumen de arriba (solo nombre y cantidad) ----------
   // Nombres abreviados: por código o por nombre completo en MAYÚSCULAS. Si no hay, se muestra el nombre del catálogo.
-  const ALIAS = {};
-  const corto = c => { const n = nombre(c); return ALIAS[c] || ALIAS[String(n).toUpperCase().trim()] || n; };
-  const rsItem = (c, n, cls) => `<div class="rs-i ${cls || ''}" title="${esc(nombre(c))}"><span>${esc(corto(c))}</span><b>${n}</b></div>`;
+  const corto = c => nombre(c);
+  const rsItem = (c, n, cls) => `<div class="rs-i ${cls || ''}" title="${esc(nombreFull(c))}"><span>${esc(corto(c))}</span><b>${n}</b></div>`;
   const rsBox = (titulo, sub, items, vacio, max) => { max = max || 24;
     const mas = items.length > max ? `<details class="rs-more"><summary>Ver las ${items.length - max} restantes</summary><div class="rs">${items.slice(max).join('')}</div></details>` : '';
     return `<div class="panel"><div class="rs-tit"><h2>${titulo}</h2><span class="code">${sub || ''}</span></div>${items.length ? `<div class="rs">${items.slice(0, max).join('')}</div>${mas}` : `<div class="empty">${vacio}</div>`}</div>`; };
@@ -7312,7 +7317,7 @@ function showToast(message, kind) {
     const nRev = all.filter(x => x.rev).length;
     const cnt = n => all.filter(x => x.nf === n).length;
     const q = sane(C.kanQ);
-    const lista = all.filter(x => (C.kanFilter === 'todos' || (C.kanFilter === 'krev' ? !!x.rev : x.nf === C.kanFilter)) && q.every(w => (nombre(x.c) + ' ' + x.c).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(w)))
+    const lista = all.filter(x => (C.kanFilter === 'todos' || (C.kanFilter === 'krev' ? !!x.rev : x.nf === C.kanFilter)) && q.every(w => buscable(x.c).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(w)))
       .sort((a, b) => SEV[a.nf] - SEV[b.nf] || SEV[a.nv] - SEV[b.nv] || nombre(a.c).localeCompare(nombre(b.c), 'es'));
     const sinK = Object.keys(C.stock[u] || {}).filter(c => stock(c, u) > 0 && kOf(u, c) == null).sort((a, b) => nombre(a).localeCompare(nombre(b), 'es'));
     const tabBtn = (k, t) => `<button class="tab ${C.kanTab === k ? 'on' : ''}" onclick="cirKanTab('${k}')">${t}</button>`;
@@ -7384,12 +7389,12 @@ function showToast(message, kind) {
         else { armHoy = aros.reduce((a, x) => a + Math.min(x.m.disp, x.h.disp), 0); armF = aros.reduce((a, x) => a + Math.min(x.m.conF, x.h.conF), 0); }
       }
       const piezas = [...pz.values()], alerta = piezas.some(p => p.nV && p.nV !== 'verde');
-      return { rs, comp, pz, aros, chips, armHoy, armF, def, alerta, titulo: rs.map(r => r.nombre).join(' · ') };
+      return { rs, comp, pz, aros, chips, armHoy, armF, def, alerta, titulo: rs.map(r => recNom(r) + ' ' + r.nombre).join(' · '), tituloCorto: rs.map(r => recNom(r)).join(' · ') };
     }).sort((a, b) => (b.alerta - a.alerta) || (b.def - a.def) || a.titulo.localeCompare(b.titulo, 'es'));
   }
   function arRow(p, nom, ind, extra) {
     const pill = n => n ? `<span class="arp ${NIVP[n][0]}">${NIVP[n][1]}</span>` : '<span class="arp nd">SIN K</span>', aro = p.rol === 'a';
-    return `<tr class="${aro ? 'ar-aro' : ''}"><td style="padding-left:${ind ? 26 : 6}px"><span class="artag ${p.rol}">${aro ? 'Aro' : p.rol === 'm' ? 'Macho' : 'Hembra'}</span><b>${esc(String(nom).slice(0, 70))}</b>${extra || ''}<div class="code">${esc(p.c)}</div></td>
+    return `<tr class="${aro ? 'ar-aro' : ''}"><td style="padding-left:${ind ? 26 : 6}px"><span class="artag ${p.rol}">${aro ? 'Aro' : p.rol === 'm' ? 'Macho' : 'Hembra'}</span><b title="${esc(nombreFull(p.c))} · ${esc(p.c)}">${esc(String(nom).slice(0, 70))}</b>${extra || ''}${ALIAS[p.c] ? '' : `<div class="code">${esc(p.c)}</div>`}</td>
       <td class="num">${aro ? '' : p.fu}</td><td class="num">${aro ? '' : p.te}</td><td class="num"><b>${p.es}</b></td><td class="num">${aro ? '' : p.me}</td><td class="num"><b>${p.vir}</b></td><td class="num">${p.k == null ? '—' : p.k}</td><td>${pill(p.nE)}</td><td>${pill(p.nV)}</td><td class="num">${p.lote ? `<b class="rep">${p.lote}</b>` : '<span class="code">—</span>'}</td></tr>`;
   }
   function vAros() {
@@ -7403,29 +7408,29 @@ function showToast(message, kind) {
     const qbox = `<input id="ar-q" class="kq" placeholder="Buscar aro, macho o hembra…" value="${esc(C.arQ || '')}" oninput="cirArQ(this.value)">`;
     if (tab === 'aro') {
       const A = []; all.forEach(f => f.aros.forEach(x => A.push({ f, x })));
-      const L = A.filter(({ f, x }) => (fl === 'todos' || x.a.nV !== 'verde') && q.every(w => norm(nombre(x.a.c) + ' ' + x.a.c + ' ' + nombre(x.m.c) + ' ' + nombre(x.h.c)).includes(w)));
+      const L = A.filter(({ f, x }) => (fl === 'todos' || x.a.nV !== 'verde') && q.every(w => norm(buscable(x.a.c) + ' ' + buscable(x.m.c) + ' ' + buscable(x.h.c)).includes(w)));
       const cn = n => A.filter(({ x }) => x.a.nV === n).length;
       const rows = L.map(({ x }) => { const a = x.a, pill = n => n ? `<span class="arp ${NIVP[n][0]}">${NIVP[n][1]}</span>` : '<span class="arp nd">SIN K</span>';
-        return `<tr><td><b>${esc(String(nombre(a.c)).slice(0, 70))}</b><div class="code">${esc(a.c)} · macho ${esc(x.m.c)} + hembra ${esc(x.h.c)}</div></td><td class="num"><b>${a.es}</b></td><td class="num">${a.k == null ? '—' : a.k}</td><td>${pill(a.nE)}</td><td>${pill(a.nV)}</td><td class="num">${a.lote ? `<b class="rep">${a.lote}</b>` : '<span class="code">—</span>'}</td><td class="num">${Math.min(x.m.disp, x.h.disp)}</td></tr>`; }).join('');
+        return `<tr><td><b>${esc(String(nombre(a.c)).slice(0, 70))}</b><div class="code">${ALIAS[a.c] ? '' : esc(a.c) + ' · '}macho ${esc(ALIAS[x.m.c] || x.m.c)} + hembra ${esc(ALIAS[x.h.c] || x.h.c)}</div></td><td class="num"><b>${a.es}</b></td><td class="num">${a.k == null ? '—' : a.k}</td><td>${pill(a.nE)}</td><td>${pill(a.nV)}</td><td class="num">${a.lote ? `<b class="rep">${a.lote}</b>` : '<span class="code">—</span>'}</td><td class="num">${Math.min(x.m.disp, x.h.disp)}</td></tr>`; }).join('');
       return `<div class="sub" style="color:var(--dim);margin-bottom:10px">Aros ya armados (estantería del kanban de aros), ordenados por familia de receta. Tarjeta roja bajo K, amarilla hasta 2K. Lote = 2,5K + (2K − stock virtual). El stock virtual descuenta solo los pedidos que vencen en los próximos ${ventana()} días (y los atrasados). La última columna es el tope por piezas disponibles (macho/hembra); si un macho se comparte entre varios aros, mirá el reparto en la pestaña Machos y hembras.</div>${head}
         <div class="ar-kpis">${kp('ro', 'alerta', cn('rojo'), '🔴 aros en rojo')}${kp('am', 'alerta', cn('amarillo'), '🟡 aros en amarillo')}<div class="ar-kpi ok" style="cursor:default"><b>${cn('verde')}</b><span>🟢 aros en verde</span></div><div class="ar-kpi" style="cursor:default"><b>${A.reduce((a, { x }) => a + x.a.es, 0)}</b><span>aros armados en estantería</span></div></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">${fb('todos', 'Todos')}${fb('alerta', '⚠️ Con alerta')}${qbox}</div>
         <div class="ar-fam"><div class="ar-tw"><table><tr><th>Aro armado</th><th class="num">Estantería</th><th class="num">K</th><th>Tarjeta estantería</th><th>Tarjeta virtual</th><th class="num">Lote</th><th class="num">Se pueden armar (tope)</th></tr>${rows || '<tr><td colspan="7" class="empty">Nada con este filtro.</td></tr>'}</table></div></div>`;
     }
-    const okQ = f => q.every(w => norm(f.titulo + ' ' + [...f.pz.values()].map(p => nombre(p.c) + ' ' + p.c).join(' ')).includes(w));
+    const okQ = f => q.every(w => norm(f.titulo + ' ' + [...f.pz.values()].map(p => buscable(p.c)).join(' ')).includes(w));
     const alertaPz = f => [...f.pz.values()].some(p => p.nV && p.nV !== 'verde');
     const L = all.filter(f => (fl === 'todos' || (fl === 'def' ? f.def : alertaPz(f))) && okQ(f));
     return `<div class="sub" style="color:var(--dim);margin-bottom:10px">Machos y hembras (Sector Z) agrupados por receta. Una pieza que sirve para varios aros aparece <b>una sola vez</b> y se compara contra la <b>suma</b> de lo que necesitan. Disponible = terminación + estantería + mecanizado. Tarjeta roja bajo K, amarilla hasta 2K. Lote = 2,5K + (2K − stock virtual). Los aros armados están en la otra pestaña.</div>${head}
       <div class="ar-kpis">${kp('ro', 'alerta', all.filter(alertaPz).length, '⚠️ familias con alerta')}${kp('am', 'def', all.filter(f => f.def).length, '⚖️ con desfasaje')}<div class="ar-kpi ok" style="cursor:default"><b>${all.reduce((a, f) => a + f.armHoy, 0)}</b><span>aros armables hoy (suma)</span></div><div class="ar-kpi" style="cursor:default"><b>${all.length}</b><span>familias / recetas</span></div></div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">${fb('todos', 'Todas')}${fb('def', '⚖️ Con desfasaje')}${fb('alerta', '⚠️ Con alerta')}${qbox}</div>
-      ${L.map(f => { const comp = new Set(f.comp), rec = f.rs.length > 1 ? ' <span class="code">para ' + esc(f.rs.map(r => r.nombre).join(' · ').slice(0, 90)) + '</span>' : '';
+      ${L.map(f => { const comp = new Set(f.comp), rec = f.rs.length > 1 ? ' <span class="code">para ' + esc(f.rs.map(r => recNom(r)).join(' · ').slice(0, 90)) + '</span>' : '';
         let body = '', foot = '';
         if (!comp.size) { const x = f.aros[0]; body = arRow(x.m, nombre(x.m.c), false) + arRow(x.h, nombre(x.h.c), false); foot = `<span>Machos disponibles: <b>${x.m.disp}</b> · hembras: <b>${x.h.disp}</b></span>`; }
         else { body = f.comp.map(c => arRow(f.pz.get(c), nombre(c), false, ` <span class="code">compartido por ${f.rs.filter(r => r.macho === c || r.hembra === c).length} aros</span>`)).join('')
-          + f.aros.map(x => [x.m, x.h].filter(p => !comp.has(p.c)).map(p => arRow(p, nombre(p.c), false, ` <span class="code">→ ${esc(String(x.r.nombre).slice(0, 40))}</span>`)).join('')).join('');
+          + f.aros.map(x => [x.m, x.h].filter(p => !comp.has(p.c)).map(p => arRow(p, nombre(p.c), false, ` <span class="code">→ ${esc(String(recNom(x.r)).slice(0, 40))}</span>`)).join('')).join('');
           foot = f.comp.map(c => { const S = f.pz.get(c); return `<span>${S.rol === 'm' ? 'Machos' : 'Hembras'} (${esc(nombre(c).slice(0, 34))}) disponibles: <b>${S.disp}</b> · ${S.rol === 'm' ? 'hembras' : 'machos'} de todos los aros sumadas: <b>${S._nec}</b>${S._otrosK ? ` · K del compartido: <b>${S.k == null ? '—' : S.k}</b> · suma de K de las otras: <b>${S._otrosK}</b>` : ''}</span>`; }).join(''); }
         const al = alertaPz(f);
-        return `<div class="ar-fam"><div class="ar-h"><b>🔧 ${esc(f.titulo.slice(0, 120))}</b><div class="ar-ch">${f.chips.map(c => `<span class="ar-c ${c.cls}">${c.t}</span>`).join('')}<span class="ar-c">armables hoy: <b>${f.armHoy}</b></span><span class="ar-c">con lo de fusión: <b>${f.armF}</b></span>${al ? '<span class="ar-c ro">⚠️ ALERTA</span>' : '<span class="ar-c ok">OK</span>'}</div></div>
+        return `<div class="ar-fam"><div class="ar-h"><b>🔧 ${esc(f.tituloCorto.slice(0, 120))}</b><div class="ar-ch">${f.chips.map(c => `<span class="ar-c ${c.cls}">${c.t}</span>`).join('')}<span class="ar-c">armables hoy: <b>${f.armHoy}</b></span><span class="ar-c">con lo de fusión: <b>${f.armF}</b></span>${al ? '<span class="ar-c ro">⚠️ ALERTA</span>' : '<span class="ar-c ok">OK</span>'}</div></div>
           <div class="ar-tw"><table><tr><th>Pieza</th><th class="num">Fusión</th><th class="num">Terminación</th><th class="num">Estantería</th><th class="num">Mecanizado</th><th class="num">Stock virtual</th><th class="num">K</th><th>Tarjeta estantería</th><th>Tarjeta virtual</th><th class="num">Lote</th></tr>${body}</table></div><div class="ar-f">${foot}</div></div>`; }).join('') || '<div class="panel"><div class="empty">Nada con este filtro.</div></div>'}`;
   }
   window.cirArTab = t => { C.arTab = t; C.arFilter = 'todos'; render(); };
@@ -7441,11 +7446,11 @@ function showToast(message, kind) {
       return `<div class="day ${d === TODAY() ? 'today' : ''} ${off ? 'off' : ''} ${d < TODAY() ? 'past' : ''}"><h4>${fmt(d)}${d === TODAY() ? ' · hoy' : ''}</h4>` + (off ? `<div class="why">🚫 ${esc(whyOff(d) || 'no hábil')}</div>`
         : (aros ? `<div class="a">⚙️ Mecanizado arma: <b>${aros}</b> aros</div>` : '<div class="none">⚙️ sin armado</div>') + (pzs ? `<div class="t">🔧 Terminación entrega: <b>${pzs}</b> machos + <b>${pzs}</b> hembras</div>` : '<div class="none">🔧 sin entregas</div>')) + '</div>'; };
     const rows = planesOrd().map(p => { const r = rec(p.receta), pd = pendPlan(p), pct = p.cantidad ? Math.round(100 * p.armados / p.cantidad) : 100;
-      return `<tr><td><b>${fmt(p.fecha)}</b>${isBiz(p.fecha) ? '' : `<div class="late">no es día hábil (${esc(whyOff(p.fecha))})</div>`}</td><td>${dueTxt(dueOf(p))}</td><td><b>Plan #${p.id}</b> · ${esc(r ? r.nombre : '?')}</td><td class="num">${p.cantidad}</td><td class="num">${p.armados}</td>
+      return `<tr><td><b>${fmt(p.fecha)}</b>${isBiz(p.fecha) ? '' : `<div class="late">no es día hábil (${esc(whyOff(p.fecha))})</div>`}</td><td>${dueTxt(dueOf(p))}</td><td><b>Plan #${p.id}</b> · ${esc(r ? recNom(r) : '?')}</td><td class="num">${p.cantidad}</td><td class="num">${p.armados}</td>
         <td><div class="bar"><i style="width:${pct}%"></i></div></td><td><div class="row-actions">${pd > 0 && puedePlanificar() ? btn('Cambiar fecha', `cir_cambiarFecha(${p.id})`) + btn('Cerrar', `cir_cerrarPlan(${p.id})`) : (pd <= 0 ? '<span class="ok">' + (p.cantidad ? '✔ completo' : 'cerrado') + '</span>' : '')}${puedePlanificar() && !p.armados && !p.hold_macho && !p.hold_hembra ? btn('🗑', `cir_delPlan(${p.id})`) : ''}</div></td></tr>`; }).join('');
     const prox = Object.keys(FERIADOS).filter(f => f >= TODAY()).sort().slice(0, 4).map(f => `${fmt(f)} · ${esc(FERIADOS[f])}`).join(' &nbsp;|&nbsp; ');
     const exc = C.exc.slice().sort((a, b) => a.fecha.localeCompare(b.fecha)).map(e => `<div style="display:flex; gap:8px; align-items:center; padding:3px 0;"><span>${fmt(e.fecha)} — <b>${e.tipo === 'no' ? 'no se trabaja' : 'sí se trabaja'}</b>${e.nota ? ' · ' + esc(e.nota) : ''}</span>${puedePlanificar() ? btn('Quitar', `cir_quitarExc('${e.fecha}')`) : ''}</div>`).join('');
-    const recs = C.recetas.map(r => `<tr><td><b>${esc(r.nombre)}</b></td><td>${nameCell(r.macho)}</td><td>${nameCell(r.hembra)}</td><td>${nameCell(r.salida)}</td><td>${puedePlanificar() ? btn('🗑', `cir_delReceta('${esc(r.id)}')`) : ''}</td></tr>`).join('');
+    const recs = C.recetas.map(r => `<tr><td><b>${esc(recNom(r))}</b>${ALIAS[r.salida] ? `<div class="code">${esc(r.nombre)}</div>` : ''}</td><td>${nameCell(r.macho)}</td><td>${nameCell(r.hembra)}</td><td>${nameCell(r.salida)}</td><td>${puedePlanificar() ? btn('🗑', `cir_delReceta('${esc(r.id)}')`) : ''}</td></tr>`).join('');
     const movs = C.movs.map(m => { const diaTxt = m.dia ? String(m.dia).split('-').reverse().join('/') : new Date(m.ts).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' });
       const cargadoOtroDia = m.dia && m.dia !== new Date(m.ts).toISOString().slice(0, 10);
       return `<div>${diaTxt} ${new Date(m.ts).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} · <b>${esc(UBIC[m.ubicacion])}</b> ${m.cantidad > 0 ? '+' : ''}${m.cantidad} × ${esc(nombre(m.codigo))} — ${esc(m.motivo || '')}${m.pedido_ref ? ' (' + esc(m.pedido_ref) + ')' : ''}${cargadoOtroDia ? ' <span class="dim" style="font-size:.7rem;">(cargado después)</span>' : ''}</div>`; }).join('');
@@ -7463,7 +7468,7 @@ function showToast(message, kind) {
   function vMec() {
     const planes = planesOrd().filter(p => pendPlan(p) > 0 && rec(p.receta)).map(p => { const r = rec(p.receta), max = Math.min(p.hold_macho, p.hold_hembra, pendPlan(p));
       const fm = pendPlan(p) - p.hold_macho, fh = pendPlan(p) - p.hold_hembra;
-      return `<tr><td><b>${p.fecha === TODAY() ? '<span class="soon">HOY</span> · ' : ''}${fmt(p.fecha)}</b>${p.fecha < TODAY() ? '<div class="late">de días anteriores</div>' : ''}</td><td>Plan #${p.id} · ${esc(r.nombre)}</td><td class="num">${pendPlan(p)}</td><td class="num">${p.hold_macho}</td><td class="num">${p.hold_hembra}</td>
+      return `<tr><td><b>${p.fecha === TODAY() ? '<span class="soon">HOY</span> · ' : ''}${fmt(p.fecha)}</b>${p.fecha < TODAY() ? '<div class="late">de días anteriores</div>' : ''}</td><td>Plan #${p.id} · ${esc(recNom(r))}</td><td class="num">${pendPlan(p)}</td><td class="num">${p.hold_macho}</td><td class="num">${p.hold_hembra}</td>
         <td><div class="row-actions">${puedeOperar() ? btn('Armar' + (max ? ' hasta ' + max : ''), `cir_armar(${p.id})`, 'pri', !max) + btn('Rechazar…', `cir_rechazarPlan(${p.id})`, '', !(p.hold_macho || p.hold_hembra)) : ''}</div>${(fm > 0 || fh > 0) ? `<div class="code">falta que Terminación entregue ${Math.max(fm, 0)} machos / ${Math.max(fh, 0)} hembras (el ${fmt(dueOf(p))})</div>` : ''}</td></tr>`; }).join('');
     return resumenMec() + alertasDet('kanban', alertPanel('kanban', 'Hay que armar aros para reponerla.', false)) + `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>⚙️ Armado de aros — por fecha</h2>${puedePlanificar() ? btn('📋 Contar / ajustar stock', 'cir_ajustarMec()') : ''}</div><div class="sub">Lo planificado para cada día. Cuando Terminación entrega los machos y hembras, se arma. El aro sale a la estantería kanban o directo a un pedido (venta en caliente).</div>
       ${planes ? `<table><tr><th>Armar el</th><th>Plan</th><th class="num">Faltan armar</th><th class="num">Machos acá</th><th class="num">Hembras acá</th><th></th></tr>${planes}</table>` : '<div class="empty">No hay planes pendientes.</div>'}</div>` + sueltasPanel() + rechazosPanel();
@@ -7479,7 +7484,7 @@ function showToast(message, kind) {
   }
   function sueltasPanel(soloSiHay) {
     const sueltas = Object.keys(C.stock.mecanizado || {}).filter(c => libre(c) > 0).map(c => { const rs = C.recetas.filter(r => r.macho === c || r.hembra === c);
-      return `<tr><td>${nameCell(c)}${rs.length ? `<div class="code">${rs.map(r => (r.macho === c ? 'macho' : 'hembra') + ' de ' + esc(r.nombre)).join(' · ')}</div>` : ''}</td><td class="num"><b>${libre(c)}</b></td><td>${puedeOperar() ? btn('Sale procesada…', `cir_salidaLibre('${esc(c)}')`) + btn('Rechazar…', `cir_rechazar('${esc(c)}')`) : ''}</td></tr>`; }).join('');
+      return `<tr><td>${nameCell(c)}${rs.length ? `<div class="code">${rs.map(r => (r.macho === c ? 'macho' : 'hembra') + ' de ' + esc(recNom(r))).join(' · ')}</div>` : ''}</td><td class="num"><b>${libre(c)}</b></td><td>${puedeOperar() ? btn('Sale procesada…', `cir_salidaLibre('${esc(c)}')`) + btn('Rechazar…', `cir_rechazar('${esc(c)}')`) : ''}</td></tr>`; }).join('');
     const hayArmable = C.recetas.some(r => Math.min(libre(r.macho), libre(r.hembra)) > 0);
     if (soloSiHay && !sueltas) return '';
     return `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>🧰 Fuera de plan — piezas sueltas en Mecanizado</h2>${puedeOperar() ? btn('Armar aros fuera de plan…', 'cir_armarLibre()', hayArmable ? 'pri' : '') : ''}</div>
@@ -7549,10 +7554,10 @@ function showToast(message, kind) {
     const listos = hoyP.reduce((a, p) => a + Math.min(p.hold_macho, p.hold_hembra, pendPlan(p)), 0);
     const card = p => { const r = rec(p.receta), max = Math.min(p.hold_macho, p.hold_hembra, pendPlan(p)), fm = Math.max(0, pendPlan(p) - p.hold_macho), fh = Math.max(0, pendPlan(p) - p.hold_hembra), late = p.fecha < hoy;
       const estado = max >= pendPlan(p) ? '<span class="ok">✔ Tenés todo para armar</span>' : max > 0 ? `<span class="soon">Podés armar ${max} ahora · falta que Terminación entregue ${fm} machos / ${fh} hembras</span>` : `<span class="late">⏳ Esperando a Terminación: faltan ${fm} machos / ${fh} hembras</span>`;
-      return `<div class="card ${late ? 'c-late' : 'c-hoy'}"><div class="card-top"><div><div class="big">${pendPlan(p)} × ${esc(r.nombre)}</div><div class="code">Plan #${p.id}${p.cantidad !== pendPlan(p) ? ` · ya armaste ${p.armados} de ${p.cantidad}` : ''}</div></div><div>${late ? `<span class="chip rojo">ATRASADO · era del ${fmt(p.fecha)}</span>` : '<span class="chip hoy">HOY</span>'}</div></div>
+      return `<div class="card ${late ? 'c-late' : 'c-hoy'}"><div class="card-top"><div><div class="big">${pendPlan(p)} × ${esc(recNom(r))}</div><div class="code">Plan #${p.id}${p.cantidad !== pendPlan(p) ? ` · ya armaste ${p.armados} de ${p.cantidad}` : ''}</div></div><div>${late ? `<span class="chip rojo">ATRASADO · era del ${fmt(p.fecha)}</span>` : '<span class="chip hoy">HOY</span>'}</div></div>
         <div class="card-mid">⚙️ Machos acá: <b>${p.hold_macho}</b> &nbsp;·&nbsp; Hembras acá: <b>${p.hold_hembra}</b></div><div class="card-mid">${estado}</div>
         ${puedeOperar() ? `<div class="row-actions" style="margin-top:8px;">${btn('Armar' + (max ? ' ' + max : ''), `cir_armar(${p.id})`, 'pri', !max)}${btn('Rechazar piezas…', `cir_rechazarPlan(${p.id})`, '', !(p.hold_macho || p.hold_hembra))}</div>` : ''}</div>`; };
-    const proxRows = prox.slice(0, 12).map(p => `<tr><td><b>${fmt(p.fecha)}</b></td><td>${esc(rec(p.receta).nombre)}</td><td class="num"><b>${pendPlan(p)}</b></td></tr>`).join('');
+    const proxRows = prox.slice(0, 12).map(p => `<tr><td><b>${fmt(p.fecha)}</b></td><td>${esc(recNom(rec(p.receta)))}</td><td class="num"><b>${pendPlan(p)}</b></td></tr>`).join('');
     const hayArmable = C.recetas.some(r => Math.min(libre(r.macho), libre(r.hembra)) > 0);
     const acciones = (puedeOperar() || puedePlanificar()) ? `<div class="quick">${puedeOperar() ? btn('🧰 Armar aros fuera de plan…', 'cir_armarLibre()', hayArmable ? 'pri' : '') : ''}${puedePlanificar() ? btn('📋 Contar / ajustar stock', 'cir_ajustarMec()') : ''}</div>` : '';
     const alK = alertas('kanban'), rojos = alK.filter(x => nivel('kanban', x) === 'rojo').length, amar = alK.length - rojos;
@@ -7586,11 +7591,11 @@ function showToast(message, kind) {
           : i.disp > 0 ? `<span class="pz-st bad" title="Sector Z + Terminación">⚠ Hay ${i.disp} · faltan ${i.falta - i.disp} por terminar</span>`
           : `<span class="pz-st bad">⚠ No hay · faltan ${i.falta} por terminar</span>`;
         const acts = i.falta && puedeOperar() ? `<div class="pz-act">${btn('Entregar ' + parte, `cir_entregar(${p.id},'${esc(i.c)}')`, 'pri', !i.disp)}${parte > 1 ? btn('Entregar una parte…', `cir_entregarParte(${p.id},'${esc(i.c)}')`, '', !i.disp) : ''}</div>` : '';
-        return `<div class="pz"><div class="pz-h"><span class="pz-tag ${esM ? 'm' : 'h'}">${esM ? 'MACHO' : 'HEMBRA'}</span><span class="pz-n">${esc(nombre(i.c))}</span></div><div class="code">${esc(i.c)}</div>
+        return `<div class="pz"><div class="pz-h"><span class="pz-tag ${esM ? 'm' : 'h'}">${esM ? 'MACHO' : 'HEMBRA'}</span><span class="pz-n">${esc(nombre(i.c))}</span></div>${ALIAS[i.c] ? '' : `<div class="code">${esc(i.c)}</div>`}
           <div class="pz-row"><div class="pz-big">${i.falta}<small>${i.falta ? 'a entregar' : ''}</small></div>${est}</div>
           <div class="code">Ya entregaste ${ya} de ${n}</div>${acts}</div>`; }).join('');
-      return `<div class="card ${late ? 'c-late' : 'c-hoy'}"><div class="code" style="letter-spacing:.05em;">PARA ARMAR</div><div class="big">${pendPlan(p)} × ${esc(r.nombre)}</div><div class="code">Mecanizado lo arma el ${fmt(p.fecha)} · plan #${p.id}</div><div style="margin:6px 0 2px;">${late ? `<span class="chip rojo">ATRASADA · era del ${fmt(dueOf(p))}</span>` : '<span class="chip hoy">HOY</span>'}</div>${pzs}</div>`; };
-    const proxRows = prox.slice(0, 12).map(p => { const r = rec(p.receta); return `<tr><td><b>${fmt(dueOf(p))}</b></td><td>${esc(r.nombre)}</td><td class="num"><b>${pendPlan(p)}</b> machos + <b>${pendPlan(p)}</b> hembras</td></tr>`; }).join('');
+      return `<div class="card ${late ? 'c-late' : 'c-hoy'}"><div class="code" style="letter-spacing:.05em;">PARA ARMAR</div><div class="big">${pendPlan(p)} × ${esc(recNom(r))}</div><div class="code">Mecanizado lo arma el ${fmt(p.fecha)} · plan #${p.id}</div><div style="margin:6px 0 2px;">${late ? `<span class="chip rojo">ATRASADA · era del ${fmt(dueOf(p))}</span>` : '<span class="chip hoy">HOY</span>'}</div>${pzs}</div>`; };
+    const proxRows = prox.slice(0, 12).map(p => { const r = rec(p.receta); return `<tr><td><b>${fmt(dueOf(p))}</b></td><td>${esc(recNom(r))}</td><td class="num"><b>${pendPlan(p)}</b> machos + <b>${pendPlan(p)}</b> hembras</td></tr>`; }).join('');
     const term = Object.keys(C.stock.terminacion || {}).filter(c => stock(c, 'terminacion') > 0).map(c => `<tr><td>${nameCell(c)}</td><td class="num">${stock(c, 'terminacion')}</td><td>${puedeOperar() ? btn('Terminé piezas…', `cir_terminar('${esc(c)}')`) : ''}</td></tr>`).join('');
     const mold = C.moldeos.map(o => `<tr><td>${nameCell(o.codigo)}${o.nota ? `<div class="code">${esc(o.nota)}</div>` : ''}</td><td class="num">${o.cantidad}</td><td>${puedeOperar() ? btn('Pasó a Terminación…', `cir_pasoTerm(${o.id})`) : ''}</td></tr>`).join('');
     const accionesT = (puedeOperar() || puedePlanificar()) ? `<div class="quick">${puedeOperar() ? btn('+ Entrega suelta a Mecanizado', 'cir_entregaSuelta()', 'pri') : ''}${puedePlanificar() ? btn('📋 Contar / ajustar stock', 'cir_ajustarTerm()') : ''}</div>` : '';
@@ -7637,7 +7642,7 @@ function showToast(message, kind) {
       const c = PL.cfg[a.codigo] || {}, kg = kgDe(a.codigo) || a.kxu || 0, ppm = c.piezas_x_molde || 1, cap = c.por_vuelta || 1, peso = kg * ppm;
       const dias = a.entrega ? Math.round((parse(a.entrega) - parse(hoy)) / 86400000) : 999, priAuto = dias <= 7 ? 1 : dias <= 15 ? 2 : 3;
       const needed = Math.ceil(a.pend / ppm), n = PL.over[a.codigo] != null ? PL.over[a.codigo] : needed;
-      return { id: a.codigo, ord: ord++, nombre: a.desc || a.codigo, codigo: a.codigo, mat: a.mat, kg, ppm, cap, peso, needed, n, pend: a.pend, pedidos: a.pedidos, entrega: a.entrega, dias,
+      return { id: a.codigo, ord: ord++, nombre: ALIAS[a.codigo] || a.desc || a.codigo, codigo: a.codigo, mat: a.mat, kg, ppm, cap, peso, needed, n, pend: a.pend, pedidos: a.pedidos, entrega: a.entrega, dias,
         tipo: c.tipo || (peso >= 15 ? 'Pesada' : 'Liviana'), tipoAuto: !c.tipo, pri: c.prioridad || priAuto, priAuto: !c.prioridad, inc: PL.inc[a.codigo] !== false }; });
   }
   function plPlanMacro(items, q) {
@@ -8567,6 +8572,8 @@ function showToast(message, kind) {
   const P = { L: [], M: [], R: {}, K: [], loaded: false, loading: false, error: null, tab: 'moldeo', dia: '', q2: '', fmol: 'todas', filtro: 'pend', q: '', kg: 'neto', prev: null, fecha: '', msg: null, idx: new Map(), archivo: '', MD: [], CC: [], FZ: new Set(), KM: [], nuevo: false, cm: null, q3: '', _pr: null };
   try { const v = localStorage.getItem('pf_kg'); if (v === 'bruto' || v === 'neto') P.kg = v; } catch (e) { /* sin guardado */ }
   const E = s => (typeof escHtml === 'function' ? escHtml(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
+  // nombre abreviado de la pieza (los que cargó Martin) si existe; si no, la descripción del parte
+  const dn = (o, n) => ((window.cirAlias && o && window.cirAlias(o.codigo)) || (o && o.descripcion) || '').slice(0, n);
   const nf = (n, d) => Number(n || 0).toLocaleString('es-AR', { maximumFractionDigits: d == null ? 1 : d });
   const pad = n => String(n).padStart(2, '0');
   const hoy = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
@@ -8708,7 +8715,7 @@ function showToast(message, kind) {
     const g = new Map(); ls.forEach(l => { const k = l.codigo + '|' + l.oc_norm + '|' + nn(l.cliente); if (!g.has(k)) g.set(k, []); g.get(k).push(l); });
     box.style.display = '';
     box.innerHTML = `<div style="font-weight:700;color:#fdba74;margin-bottom:6px">🔥 En el parte de fusión (${ls.length} línea${ls.length === 1 ? '' : 's'}) — piezas que todavía no figuran como pedido en SGA, o son de kanban</div>` + [...g.values()].slice(0, 12).map(x => { const l0 = x[0], rt = (x.find(l => term(l) > 0) || {}).id ? rutaTxt(x.find(l => term(l) > 0)) : null;
-      return `<div style="padding:6px 0;border-top:1px solid #334155"><b>${E((l0.descripcion || '').slice(0, 80))}</b> <span style="color:#94a3b8">${E(l0.codigo)} · ${E(l0.cliente)} · OC ${E(l0.oc_norm || l0.oc)} · ${TIPO[l0.tipo][0]}${l0.tipo === 'pedido' ? ' · sin pedido en SGA todavía' : ''}</span><div style="color:#fdba74;font-weight:600;margin-top:2px">${etTxt(x, rt).join(' · ')}</div></div>`; }).join('')
+      return `<div style="padding:6px 0;border-top:1px solid #334155"><b>${E(dn(l0, 80))}</b> <span style="color:#94a3b8">${E(l0.codigo)} · ${E(l0.cliente)} · OC ${E(l0.oc_norm || l0.oc)} · ${TIPO[l0.tipo][0]}${l0.tipo === 'pedido' ? ' · sin pedido en SGA todavía' : ''}</span><div style="color:#fdba74;font-weight:600;margin-top:2px">${etTxt(x, rt).join(' · ')}</div></div>`; }).join('')
       + `<div style="margin-top:6px">${puedeSec() || admin() ? `<button class="hdr-btn" style="padding:4px 10px;font-size:.78rem" onclick="pfBuscar('${E(ls[0].codigo)}')">Abrir en Parte de fusión</button>` : ''}</div>`;
   };
   // probetas del parte para la hoja de pesada: [{probeta, n}] de las piezas ya fundidas del pedido
@@ -8870,7 +8877,7 @@ function showToast(message, kind) {
       if (l.origen === 'moldeo' && P.FZ.has(String(l.colada)) && Number(l.fundido) === 0 && puedeConf()) acc.push(`<button class="btn sm" onclick="pfForzar('${E(String(l.colada))}',false)" title="Devolver a Faltan completar">↩ Faltan completar</button>`);
       acc.push(`<button class="btn sm" onclick="pfHist(${l.id})" title="Historial">📜</button>`);
       return `<tr><td><span class="cola">${E(l.colada)}</span></td>
-        <td><b>${E((l.descripcion || '').slice(0, 64))}</b><div class="mono">${E(l.codigo)} · ${E(l.cliente)} · OC ${E(l.oc_norm || l.oc)}</div><div>${chips(l)}</div></td>
+        <td><b>${E(dn(l, 64))}</b><div class="mono">${E(l.codigo)} · ${E(l.cliente)} · OC ${E(l.oc_norm || l.oc)}</div><div>${chips(l)}</div></td>
         <td class="num"><b>${nf(p, 0)}</b> <span class="mono">/ ${nf(l.cant, 0)}</span><div class="mono">${kgTxt(l.cant, l)} kg</div>${p > 0 ? `<div>${l.no_figura ? '<span class="chip bad">no figura en el último parte</span>' : d > 2 ? `<span class="chip bad">${d} días</span>` : d > 0 ? `<span class="chip warn">hace ${d} d</span>` : ''}</div>` : ''}</td>
         <td class="num"><b>${nf(Math.max(0, t), 0)}</b></td>
         <td>${est.map(x => `<div>${E(x)}</div>`).join('') || '<span class="mono">—</span>'}<div class="mono">Destino: ${DEST[destDe(l)]}</div></td>
@@ -8887,10 +8894,10 @@ function showToast(message, kind) {
     const sin = lp.filter(l => !pedidoDe(l).length);
     const grupos = new Map(); lp.filter(l => pedidoDe(l).length).forEach(l => { const k = l.codigo + '|' + l.oc_norm + '|' + nn(l.cliente); if (!grupos.has(k)) grupos.set(k, []); grupos.get(k).push(l); });
     const cards = [...grupos.values()].map(ls => { const l0 = ls[0], peds = pedidoDe(l0);
-      return `<div class="panel"><div class="row" style="justify-content:space-between"><div><b>${E((l0.descripcion || '').slice(0, 64))}</b><div class="mono">${E(l0.cliente)} · OC ${E(l0.oc_norm)} · ${E(l0.codigo)}</div></div><div class="mono">Pedido SGA: ${peds.map(r => 'NV ' + E(r.comprobante) + ' (' + nf(r.pend, 0) + ' u. · ' + E(r.estado_general || '') + ')').join(' · ')}</div></div>
+      return `<div class="panel"><div class="row" style="justify-content:space-between"><div><b>${E(dn(l0, 64))}</b><div class="mono">${E(l0.cliente)} · OC ${E(l0.oc_norm)} · ${E(l0.codigo)}</div></div><div class="mono">Pedido SGA: ${peds.map(r => 'NV ' + E(r.comprobante) + ' (' + nf(r.pend, 0) + ' u. · ' + E(r.estado_general || '') + ')').join(' · ')}</div></div>
         <div class="tblwrap"><table style="min-width:520px"><tr><th>Colada</th><th class="num">Cant.</th><th>Dónde está</th></tr>${ls.map(l => `<tr><td><span class="cola">${E(l.colada)}</span>${l.probeta ? ` <span class="chip prob">${E(l.probeta)}</span>` : ''}</td><td class="num">${nf(l.cant, 0)}</td><td>${estadoTxt(l).map(x => `<div>${E(x)}</div>`).join('')}</td></tr>`).join('')}</table></div></div>`; }).join('');
     return `<div class="note" style="margin-top:0;margin-bottom:12px">El vínculo es artículo + OC + cliente (la OC se compara sin ceros a la izquierda). En el tablero de pedidos, cada pedido muestra debajo del estado el proceso de sus piezas en el parte.</div>
-      ${sin.length ? `<div class="panel" style="border-color:var(--bad)"><h2 style="color:var(--bad)">Líneas del parte sin pedido en SGA (${sin.length})</h2><p class="sub">Puede que el pedido todavía no esté cargado en SGA o que la OC / el cliente estén escritos distinto.</p>${sin.map(l => `<div class="mono">Colada ${E(l.colada)} · ${E((l.descripcion || '').slice(0, 50))} · ${E(l.cliente)} · OC ${E(l.oc_norm)} · ${nf(l.cant, 0)} u.</div>`).join('')}</div>` : ''}${cards}`;
+      ${sin.length ? `<div class="panel" style="border-color:var(--bad)"><h2 style="color:var(--bad)">Líneas del parte sin pedido en SGA (${sin.length})</h2><p class="sub">Puede que el pedido todavía no esté cargado en SGA o que la OC / el cliente estén escritos distinto.</p>${sin.map(l => `<div class="mono">Colada ${E(l.colada)} · ${E(dn(l, 50))} · ${E(l.cliente)} · OC ${E(l.oc_norm)} · ${nf(l.cant, 0)} u.</div>`).join('')}</div>` : ''}${cards}`;
   }
   const diaTxt = iso => { try { return new Date(iso + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: '2-digit' }); } catch (e) { return fd(iso); } };
   const addDia = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
@@ -8953,7 +8960,7 @@ function showToast(message, kind) {
     if (!o || o.sinComp) return '<span class="chip warn">❓ Falta cargar la composición de esta colada</span>';
     return `<span class="chip warn">⏳ Colada incompleta · ${nf(o.hecho, 0)} de ${nf(o.plan, 0)} piezas</span>`;
   }
-  const filaE = (e, conDia) => `<tr><td><span class="cola">${E(e.colada)}</span></td><td><b>${E((e.descripcion || '').slice(0, 60))}</b><div class="mono">${E(e.codigo)} · ${E(e.cliente)}</div><div>${e.probeta ? `<span class="chip prob">Probeta ${E(e.probeta)}</span>` : ''}</div></td>
+  const filaE = (e, conDia) => `<tr><td><span class="cola">${E(e.colada)}</span></td><td><b>${E(dn(e, 60))}</b><div class="mono">${E(e.codigo)} · ${E(e.cliente)}</div><div>${e.probeta ? `<span class="chip prob">Probeta ${E(e.probeta)}</span>` : ''}</div></td>
     ${conDia ? `<td><b>${fd(e.dia)}</b></td>` : ''}<td class="num"><b>${nf(e.cant, 0)}</b><div class="mono">${nf(kgE(e), 1)} kg</div></td><td>${estadoE(e)}</td>
     ${admin() && e.md ? `<td><button class="btn sm" title="Sacar esta fila (cargada por error)" onclick="pfQuitarMd(${e.md})">✕</button></td>` : (admin() ? '<td></td>' : '')}</tr>`;
   window.pfQuitarMd = async id => { if (!confirm('¿Sacar esta fila de moldeo? También se resta de lo moldeado.')) return;
@@ -9050,7 +9057,7 @@ function showToast(message, kind) {
     const ed = puedeConf() || (typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE && (admin() || rol() === 'editor'));
     const rows = as.map(l => { const r = P.R[l.codigo] || {}, d = destDe(l), opts = l.tipo === 'pedido' ? ['pedido', 'pedido_mec'] : ['kanban', 'sector_z'];
       const rid = r.ruta_id || (window.rutaGuessFor ? window.rutaGuessFor({ cant: 1, kilos: Number(l.peso_neto), material: l.material, descripcion: l.descripcion }) : '');
-      return `<tr><td><b>${E((l.descripcion || '').slice(0, 58))}</b><div class="mono">${E(l.codigo)}</div></td><td><span class="chip ${TIPO[l.tipo][1]}">${TIPO[l.tipo][0]}</span></td>
+      return `<tr><td><b>${E(dn(l, 58))}</b><div class="mono">${E(l.codigo)}</div></td><td><span class="chip ${TIPO[l.tipo][1]}">${TIPO[l.tipo][0]}</span></td>
         <td><select ${ed ? '' : 'disabled'} onchange="pfRegla('${E(l.codigo)}','destino',this.value)">${opts.map(o => `<option value="${o}" ${d === o ? 'selected' : ''}>${DEST[o]}</option>`).join('')}</select></td>
         <td><select ${ed ? '' : 'disabled'} onchange="pfRegla('${E(l.codigo)}','ruta_id',this.value)">${RUTAS().map(x => `<option value="${x.id}" ${Number(rid) === x.id ? 'selected' : ''}>Ruta ${x.id} · ${E(x.n)}</option>`).join('')}</select></td></tr>`; }).join('');
     return `<div class="panel"><h2>Qué pasa después de Terminación</h2><p class="sub">Destino y ruta propuestos por artículo (pedidos con mecanizado → Mecanizado; manotas y piezas de kanban → estantería; machos y hembras de aros → Sector Z). Se corrige acá y rige desde ya.</p><div class="tblwrap"><table><tr><th>Artículo</th><th>Tipo</th><th>Destino al terminar</th><th>Ruta de Terminación</th></tr>${rows}</table></div></div>`;
@@ -9091,7 +9098,7 @@ function showToast(message, kind) {
     cm.items.forEach(it => { const v = it.v = analiza(it); if (v.nuevas.length || v.cambian.length) algo = true;
       if (it.tipo === 'mold') {
         const sinC = v.coladas.filter(c => !compBatch.has(c) && !compHay.has(c));
-        const li = x => `<li><b>Colada ${E(x.colada)}</b> · ${fd(x.dia)} · ${E((x.descripcion || '').slice(0, 44))}<br><span class="mono">${nf(x.cant, 0)} u.${x.antes != null ? ' (antes ' + nf(x.antes, 0) + ')' : ''} · ${E(x.cliente)}</span></li>`;
+        const li = x => `<li><b>Colada ${E(x.colada)}</b> · ${fd(x.dia)} · ${E(dn(x, 44))}<br><span class="mono">${nf(x.cant, 0)} u.${x.antes != null ? ' (antes ' + nf(x.antes, 0) + ')' : ''} · ${E(x.cliente)}</span></li>`;
         h += `<div class="panel"><h2>🧱 Moldeo diario · ${E(it.archivo)}</h2><p class="sub">${v.total} líneas · ${v.coladas.length} colada${v.coladas.length === 1 ? '' : 's'} · día${v.dias.length === 1 ? '' : 's'}: ${v.dias.map(fd).join(', ')}. Todavía no se guardó nada.</p><div class="diff">
           <div class="dcol new"><h3>Nuevas (${v.nuevas.length})</h3><p class="mono">Suman a moldeado en su día real.</p><ul>${v.nuevas.map(li).join('') || '<li class="mono">Ninguna</li>'}</ul></div>
           <div class="dcol"><h3>Ya estaban (${v.ya.length})</h3><p class="mono">No se cuentan de nuevo.</p><ul>${v.ya.map(li).join('') || '<li class="mono">Ninguna</li>'}</ul></div>
@@ -9101,7 +9108,7 @@ function showToast(message, kind) {
       } else {
         h += `<div class="panel"><h2>🧬 Composición de coladas · ${E(it.archivo)}</h2><p class="sub">${v.total} líneas · ${v.coladas.length} coladas. Todavía no se guardó nada.</p>
           <div class="kpis"><div class="kpi"><b>${v.nuevas.length}</b><span>líneas nuevas</span></div><div class="kpi"><b>${v.ya.length}</b><span>ya estaban</span></div><div class="kpi"><b>${v.cambian.length}</b><span>con cambio de cantidad</span></div></div>
-          ${v.cambian.length ? `<div class="note"><b>Cambió la cantidad:</b> ${v.cambian.slice(0, 20).map(c => `colada ${E(c.colada)} ${E((c.descripcion || '').slice(0, 30))}: ${nf(c.antes, 0)} → ${nf(c.cant, 0)}`).join(' · ')}</div>` : ''}</div>`;
+          ${v.cambian.length ? `<div class="note"><b>Cambió la cantidad:</b> ${v.cambian.slice(0, 20).map(c => `colada ${E(c.colada)} ${E(dn(c, 30))}: ${nf(c.antes, 0)} → ${nf(c.cant, 0)}`).join(' · ')}</div>` : ''}</div>`;
       } });
     h += `<div class="row" style="margin-top:4px"><button class="btn pri" id="pf-go" onclick="pfConfirmarCarga()" ${algo && puedeConf() ? '' : 'disabled'}>Cargar al sistema</button><button class="btn" onclick="pfCancelarCarga()">Cancelar</button>${algo ? '' : '<span class="mono">No hay nada nuevo para cargar.</span>'}</div>`;
     return h;
@@ -9141,7 +9148,7 @@ function showToast(message, kind) {
   // ---------- acciones ----------
   const lin = id => P.L.find(l => l.id === Number(id));
   window.pfFundir = id => { const l = lin(id); if (!l) return;
-    dlg(`<b>¿Cuánto se fundió?</b><div class="mono">Colada ${E(l.colada)} · ${E((l.descripcion || '').slice(0, 54))}${l.probeta ? ' · probeta ' + E(l.probeta) : ''}</div>
+    dlg(`<b>¿Cuánto se fundió?</b><div class="mono">Colada ${E(l.colada)} · ${E(dn(l, 54))}${l.probeta ? ' · probeta ' + E(l.probeta) : ''}</div>
       <label>Cantidad (pendientes: ${nf(pend(l), 0)})</label><input type="number" id="pf-d-n" min="1" max="${pend(l)}" step="1" value="${pend(l)}">
       <label>Fecha de fusión</label><input type="date" id="pf-d-f" value="${hoy()}" max="${hoy()}">
       <div class="mono" style="margin-top:8px">Si es menos que lo pendiente, el resto sigue pendiente de fusión. Lo fundido pasa a Terminación y suma a kg fundidos.</div>
@@ -9151,7 +9158,7 @@ function showToast(message, kind) {
   window.pfTerminar = id => { const l = lin(id); if (!l) return; const t = term(l), d0 = destDe(l);
     const rt = rutaTxt(l), incompleta = rt && !/completa/i.test(rt);
     const opts = l.tipo === 'pedido' ? ['pedido', 'pedido_mec'] : ['kanban', 'sector_z'];
-    dlg(`<b>Terminó Terminación</b><div class="mono">Colada ${E(l.colada)} · ${E((l.descripcion || '').slice(0, 54))}</div>
+    dlg(`<b>Terminó Terminación</b><div class="mono">Colada ${E(l.colada)} · ${E(dn(l, 54))}</div>
       ${incompleta ? `<div class="note">La ruta no está completa (falta: ${E(rt)}). Podés pasarla igual si corresponde.</div>` : ''}
       <label>Cantidad (en Terminación: ${nf(t, 0)})</label><input type="number" id="pf-t-n" min="1" max="${t}" step="1" value="${t}">
       <label>Va a</label><select id="pf-t-d">${opts.map(o => `<option value="${o}" ${o === d0 ? 'selected' : ''}>${DEST[o]}</option>`).join('')}</select>
@@ -9165,7 +9172,7 @@ function showToast(message, kind) {
       const nom = { moldeado: 'Aparece en el parte', ajuste: 'Cambio de cantidad', fusion: 'Fusión confirmada', terminado: 'Terminó Terminación' };
       const rows = (data || []).map(m => `<div style="padding:6px 0;border-top:1px solid #334155;${m.deshecho ? 'opacity:.5;text-decoration:line-through' : ''}"><b>${nom[m.tipo]}</b> · ${nf(m.cantidad, 0)} u. ${m.destino ? '→ ' + E((DEST[m.destino] || m.destino)) : ''}<div class="mono">${fd(m.fecha)}${m.nota ? ' · ' + E(m.nota) : ''} · ${new Date(m.ts).toLocaleString('es-AR')}</div>
         ${!m.deshecho && ult[m.tipo] === m.id && ((m.tipo === 'fusion' && puedeConf()) || (m.tipo === 'terminado' && puedeOp())) ? `<button class="btn" style="padding:3px 9px;font-size:.74rem;margin-top:4px" onclick="pfDeshacer(${m.id},'${m.tipo}')">↩ Deshacer</button>` : ''}</div>`).join('');
-      dlg(`<b>Historial</b><div class="mono">Colada ${E(l.colada)} · ${E((l.descripcion || '').slice(0, 54))}</div><div class="mono">Del parte: ${nf(l.cant, 0)} · fundido ${nf(l.fundido, 0)} · salieron ${nf(l.terminado, 0)}</div><div style="margin-top:8px">${rows || '<div class="mono">Sin movimientos.</div>'}</div>
+      dlg(`<b>Historial</b><div class="mono">Colada ${E(l.colada)} · ${E(dn(l, 54))}</div><div class="mono">Del parte: ${nf(l.cant, 0)} · fundido ${nf(l.fundido, 0)} · salieron ${nf(l.terminado, 0)}</div><div style="margin-top:8px">${rows || '<div class="mono">Sin movimientos.</div>'}</div>
         <div class="row">${Number(l.fundido) === 0 && puedeConf() && l.origen !== 'moldeo' ? `<button class="btn" onclick="pfQuitar(${l.id})">🗑 Sacar esta línea (cargada por error)</button>` : ''}<button class="btn" onclick="pfDlgClose()">Cerrar</button></div>`);
     } catch (e) { dlg(`<div class="err">${E(errTxt(e))}</div><div class="row"><button class="btn" onclick="pfDlgClose()">Cerrar</button></div>`); } };
   window.pfDeshacer = async (mid, tipo) => { if (!confirm('¿Deshacer este movimiento?')) return;
