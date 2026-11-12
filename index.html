@@ -4934,6 +4934,10 @@ function buildPipeHtml(r) {
   return html + '</div>';
 }
 function buildAlertPill(r) {
+  if (isPrepared(r) && prepPendienteDespacho(r) > 0) {
+    if (isVencidaTerminacion(r)) return '<span class="pill pill-danger">⚠️ VENCIDA — LISTO P/ DESPACHAR</span>';
+    return '<span class="pill pill-ready">📦 LISTO P/ DESPACHAR</span>';
+  }
   if (isVencidaTerminacion(r)) return '<span class="pill pill-danger">⚠️ VENCIDA — EN TERMINACIÓN</span>';
   if (r.alerta_entrega === 'VENCIDA (FÁBRICA)') return '<span class="pill pill-danger">⚠️ VENCIDA EN FÁBRICA</span>';
   if (r.alerta_entrega === 'URGENTE (<=7d)') return '<span class="pill pill-warning">🟡 &lt; 7 DÍAS</span>';
@@ -4942,7 +4946,23 @@ function buildAlertPill(r) {
   if (r.alerta_entrega === 'CANCELADO') return '<span class="pill pill-danger">🛑 CANCELADO</span>';
   return '<span class="text-dim">🟢 En Fecha</span>';
 }
+// Hojas de pesada ya guardadas de este renglón (para mostrar "Hoja Nº X" en el estado).
+function hojasDeItem(r) {
+  const nums = [];
+  preparadosLogList.filter(l => String(l.itemId) === String(r.id) && l.hojaNumero).forEach(l => { if (!nums.includes(l.hojaNumero)) nums.push(l.hojaNumero); });
+  return nums;
+}
 function buildStatusPill(r) {
+  if (r.estado_general === 'Fundido / En Terminación' && prepPendienteDespacho(r) > 0) {
+    const hs = hojasDeItem(r);
+    const hojaTxt = hs.length ? `<div class="text-dim" style="font-size:0.7rem;margin-top:3px;">⚖️ Hoja Nº ${hs.map(escHtml).join(', ')}</div>` : '';
+    const falta = remainingPend(r);
+    const parcial = !isPrepared(r);
+    const pill = parcial
+      ? `<span class="pill pill-despachado rt-click" style="cursor:pointer;" title="Una parte está preparada y el resto sigue en Terminación" onclick="event.stopPropagation(); window.rutaOpen && rutaOpen('${rowKey(r)}')">📦 Preparado p/ despachar: ${prepPendienteDespacho(r).toLocaleString()}</span><div class="text-dim" style="font-size:0.7rem;margin-top:3px;">Resto en Terminación: ${falta.toLocaleString()}</div>`
+      : `<span class="pill pill-ready rt-click" style="cursor:pointer;" title="Preparado: listo para despachar" onclick="event.stopPropagation(); window.rutaOpen && rutaOpen('${rowKey(r)}')">✅ Preparado p/ despachar</span>`;
+    return pill + hojaTxt + (window.rutaExtra ? window.rutaExtra(r) : '') + (window.pfExtra ? window.pfExtra(r) : '');
+  }
   if (r.estado_general === 'Fundido / En Terminación') return `<span class="pill pill-ready rt-click" style="cursor:pointer;" title="Tocá para ver la ruta de Terminación" onclick="event.stopPropagation(); window.rutaOpen && rutaOpen('${rowKey(r)}')">📦 Fundido / Terminación</span>${window.rutaExtra ? window.rutaExtra(r) : ''}${window.pfExtra ? window.pfExtra(r) : ''}`;
   if (r.estado_general === 'Cancelado') return `<span class="pill pill-danger">${r.area_actual}</span>`;
   return `<span class="pill pill-warning">⏳ En: ${r.area_actual}</span>${window.pfExtra ? window.pfExtra(r) : ''}`;
