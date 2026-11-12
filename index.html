@@ -8785,7 +8785,7 @@ function showToast(message, kind) {
   window.pfBusquedaBox = search => {
     const q = nn(search || ''); let box = document.getElementById('pf-sbox');
     if (!P.loaded) { if (!P.loading && typeof supabaseClient !== 'undefined' && q.length >= 3) load().then(() => { if (!P.error) window.pfBusquedaBox(search); }); return; }
-    const ls = (P.error || q.length < 3) ? [] : P.L.filter(l => !(l.tipo === 'pedido' && pedidoDe(l).length) && nn([l.colada, l.codigo, l.oc, l.cliente, l.descripcion, l.probeta].join(' ')).includes(q));
+    const ls = (P.error || q.length < 3) ? [] : P.L.filter(l => !(l.tipo === 'pedido' && pedidoDe(l).length) && !(l.tipo === 'pedido' && l.destino === 'pedido' && pend(l) <= 0 && term(l) <= 0) && nn([l.colada, l.codigo, l.oc, l.cliente, l.descripcion, l.probeta].join(' ')).includes(q));
     if (!ls.length) { if (box) box.style.display = 'none'; return; }
     if (!box) { const ri = document.querySelector('.result-info'); if (!ri) return; box = document.createElement('div'); box.id = 'pf-sbox'; box.style.cssText = 'border:1px solid #f97316;background:rgba(249,115,22,.08);border-radius:10px;padding:10px 12px;margin:0 0 10px;font-size:.82rem'; ri.parentNode.insertBefore(box, ri); }
     const g = new Map(); ls.forEach(l => { const k = l.codigo + '|' + l.oc_norm + '|' + nn(l.cliente); if (!g.has(k)) g.set(k, []); g.get(k).push(l); });
