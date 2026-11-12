@@ -2741,6 +2741,7 @@ const SIDE_GROUPS = [
     { id: 'mec_ver', ic: '⚙️', t: 'Ver plan del día', sec: 'prog_mecanizado', run: () => window.cirOpen('mec') },
     { id: 'mec_stock', ic: '🧰', t: 'Stock en Mecanizado', sec: 'mec_stock', run: () => window.cirOpen('full', { tab: 'mec' }) },
     { id: 'mec_kan', ic: '🏬', t: 'Estantería kanban de Mecanizado', sec: 'kan_mec', run: () => window.cirOpen('kan', { kan: 'kanban' }) },
+    { id: 'mec_armados', ic: '📊', t: 'Aros armados por día', sec: 'mec_stock', run: () => window.cirOpen('armados') },
   ] },
   { id: 'ter', ic: '🔧', nombre: 'Terminación', items: [
     { id: 'ter_ent', ic: '🔧', t: 'Entregas del día', sec: 'prog_terminacion', run: () => window.cirOpen('term') },
@@ -3294,7 +3295,7 @@ function niceMax(v) {
 function fmtK(v) { return v >= 1000 ? (Math.round(v / 100) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 }) + 'k' : String(Math.round(v)); }
 // o: { labels, series:[{name,color,colors?,values}], line?:{values(0-100),color,name}, rotate?, h?, fadeOld? }
 function barChartSvg(o) {
-  const W = 360, H = o.h || 210, padL = 34, padR = o.line ? 30 : 8, padT = 16, padB = o.rotate ? 62 : 26;
+  const W = o.w || 360, H = o.h || 210, padL = 34, padR = o.line ? 30 : 8, padT = 16, padB = o.rotate ? 62 : 26;
   const innerW = W - padL - padR, innerH = H - padT - padB;
   const n = o.labels.length, ns = o.series.length;
   const estV = i => o.est ? (Number(o.est[i]) || 0) : 0;
@@ -3309,7 +3310,7 @@ function barChartSvg(o) {
   o.labels.forEach((lab, i) => {
     const cx = padL + groupW * i + groupW / 2;
     const ultimo = !!o.marcarUltimo && i === n - 1;
-    const clk = o.det ? ` style="cursor:pointer" onclick="indDetShow('${o.det}',${i})"` : '';
+    const clk = o.det ? ` style="cursor:pointer" onclick="${o.clickFn || 'indDetShow'}('${o.det}',${i})"` : '';
     if (o.det) g += `<rect x="${(cx - groupW / 2).toFixed(1)}" y="${padT}" width="${groupW.toFixed(1)}" height="${innerH}" fill="transparent"${clk}/>`;
     o.series.forEach((sr, jx) => {
       const v = Number(sr.values[i]) || 0;
@@ -7351,7 +7352,7 @@ function showToast(message, kind) {
       return `<tr><td><b>${p.fecha === TODAY() ? '<span class="soon">HOY</span> · ' : ''}${fmt(p.fecha)}</b>${p.fecha < TODAY() ? '<div class="late">de días anteriores</div>' : ''}</td><td>Plan #${p.id} · ${esc(r.nombre)}</td><td class="num">${pendPlan(p)}</td><td class="num">${p.hold_macho}</td><td class="num">${p.hold_hembra}</td>
         <td><div class="row-actions">${puedeOperar() ? btn('Armar' + (max ? ' hasta ' + max : ''), `cir_armar(${p.id})`, 'pri', !max) + btn('Rechazar…', `cir_rechazarPlan(${p.id})`, '', !(p.hold_macho || p.hold_hembra)) : ''}</div>${(fm > 0 || fh > 0) ? `<div class="code">falta que Terminación entregue ${Math.max(fm, 0)} machos / ${Math.max(fh, 0)} hembras (el ${fmt(dueOf(p))})</div>` : ''}</td></tr>`; }).join('');
     return alertPanel('kanban', 'Hay que armar aros para reponerla.', false) + `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>⚙️ Armado de aros — por fecha</h2>${puedePlanificar() ? btn('📋 Contar / ajustar stock', 'cir_ajustarMec()') : ''}</div><div class="sub">Lo planificado para cada día. Cuando Terminación entrega los machos y hembras, se arma. El aro sale a la estantería kanban o directo a un pedido (venta en caliente).</div>
-      ${planes ? `<table><tr><th>Armar el</th><th>Plan</th><th class="num">Faltan armar</th><th class="num">Machos acá</th><th class="num">Hembras acá</th><th></th></tr>${planes}</table>` : '<div class="empty">No hay planes pendientes.</div>'}</div>` + armadosPanel() + sueltasPanel() + rechazosPanel();
+      ${planes ? `<table><tr><th>Armar el</th><th>Plan</th><th class="num">Faltan armar</th><th class="num">Machos acá</th><th class="num">Hembras acá</th><th></th></tr>${planes}</table>` : '<div class="empty">No hay planes pendientes.</div>'}</div>` + sueltasPanel() + rechazosPanel();
   }
 
   // ---------- vistas simples del día (supervisor de Mecanizado / Terminación) ----------
@@ -7371,21 +7372,50 @@ function showToast(message, kind) {
       <div class="sub">Si hacés algo distinto de lo planificado, cargalo acá. Son las piezas que Terminación entregó sin plan o lo que sobró de un plan cerrado.</div>
       ${sueltas ? `<table><tr><th>Pieza</th><th class="num">Sueltas</th><th></th></tr>${sueltas}</table>` : '<div class="empty">No hay piezas sueltas en Mecanizado.</div>'}</div>`;
   }
-  // Aros armados por día (de plan + fuera de plan): un <details> por día, tocalo para ver el detalle.
-  function armadosPanel() {
-    const porDia = {};
-    (C.armados || []).forEach(m => { const d = m.dia || String(m.ts).slice(0, 10); (porDia[d] = porDia[d] || []).push(m); });
-    const dias = Object.keys(porDia).sort((a, b) => b.localeCompare(a)).slice(0, 60);
-    const diaBlock = d => { const movs = porDia[d], total = movs.reduce((a, m) => a + Number(m.cantidad), 0);
-      const porAro = {};
-      movs.forEach(m => { const libre = m.motivo === 'aro armado fuera de plan', key = m.codigo + '|' + (libre ? 'libre' : 'plan' + (m.plan_id || ''));
-        (porAro[key] = porAro[key] || { codigo: m.codigo, libre, plan: m.plan_id, cant: 0 }).cant += Number(m.cantidad); });
-      const filas = Object.values(porAro).sort((a, b) => nombre(a.codigo).localeCompare(nombre(b.codigo), 'es'))
-        .map(x => `<tr><td>${nameCell(x.codigo)}</td><td class="num"><b>${x.cant}</b></td><td>${x.libre ? '<span class="code">fuera de plan</span>' : (x.plan ? '<span class="code">Plan #' + x.plan + '</span>' : '')}</td></tr>`).join('');
-      return `<details style="margin-bottom:6px;"${d === TODAY() ? ' open' : ''}><summary style="cursor:pointer; font-weight:700; color:#fff; padding:4px 0;">${fmt(d)}${d === TODAY() ? ' · hoy' : ''} — <b>${total}</b> aro${total === 1 ? '' : 's'} armado${total === 1 ? '' : 's'}</summary>
-        <table><tr><th>Aro</th><th class="num">Cantidad</th><th></th></tr>${filas}</table></details>`; };
-    return `<div class="panel"><h2>📦 Aros armados por día</h2><div class="sub">De plan y fuera de plan juntos. Tocá un día para ver qué aros se armaron ese día.</div>${dias.length ? dias.map(diaBlock).join('') : '<div class="empty">Todavía no hay armados registrados.</div>'}</div>`;
+  // ---------- 📊 Aros armados por día: gráfico de barras, rango de fechas + filtro por aro ----------
+  const diaCorto = s => s.slice(8, 10) + '/' + s.slice(5, 7);
+  function desglosePorAro(movs) {
+    const porAro = {};
+    movs.forEach(m => { const libre = m.motivo === 'aro armado fuera de plan', key = m.codigo + '|' + (libre ? 'libre' : 'plan' + (m.plan_id || ''));
+      (porAro[key] = porAro[key] || { codigo: m.codigo, libre, plan: m.plan_id, cant: 0 }).cant += Number(m.cantidad); });
+    return Object.values(porAro).sort((a, b) => nombre(a.codigo).localeCompare(nombre(b.codigo), 'es'));
   }
+  const filaAro = x => `<tr><td>${nameCell(x.codigo)}</td><td class="num"><b>${x.cant}</b></td><td>${x.libre ? '<span class="code">fuera de plan</span>' : (x.plan ? '<span class="code">Plan #' + x.plan + '</span>' : '')}</td></tr>`;
+  function vArmados() {
+    C.armFiltro = C.armFiltro || { desde: addD(TODAY(), -29), hasta: TODAY(), aro: '' };
+    const { desde, hasta, aro } = C.armFiltro;
+    const arosDisp = [...new Set(C.recetas.map(r => r.salida))].sort((a, b) => nombre(a).localeCompare(nombre(b), 'es'));
+    const opciones = `<option value="">Todos los aros</option>` + arosDisp.map(c => `<option value="${esc(c)}" ${aro === c ? 'selected' : ''}>${esc(nombre(c))}</option>`).join('');
+    const filtro = `<div class="panel"><h2>📊 Aros armados por día</h2><div class="sub">De plan y fuera de plan juntos. Elegí el rango de fechas y, si querés, un aro puntual.</div>
+      <div class="pl-params" style="margin-bottom:4px;"><div><label>Desde</label><input class="pl-in" type="date" id="arm-desde" value="${desde}" onchange="cirArmRango()"></div>
+      <div><label>Hasta</label><input class="pl-in" type="date" id="arm-hasta" value="${hasta}" onchange="cirArmRango()"></div>
+      <div style="grid-column:span 2"><label>Aro</label><select class="pl-in" id="arm-aro" onchange="cirArmAro()">${opciones}</select></div></div></div>`;
+    if (desde > hasta) return filtro + `<div class="panel"><div class="empty">La fecha "Desde" no puede ser posterior a "Hasta".</div></div>`;
+    const totalDias = Math.round((parse(hasta) - parse(desde)) / 86400000) + 1;
+    if (totalDias > 730) return filtro + `<div class="panel"><div class="empty">Elegí un rango de hasta 2 años.</div></div>`;
+    const movs = (C.armados || []).filter(m => { const d = m.dia || String(m.ts).slice(0, 10); return d >= desde && d <= hasta && (!aro || m.codigo === aro); });
+    const dias = []; for (let i = 0; i < totalDias; i++) dias.push(addD(desde, i));
+    const agrupar = dias.length > 62;
+    const porClave = {};
+    movs.forEach(m => { const d = m.dia || String(m.ts).slice(0, 10), clave = agrupar ? mondayOf(d) : d; (porClave[clave] = porClave[clave] || []).push(m); });
+    const claves = agrupar ? [...new Set(dias.map(mondayOf))] : dias;
+    const valores = claves.map(k => (porClave[k] || []).reduce((a, m) => a + Number(m.cantidad), 0));
+    const labels = claves.map(k => agrupar ? ('sem ' + diaCorto(k)) : diaCorto(k));
+    const total = movs.reduce((a, m) => a + Number(m.cantidad), 0);
+    C.armClaves = claves;
+    const chartW = Math.max(360, claves.length * (agrupar ? 42 : 30));
+    const chart = claves.length
+      ? `<div style="overflow-x:auto;"><div style="min-width:${chartW}px">${barChartSvg({ labels, series: [{ name: 'Aros armados', color: '#38bdf8', values: valores }], w: chartW, rotate: claves.length > 10, det: 'arm', clickFn: 'cirArmBar' })}</div></div>`
+      : '<div class="empty">No hay armados en ese rango.</div>';
+    const detClave = C.armTocado;
+    const detalle = (detClave && porClave[detClave] && porClave[detClave].length)
+      ? `<div class="pdetail"><div class="sec-title">${agrupar ? 'Semana del ' + fmt(detClave) : fmt(detClave)}</div><table><tr><th>Aro</th><th class="num">Cantidad</th><th></th></tr>${desglosePorAro(porClave[detClave]).map(filaAro).join('')}</table></div>`
+      : (claves.length ? '<div class="phint">👆 Tocá una barra para ver qué aros se armaron ese día.</div>' : '');
+    return filtro + `<div class="panel"><div class="code" style="margin-bottom:8px;">Total en el rango: <b>${total}</b> aro${total === 1 ? '' : 's'}${aro ? ' de ' + esc(nombre(aro)) : ''}${agrupar ? ' · agrupado por semana (rango mayor a 2 meses)' : ''}</div>${chart}${detalle}</div>`;
+  }
+  window.cirArmRango = () => { const d = document.getElementById('arm-desde').value, h = document.getElementById('arm-hasta').value; C.armFiltro = Object.assign({}, C.armFiltro, { desde: d, hasta: h }); C.armTocado = null; render(); };
+  window.cirArmAro = () => { const a = document.getElementById('arm-aro').value; C.armFiltro = Object.assign({}, C.armFiltro, { aro: a }); C.armTocado = null; render(); };
+  window.cirArmBar = (det, i) => { const k = C.armClaves && C.armClaves[i]; C.armTocado = (C.armTocado === k) ? null : k; render(); };
 
   // ---------- tarjetas resumen (Mecanizado / Terminación): se toca una para ver el detalle ----------
   C.tile = C.tile || {};
@@ -7670,9 +7700,10 @@ function showToast(message, kind) {
     { key: 'mold', sec: 'kanban_moldeo', label: '🏭 Moldeo / Fusión — cargar piezas', desc: 'Cargar lo que se manda a moldear y fundir para kanban y ver lo que está en curso', title: '🏭 Moldeo / Fusión para kanban' },
     { key: 'aros', sec: 'kan_aros', label: '📦 Kanban y Stock — aros por receta', desc: 'Cada aro armado con su macho y su hembra: stock, K, tarjetas y desfasajes', title: '📦 Kanban y Stock › Aros por receta' },
     { key: 'kan', sec: 'kanban', label: '🏬 Kanban — configuración y stock', desc: 'Piezas con kanban de Terminación y de Mecanizado: k, stock físico y virtual', title: '🏬 Kanban — configuración y stock' },
+    { key: 'armados', sec: 'mec_stock', label: '📊 Aros armados por día', desc: 'Gráfico de barras por día (o por semana), filtrable por rango de fechas y por aro', title: '📊 Aros armados por día' },
   ];
   const puede = sec => (typeof puedeVer === 'function') ? puedeVer(sec) : false;
-  const misVistas = () => VIEWS.filter(v => v.key !== 'mold' && v.key !== 'kan' && v.key !== 'aros' && puede(v.sec));   // menú de Programación mecanizado
+  const misVistas = () => VIEWS.filter(v => v.key !== 'mold' && v.key !== 'kan' && v.key !== 'aros' && v.key !== 'armados' && puede(v.sec));   // menú de Programación mecanizado
   window.cirRefreshBtn = () => {
     if (window.sideBuild) window.sideBuild();
     const kc = document.getElementById('card-kanban'), mc = document.getElementById('card-mecanizado');
@@ -7804,7 +7835,7 @@ function showToast(message, kind) {
       document.getElementById('cir-flow').innerHTML = ''; document.getElementById('cir-tabs').innerHTML = '';
       if (C.error) { screen.innerHTML = `<div class="err">${esc(C.error)}</div>`; return; }
       if (!C.loaded) { screen.innerHTML = '<div class="empty">Cargando…</div>'; return; }
-      try { screen.innerHTML = ({ mec: vDiaMec, term: vDiaTerm, mold: vMold, kan: vKan, aros: vAros }[C.mode] || vDiaTerm)(); rtMobile(screen); if (C.mode === 'mold' && C.moldTab === 'plan' && puede('plan_moldeo')) plMount(); } catch (e) { console.error('Programación mecanizado:', e); screen.innerHTML = '<div class="err">Error al mostrar esta pantalla: ' + esc(e.message) + '</div>'; }
+      try { screen.innerHTML = ({ mec: vDiaMec, term: vDiaTerm, mold: vMold, kan: vKan, aros: vAros, armados: vArmados }[C.mode] || vDiaTerm)(); rtMobile(screen); if (C.mode === 'mold' && C.moldTab === 'plan' && puede('plan_moldeo')) plMount(); } catch (e) { console.error('Programación mecanizado:', e); screen.innerHTML = '<div class="err">Error al mostrar esta pantalla: ' + esc(e.message) + '</div>'; }
       return;
     }
     if (C.error) { document.getElementById('cir-flow').innerHTML = ''; document.getElementById('cir-tabs').innerHTML = ''; screen.innerHTML = `<div class="err">${esc(C.error)}</div>`; return; }
