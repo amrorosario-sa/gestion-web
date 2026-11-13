@@ -7611,13 +7611,21 @@ function showToast(message, kind) {
     return `<div class="panel"><h2>❌ Últimos rechazos en Mecanizado</h2><div class="sub">Quedan registrados con motivo y Nº de probeta (trazabilidad) cuando la pieza lleva.</div>${rows ? `<table><tr><th>Día</th><th>Pieza</th><th class="num">Cant.</th><th>Destino</th><th>Motivo</th><th>Probeta</th></tr>${rows}</table>` : '<div class="empty">Todavía no hay rechazos registrados.</div>'}</div>`;
   }
   function sueltasPanel(soloSiHay) {
-    const sueltas = Object.keys(C.stock.mecanizado || {}).filter(c => libre(c) > 0).map(c => { const rs = C.recetas.filter(r => r.macho === c || r.hembra === c);
-      return `<tr><td>${nameCell(c)}${rs.length ? `<div class="code">${rs.map(r => (r.macho === c ? 'macho' : 'hembra') + ' de ' + esc(recNom(r))).join(' · ')}</div>` : ''}</td><td class="num"><b>${libre(c)}</b></td><td>${puedeOperar() ? btn('Sale procesada…', `cir_salidaLibre('${esc(c)}')`) + btn('Rechazar…', `cir_rechazar('${esc(c)}')`) : ''}</td></tr>`; }).join('');
+    const codigos = Object.keys(C.stock.mecanizado || {}).filter(c => stock(c, 'mecanizado') > 0);
+    const filas = codigos.map(c => { const tot = stock(c, 'mecanizado'), lib = libre(c), res = tot - lib;
+      const rs = C.recetas.filter(r => r.macho === c || r.hembra === c);
+      const sub = rs.length ? `<div class="code">${rs.map(r => (r.macho === c ? 'macho' : 'hembra') + ' de ' + esc(recNom(r))).join(' · ')}</div>` : '';
+      const nota = res > 0 ? `<div class="code">${lib > 0 ? '+ ' + res + ' reservado' : 'todo reservado para un plan'} · total en Mecanizado: ${tot}</div>` : '';
+      return lib > 0
+        ? `<tr><td>${nameCell(c)}${sub}</td><td class="num"><b>${lib}</b>${nota}</td><td>${puedeOperar() ? btn('Sale procesada…', `cir_salidaLibre('${esc(c)}')`) + btn('Rechazar…', `cir_rechazar('${esc(c)}')`) : ''}</td></tr>`
+        : `<tr style="opacity:.55;"><td>${nameCell(c)}${sub}</td><td class="num">0${nota}</td><td><span class="code">reservado para un plan</span></td></tr>`;
+    }).join('');
+    const hayLibres = codigos.some(c => libre(c) > 0);
     const hayArmable = C.recetas.some(r => Math.min(libre(r.macho), libre(r.hembra)) > 0);
-    if (soloSiHay && !sueltas) return '';
+    if (soloSiHay && !codigos.length) return '';
     return `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>🧰 Fuera de plan — piezas sueltas en Mecanizado</h2>${puedeOperar() ? btn('Armar aros fuera de plan…', 'cir_armarLibre()', hayArmable ? 'pri' : '') : ''}</div>
-      <div class="sub">Si hacés algo distinto de lo planificado, cargalo acá. Son las piezas que Terminación entregó sin plan o lo que sobró de un plan cerrado.</div>
-      ${sueltas ? `<table><tr><th>Pieza</th><th class="num">Sueltas</th><th></th></tr>${sueltas}</table>` : '<div class="empty">No hay piezas sueltas en Mecanizado.</div>'}</div>`;
+      <div class="sub">Si hacés algo distinto de lo planificado, cargalo acá. Son las piezas que Terminación entregó sin plan o lo que sobró de un plan cerrado.${hayLibres ? ' Las piezas reservadas para un plan se muestran grisadas, con el total entre reservado y suelto.' : ''}</div>
+      ${filas ? `<table><tr><th>Pieza</th><th class="num">Sueltas</th><th></th></tr>${filas}</table>` : '<div class="empty">No hay piezas en Mecanizado.</div>'}</div>`;
   }
   // ---------- 📊 Aros armados por día: gráfico de barras, rango de fechas + filtro por aro ----------
   const diaCorto = s => s.slice(8, 10) + '/' + s.slice(5, 7);
