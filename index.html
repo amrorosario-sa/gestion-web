@@ -123,8 +123,11 @@
   .adm-user-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 8px; }
   .adm-user-head .em { font-weight: 700; color: #fff; font-size: 0.85rem; }
   .adm-user select, .adm-user input[type=text] { background: #0f172a; border: 1px solid var(--card-border); color: #fff; border-radius: 6px; padding: 5px 8px; font-size: 0.78rem; }
-  .adm-secs { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 4px 12px; margin: 8px 0; }
+  .adm-secs { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 4px 12px; margin: 2px 0 8px; }
   .adm-secs label { font-size: 0.76rem; color: #cbd5e1; display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  .adm-secs-grupo { margin: 0; }
+  .adm-secs-g-h { font-size: 0.68rem; font-weight: 800; color: #7dd3fc; text-transform: uppercase; letter-spacing: .04em; margin: 10px 0 2px; padding-top: 8px; border-top: 1px dashed #263449; }
+  .adm-secs-grupo:first-child .adm-secs-g-h { border-top: none; padding-top: 0; margin-top: 2px; }
   .adm-msg { font-size: 0.74rem; margin-left: 8px; }
   .user-pill { font-size: 0.72rem; color: var(--text-muted); }
 
@@ -1585,7 +1588,7 @@ function renderAdminUsers() {
   const cards = ADMIN_USERS.map(u => {
     const secs = expandLegacySecs(Array.isArray(u.secciones) ? u.secciones : SECCIONES_DEFAULT);
     const isMe = u.id === CURRENT_USER_ID;
-    const checks = SECCIONES_DEF.map(s => '<label><input type="checkbox" data-sec="' + s[0] + '"' + (secs.includes(s[0]) ? ' checked' : '') + '> ' + s[1] + '</label>').join('');
+    const checks = seccionesGruposHtml('data-sec', sec => secs.includes(sec));
     return '<div class="adm-user" data-uid="' + u.id + '">' +
       '<div class="adm-user-head">' +
         '<span class="em">' + escHtml(u.email) + (isMe ? ' <span class="text-dim">(vos)</span>' : '') + (u.activo === false ? ' <span style="color:#f87171; font-size:0.72rem;">⛔ acceso desactivado</span>' : '') + '</span>' +
@@ -1619,7 +1622,7 @@ function genPassword() {
 }
 function addUserFormHtml() {
   const areaOpts = '<option value="">— Sin área —</option>' + Object.keys(AREA_PRESETS).map(a => '<option value="' + escHtml(a) + '">' + escHtml(a) + '</option>').join('');
-  const checks = SECCIONES_DEF.map(s => '<label><input type="checkbox" data-sec="' + s[0] + '"' + (SECCIONES_DEFAULT.includes(s[0]) ? ' checked' : '') + '> ' + s[1] + '</label>').join('');
+  const checks = seccionesGruposHtml('data-sec', sec => SECCIONES_DEFAULT.includes(sec));
   return '<details id="adm-new" class="adm-user" style="border-color:var(--accent);" oninput="clearNewUserResult()" onchange="clearNewUserResult()"><summary style="cursor:pointer; font-weight:700; color:#fff;">➕ Agregar una persona nueva</summary>' +
     '<div style="margin-top:10px;">' +
       '<div class="adm-user-head">' +
@@ -1741,7 +1744,7 @@ function renderAreaDialog() {
       '<button class="hdr-btn" style="margin:0; padding:2px 8px; color:#f87171;" title="Eliminar área" onclick="deleteAreaPreset(this)">🗑</button>' +
       '</div>';
   }).join('');
-  const checks = SECCIONES_DEF.map(s => '<label><input type="checkbox" data-nsec="' + s[0] + '"> ' + s[1] + '</label>').join('');
+  const checks = seccionesGruposHtml('data-nsec', () => false);
   box.innerHTML = '<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;"><h3>🗂️ Áreas</h3><button style="background:#334155; border:none; color:#fff; width:28px; height:28px; border-radius:50%; cursor:pointer;" onclick="closeAreaDialog()">✕</button></div>' +
     '<div class="text-dim" style="margin-bottom:10px; font-size:0.78rem; line-height:1.5;">Opciones del desplegable "Área" en Usuarios y permisos: elegir una tilda de una las secciones típicas. Crear o borrar un área no cambia los permisos de nadie ya creado.</div>' +
     rows +
@@ -2612,10 +2615,10 @@ function renderAccessBanner() {
 // pantalla; además la base (RLS) NO entrega Stock, Despachado ni Hoja de
 // Pesada a quien no tenga esas secciones (ver 003_permisos_y_columnas.sql).
 const SECCIONES_DEF = [
-  ['moldeo', '🔥 En Moldeo / Fusión'],
-  ['listas', '🔧 En Terminación'],
+  ['moldeo', '🔥 Pedidos en Moldeo / Fusión'],
+  ['listas', '🔧 Pedidos en Terminación'],
   ['preparado', '📦 Preparado p/ Despacho'],
-  ['proceso', '⏳ En Ingeniería de Producto (antes de moldeo)'],
+  ['proceso', '⏳ Pedidos en Ingeniería de Producto (antes de moldeo)'],
   ['repuestos', '⚙️ Repuestos'],
   ['vencidas', '⚠️ Vencidas / Urgentes'],
   ['prioridades', '🚩 Prioridades'],
@@ -2623,26 +2626,49 @@ const SECCIONES_DEF = [
   ['despachado', '🚚 Despachado (historial)'],
   ['armar_hoja', '🧾 Armar Hoja de Pesada'],
   ['indicadores', '📊 Indicadores'],
-  ['rechazo', '❌ Registrar rechazos (Terminación)'],
-  ['replanificar', '🔁 Replanificar rechazos (Planificación)'],
-  ['circuito', '📅 Mecanizado: armar plan de mecanizado (planificación: jefe de planta / planificación)'],
-  ['mec_stock', '🧰 Mecanizado: stock en Mecanizado'],
-  ['kan_mec', '🏬 Mecanizado: estantería kanban de Mecanizado (k, stock)'],
-  ['prog_mecanizado', '⚙️ Mecanizado: mi programa del día'],
-  ['prog_terminacion', '🔧 Terminación: mis entregas del día'],
-  ['ter_stock', '🧰 Terminación: estantería de Terminación'],
-  ['kan_z', '🗄️ Terminación: Sector Z (kanban de Terminación: k, stock)'],
-  ['kan_aros', '📦 Kanban y Stock: aros por receta (macho, hembra y aro armado)'],
-  ['moldeo_dia', '🧱 Terminación: Moldeo por día'],
+  ['rechazo', '❌ Registrar rechazos'],
+  ['replanificar', '🔁 Replanificar rechazos'],
+  ['parte_fusion', '✅ Ver coladas listas, confirmar fusión y liberar coladas incompletas (Fundición / Planeamiento)'],
+  ['kanban_moldeo', '🏭 Cargar piezas para kanban (menú propio)'],
+  ['moldeo_dia', '🧱 Moldeo por día'],
+  ['plan_moldeo', '🧮 Planificador de vueltas (solo quien planifica)'],
+  ['prog_terminacion', '🔧 Mis entregas del día (entrega a Mecanizado, desde Terminación o Sector Z)'],
+  ['ter_stock', '🧰 Estantería de Terminación (piezas recién terminadas, antes de pasar a Sector Z)'],
+  ['kan_z', '🗄️ Sector Z — estantería kanban de piezas que llevan Mecanizado (k, stock)'],
+  ['circuito', '📅 Armar plan de mecanizado (planificación: jefe de planta / planificación)'],
+  ['prog_mecanizado', '⚙️ Mi programa del día'],
+  ['mec_stock', '🧰 Stock en Mecanizado'],
+  ['kan_mec', '🏬 Estantería kanban de Mecanizado — producto terminado (k, stock)'],
+  ['kan_aros', '🔩 Aros por receta (macho, hembra y aro armado)'],
+  ['cargar_remitos', '🧾 Cargar remitos (Excel de ventas)'],
+  ['conciliar_remitos', '⚖️ Conciliar remitos'],
+  ['cargar_moldeo', '📥 Cargar moldeo diario y composición de coladas (Fundición / Planeamiento)'],
   ['ventas', '💰 Ventas (montos: indicador de ventas)'],
-  ['kanban_moldeo', '🏭 Moldeo / Fusión: cargar piezas para kanban (menú propio)'],
-  ['cargar_remitos', '🧾 Cargas: cargar remitos (Excel de ventas)'],
-  ['conciliar_remitos', '⚖️ Cargas: conciliar remitos'],
-  ['articulos', '📋 Configuración: Artículos'],
-  ['plan_moldeo', '🧮 Moldeo: planificador de vueltas (solo quien planifica)'],
-  ['parte_fusion', '🔥 Fusión: ver coladas listas, confirmar fusión y liberar coladas incompletas (Fundición / Planeamiento)'],
-  ['cargar_moldeo', '📥 Cargas: cargar moldeo diario y composición de coladas (Fundición / Planeamiento)'],
+  ['articulos', '📋 Artículos'],
 ];
+// Agrupa SECCIONES_DEF para mostrarlas por lugar real en el tablero (antes era una sola
+// lista plana y mezclaba, por ejemplo, "Moldeo por día" bajo el nombre "Terminación" aunque
+// no tiene nada que ver — ver cambios-v108). El circuito de producción es
+// Fusión → Moldeo → Terminación → Sector Z (estantería) → Mecanizado → estantería kanban de Mecanizado.
+const SECCIONES_GRUPOS = [
+  { g: '📋 Pantalla principal de Pedidos (por etapa, datos de SGA)', items: ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades', 'stock', 'despachado', 'armar_hoja', 'indicadores', 'rechazo', 'replanificar'] },
+  { g: '🔥 Fusión', items: ['parte_fusion'] },
+  { g: '🧱 Moldeo', items: ['kanban_moldeo', 'moldeo_dia', 'plan_moldeo'] },
+  { g: '🔧 Terminación', items: ['prog_terminacion', 'ter_stock', 'kan_z'] },
+  { g: '🔩 Mecanizado', items: ['circuito', 'prog_mecanizado', 'mec_stock', 'kan_mec'] },
+  { g: '📦 Kanban y Stock', items: ['kan_aros'] },
+  { g: '📥 Cargas', items: ['cargar_remitos', 'conciliar_remitos', 'cargar_moldeo'] },
+  { g: '💰 Comercial', items: ['ventas'] },
+  { g: '⚙️ Configuración', items: ['articulos'] },
+];
+// checkedFn(codigoSeccion) -> bool decide qué checkbox arranca tildado; dataAttr es "data-sec" (Usuarios) o "data-nsec" (Áreas).
+function seccionesGruposHtml(dataAttr, checkedFn) {
+  return SECCIONES_GRUPOS.map(grp => {
+    const items = grp.items.map(sec => { const d = SECCIONES_DEF.find(x => x[0] === sec); if (!d) return '';
+      return '<label><input type="checkbox" ' + dataAttr + '="' + d[0] + '"' + (checkedFn(d[0]) ? ' checked' : '') + '> ' + d[1] + '</label>'; }).join('');
+    return '<div class="adm-secs-grupo"><div class="adm-secs-g-h">' + grp.g + '</div><div class="adm-secs">' + items + '</div></div>';
+  }).join('');
+}
 const SECCION_ELEMS = {
   moldeo: ['card-moldeo', 'chip-moldeo'],
   listas: ['card-listas', 'chip-listas'],
@@ -6609,7 +6635,7 @@ function showToast(message, kind) {
       const [st, planes, moldeos, k, exc, recetas, cfg, movs, armados] = await Promise.all([
         fetchAll('mec_stock'), fetchAll('mec_planes', { col: 'id' }), fetchAll('mec_moldeos', { col: 'id' }), fetchAll('mec_k'), fetchAll('mec_excepciones'),
         fetchAll('mec_recetas'), fetchAll('mec_config'),
-        supabaseClient.from('mec_movimientos').select('*').order('id', { ascending: false }).limit(40).then(r => { if (r.error) throw r.error; return r.data || []; }),
+        supabaseClient.from('mec_movimientos').select('*').order('id', { ascending: false }).limit(500).then(r => { if (r.error) throw r.error; return r.data || []; }),
         supabaseClient.from('mec_movimientos').select('*').in('motivo', ['aro armado', 'aro armado fuera de plan']).order('dia', { ascending: false }).order('id', { ascending: false }).limit(400).then(r => { if (r.error) throw r.error; return r.data || []; }),
       ]);
       C.stock = {}; st.forEach(r => { (C.stock[r.ubicacion] = C.stock[r.ubicacion] || {})[r.codigo] = Number(r.cantidad); });
@@ -7424,14 +7450,23 @@ function showToast(message, kind) {
   #cir-root .ar-tw{overflow-x:auto} #cir-root .ar-tw table{min-width:900px} #cir-root .ar-tw td,#cir-root .ar-tw th{padding:5px 8px;white-space:nowrap} #cir-root .ar-aro td{background:#142032}
   #cir-root .artag{display:inline-block;border-radius:5px;padding:1px 7px;font-size:.7rem;font-weight:800;margin-right:6px} #cir-root .artag.m{background:rgba(56,189,248,.18);color:#7dd3fc} #cir-root .artag.h{background:rgba(192,132,252,.2);color:#d8b4fe} #cir-root .artag.a{background:rgba(249,115,22,.2);color:#fdba74}
   #cir-root .arp{display:inline-block;border-radius:99px;padding:1px 9px;font-size:.68rem;font-weight:800} #cir-root .arp.ok{background:rgba(52,211,153,.15);color:var(--ok)} #cir-root .arp.am{background:rgba(251,191,36,.15);color:var(--warn)} #cir-root .arp.ro{background:rgba(248,113,113,.15);color:var(--bad)} #cir-root .arp.nd{background:#26303b;color:var(--dim)}
-  #cir-root .ar-f{padding:7px 12px;border-top:1px dashed var(--line);font-size:.78rem;color:var(--dim);display:flex;gap:16px;flex-wrap:wrap} #cir-root .ar-f b{color:#fff}`; document.head.appendChild(st); })();
+  #cir-root .ar-f{padding:7px 12px;border-top:1px dashed var(--line);font-size:.78rem;color:var(--dim);display:flex;gap:16px;flex-wrap:wrap} #cir-root .ar-f b{color:#fff}
+  #cir-root .lote-cell{display:flex;flex-direction:column;gap:2px;align-items:flex-end;min-width:150px}
+  #cir-root .lote-opt{display:flex;align-items:center;gap:6px;justify-content:flex-end;margin-top:4px}
+  #cir-root .lote-tag{font-size:.64rem;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.03em}
+  #cir-root .lote-cell button{margin-bottom:6px;white-space:nowrap}`; document.head.appendChild(st); })();
   const NIVP = { verde: ['ok', 'OK'], amarillo: ['am', 'AMARILLA'], rojo: ['ro', 'ROJA'] };
   function arPieza(c, rol) {
     const aro = rol === 'a', u = aro ? 'kanban' : (kRow('sector_z', c) ? 'sector_z' : kRow('kanban', c) ? 'kanban' : 'sector_z');
     const k = kOf(u, c), es = stock(c, u), te = aro ? 0 : stock(c, 'terminacion'), me = aro ? 0 : stock(c, 'mecanizado');
     const fu = aro ? 0 : (u === 'sector_z' ? enMoldeo(c) + pfZ(c) : enMoldeo(c) + pfK(c).pend);
     const vir = k != null ? sv(u, c) : es + te + fu, nV = k != null ? nivelV(k, vir) : null;
-    return { c, rol, u, k, fu, te, es, me, vir, nE: k != null ? nivel(u, c) : null, nV, lote: k != null && nV !== 'verde' ? lote(u, c) : 0, disp: te + es + me, conF: te + es + me + fu };
+    const loteBase = k != null && nV !== 'verde' ? lote(u, c) : 0;
+    // lote "con Mecanizado": al lote de siempre (repone solo Terminación/estantería) se le suma lo que le falta
+    // a la estantería de Mecanizado para llegar a 2×K (mismo nivel que usamos para la tarjeta verde). Solo aplica
+    // a piezas cuyo kanban vive en Sector Z — para las de Mecanizado (aros armados) no hay "otra estantería" que sumar.
+    const loteMec = loteBase && u === 'sector_z' ? loteBase + Math.max(0, 2 * k - me) : loteBase;
+    return { c, rol, u, k, fu, te, es, me, vir, nE: k != null ? nivel(u, c) : null, nV, lote: loteBase, loteMec, disp: te + es + me, conF: te + es + me + fu };
   }
   function arFamilias() {
     const R = C.recetas || []; if (!R.length) return [];
@@ -7460,8 +7495,19 @@ function showToast(message, kind) {
   }
   function arRow(p, nom, ind, extra) {
     const pill = n => n ? `<span class="arp ${NIVP[n][0]}">${NIVP[n][1]}</span>` : '<span class="arp nd">SIN K</span>', aro = p.rol === 'a';
+    let loteCell = '<span class="code">—</span>';
+    if (p.u === 'sector_z' && p.lote > 0) {
+      loteCell = `<div class="lote-cell">
+        <div class="lote-opt a"><b class="rep">${p.loteMec}</b></div><div class="lote-tag">con Mecanizado</div>
+        ${puedePlanificar() ? btn('Lanzar OI por ' + p.loteMec, `cir_moldeo(${p.loteMec},'${esc(p.c)}',1)`, 'pri') : ''}
+        <div class="lote-opt b"><b>${p.lote}</b></div><div class="lote-tag">solo Terminación</div>
+        ${puedePlanificar() ? btn('Lanzar OI por ' + p.lote, `cir_moldeo(${p.lote},'${esc(p.c)}',1)`) : ''}
+      </div>`;
+    } else if (p.lote > 0) {
+      loteCell = `<div class="lote-cell"><b class="rep">${p.lote}</b>${puedePlanificar() ? btn('Lanzar OT por ' + p.lote, `cir_nuevoPlan(${p.lote},'${esc(p.c)}',1)`, 'pri') : ''}</div>`;
+    }
     return `<tr class="${aro ? 'ar-aro' : ''}"><td style="padding-left:${ind ? 26 : 6}px"><span class="artag ${p.rol}">${aro ? 'Aro' : p.rol === 'm' ? 'Macho' : 'Hembra'}</span><b title="${esc(nombreFull(p.c))} · ${esc(p.c)}">${esc(String(nom).slice(0, 70))}</b>${extra || ''}${ALIAS[p.c] ? '' : `<div class="code">${esc(p.c)}</div>`}</td>
-      <td class="num">${aro ? '' : p.fu}</td><td class="num">${aro ? '' : p.te}</td><td class="num"><b>${p.es}</b></td><td class="num">${aro ? '' : p.me}</td><td class="num"><b>${p.vir}</b></td><td class="num">${p.k == null ? '—' : p.k}</td><td>${pill(p.nE)}</td><td>${pill(p.nV)}</td><td class="num">${p.lote ? `<b class="rep">${p.lote}</b>` : '<span class="code">—</span>'}</td></tr>`;
+      <td class="num">${aro ? '' : p.fu}</td><td class="num">${aro ? '' : p.te}</td><td class="num"><b>${p.es}</b></td><td class="num">${aro ? '' : p.me}</td><td class="num"><b>${p.vir}</b></td><td class="num">${p.k == null ? '—' : p.k}</td><td>${pill(p.nE)}</td><td>${pill(p.nV)}</td><td class="num">${loteCell}</td></tr>`;
   }
   function vAros() {
     if (!C.recetas.length) return '<div class="panel"><div class="empty">Todavía no hay recetas cargadas (macho + hembra → aro armado). Cargalas en Programación mecanizado › Recetas.</div></div>';
@@ -7486,7 +7532,7 @@ function showToast(message, kind) {
     const okQ = f => q.every(w => norm(f.titulo + ' ' + [...f.pz.values()].map(p => buscable(p.c)).join(' ')).includes(w));
     const alertaPz = f => [...f.pz.values()].some(p => p.nV && p.nV !== 'verde');
     const L = all.filter(f => (fl === 'todos' || (fl === 'def' ? f.def : alertaPz(f))) && okQ(f));
-    return `<div class="sub" style="color:var(--dim);margin-bottom:10px">Machos y hembras (Sector Z) agrupados por receta. Una pieza que sirve para varios aros aparece <b>una sola vez</b> y se compara contra la <b>suma</b> de lo que necesitan. Disponible = terminación + estantería + mecanizado. Tarjeta roja bajo K, amarilla hasta 2K. Lote = 2,5K + (2K − stock virtual). Los aros armados están en la otra pestaña.</div>${head}
+    return `<div class="sub" style="color:var(--dim);margin-bottom:10px">Machos y hembras (Sector Z) agrupados por receta. Una pieza que sirve para varios aros aparece <b>una sola vez</b> y se compara contra la <b>suma</b> de lo que necesitan. Disponible = terminación + estantería + mecanizado. Tarjeta roja bajo K, amarilla hasta 2K. Lote sugerido: <b>con Mecanizado</b> suma lo que también le falta a la estantería de Mecanizado para llegar a 2×K; <b>solo Terminación</b> es la cuenta de siempre (2,5K + (2K − stock virtual)), sin mirar Mecanizado. Los aros armados están en la otra pestaña.</div>${head}
       <div class="ar-kpis">${kp('ro', 'alerta', all.filter(alertaPz).length, '⚠️ familias con alerta')}${kp('am', 'def', all.filter(f => f.def).length, '⚖️ con desfasaje')}<div class="ar-kpi ok" style="cursor:default"><b>${all.reduce((a, f) => a + f.armHoy, 0)}</b><span>aros armables hoy (suma)</span></div><div class="ar-kpi" style="cursor:default"><b>${all.length}</b><span>familias / recetas</span></div></div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">${fb('todos', 'Todas')}${fb('def', '⚖️ Con desfasaje')}${fb('alerta', '⚠️ Con alerta')}${qbox}</div>
       ${L.map(f => { const comp = new Set(f.comp), rec = f.rs.length > 1 ? ' <span class="code">para ' + esc(f.rs.map(r => recNom(r)).join(' · ').slice(0, 90)) + '</span>' : '';
@@ -7519,9 +7565,6 @@ function showToast(message, kind) {
     const prox = Object.keys(FERIADOS).filter(f => f >= TODAY()).sort().slice(0, 4).map(f => `${fmt(f)} · ${esc(FERIADOS[f])}`).join(' &nbsp;|&nbsp; ');
     const exc = C.exc.slice().sort((a, b) => a.fecha.localeCompare(b.fecha)).map(e => `<div style="display:flex; gap:8px; align-items:center; padding:3px 0;"><span>${fmt(e.fecha)} — <b>${e.tipo === 'no' ? 'no se trabaja' : 'sí se trabaja'}</b>${e.nota ? ' · ' + esc(e.nota) : ''}</span>${puedePlanificar() ? btn('Quitar', `cir_quitarExc('${e.fecha}')`) : ''}</div>`).join('');
     const recs = C.recetas.map(r => `<tr><td><b>${esc(recNom(r))}</b>${ALIAS[r.salida] ? `<div class="code">${esc(r.nombre)}</div>` : ''}</td><td>${nameCell(r.macho)}</td><td>${nameCell(r.hembra)}</td><td>${nameCell(r.salida)}</td><td>${puedePlanificar() ? btn('🗑', `cir_delReceta('${esc(r.id)}')`) : ''}</td></tr>`).join('');
-    const movs = C.movs.map(m => { const diaTxt = m.dia ? String(m.dia).split('-').reverse().join('/') : new Date(m.ts).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' });
-      const cargadoOtroDia = m.dia && m.dia !== new Date(m.ts).toISOString().slice(0, 10);
-      return `<div>${diaTxt} ${new Date(m.ts).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} · <b>${esc(UBIC[m.ubicacion])}</b> ${m.cantidad > 0 ? '+' : ''}${m.cantidad} × ${esc(nombre(m.codigo))} — ${esc(m.motivo || '')}${m.pedido_ref ? ' (' + esc(m.pedido_ref) + ')' : ''}${cargadoOtroDia ? ' <span class="dim" style="font-size:.7rem;">(cargado después)</span>' : ''}</div>`; }).join('');
     return `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>📅 Planificación por fecha (4 semanas)</h2>${puedePlanificar() ? btn('+ Nuevo plan', 'cir_nuevoPlan()', 'pri') : ''}</div>
         <div class="sub">Cuántos aros arma Mecanizado cada día. La entrega de Terminación se calcula sola: el día hábil anterior. Los días apagados no son hábiles y se saltan.</div><div class="week">${cells.map(cell).join('')}</div></div>
       <div class="panel"><h2>Planes cargados</h2>${rows ? `<table><tr><th>Mecanizado arma</th><th>Terminación entrega</th><th>Plan</th><th class="num">Aros</th><th class="num">Armados</th><th>Avance</th><th></th></tr>${rows}</table>` : '<div class="empty">Sin planes.</div>'}</div>` +
@@ -7530,8 +7573,25 @@ function showToast(message, kind) {
         ${recs ? `<table><tr><th>Aro</th><th>Macho</th><th>Hembra</th><th>Aro armado</th><th></th></tr>${recs}</table>` : '<div class="empty">Todavía no hay recetas: cargá una para poder planificar.</div>'}</div>
       <div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>📆 Días no hábiles</h2>${puedePlanificar() ? btn('+ Agregar excepción', 'cir_excepcion()') : ''}</div>
         <div class="sub">Se descuentan solos los sábados, domingos y feriados nacionales (calendario 2026 cargado; falta cargar los de 2027 en adelante). Los puentes turísticos también quedan sin trabajo por defecto: se pueden dejar como "sí se trabaja" con una excepción.</div>
-        <div class="sub"><b>Próximos feriados:</b> ${prox}</div>${exc ? `<div style="font-size:.8rem;"><b>Excepciones cargadas:</b>${exc}</div>` : '<div class="empty" style="padding:0;">Sin excepciones cargadas.</div>'}</div>
-      <div class="panel"><h2>🧾 Últimos movimientos</h2><div class="log">${movs || '<div>Sin movimientos todavía.</div>'}</div></div>`;
+        <div class="sub"><b>Próximos feriados:</b> ${prox}</div>${exc ? `<div style="font-size:.8rem;"><b>Excepciones cargadas:</b>${exc}</div>` : '<div class="empty" style="padding:0;">Sin excepciones cargadas.</div>'}</div>`;
+  }
+  window.cirHistQ = t => { C.histQ = t; render(); const e = document.getElementById('hist-q'); if (e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); } };
+  function vHistorial() {
+    const norm = t => String(t).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const q = sane(C.histQ), all = C.movs || [];
+    const L = all.filter(m => q.every(w => norm(buscable(m.codigo) + ' ' + (m.motivo || '') + ' ' + (UBIC[m.ubicacion] || m.ubicacion || '') + ' ' + (m.pedido_ref || '')).includes(w)));
+    const porDia = new Map();
+    L.forEach(m => { const d = m.dia || new Date(m.ts).toISOString().slice(0, 10); if (!porDia.has(d)) porDia.set(d, []); porDia.get(d).push(m); });
+    const dias = [...porDia.keys()].sort((a, b) => b.localeCompare(a));
+    const qbox = `<input id="hist-q" class="kq" style="min-width:280px" placeholder="Buscar aro, macho, hembra, código o motivo…" value="${esc(C.histQ || '')}" oninput="cirHistQ(this.value)">`;
+    const body = dias.map(d => {
+      const rows = porDia.get(d).map(m => { const cargadoOtroDia = m.dia && m.dia !== new Date(m.ts).toISOString().slice(0, 10);
+        return `<div>${new Date(m.ts).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} · <b>${esc(UBIC[m.ubicacion] || m.ubicacion)}</b> ${m.cantidad > 0 ? '+' : ''}${m.cantidad} × ${esc(nombre(m.codigo))} — ${esc(m.motivo || '')}${m.pedido_ref ? ' (' + esc(m.pedido_ref) + ')' : ''}${cargadoOtroDia ? ' <span class="dim" style="font-size:.7rem;">(cargado después)</span>' : ''}</div>`; }).join('');
+      return `<div class="panel"><h2>${fmt(d)}${d === TODAY() ? ' · hoy' : ''}</h2><div class="log">${rows}</div></div>`;
+    }).join('');
+    return `<div class="sub" style="color:var(--dim);margin-bottom:10px">Movimientos de Terminación, Sector Z, Mecanizado y Kanban (entregas, aros armados, ajustes de stock), agrupados por día, de más reciente a más viejo. Se guardan hasta los últimos ${all.length} movimientos cargados.</div>
+      <div style="margin-bottom:12px">${qbox}</div>
+      ${body || '<div class="panel"><div class="empty">Nada con este filtro.</div></div>'}`;
   }
   function vMec() {
     const planes = planesOrd().filter(p => pendPlan(p) > 0 && rec(p.receta)).map(p => { const r = rec(p.receta), max = Math.min(p.hold_macho, p.hold_hembra, pendPlan(p));
@@ -7909,7 +7969,7 @@ function showToast(message, kind) {
   const CSS = `
   #cir-root { position:fixed; inset:0; background:#0f172a; color:#e2e8f0; z-index:60; overflow:auto; display:none; font-size:14px; line-height:1.45; --card:#1e293b; --line:#334155; --dim:#94a3b8; --acc:#38bdf8; --ok:#34d399; --warn:#fbbf24; --bad:#f87171; }
   #cir-root.on { display:block; } #cir-root * { box-sizing:border-box; }
-  #cir-root .wrap { max-width:1600px; margin:0 auto; padding:14px 16px 40px; } #cir-root h1 { font-size:1.15rem; margin:0; }
+  #cir-root .wrap { max-width:1100px; margin:0 auto; padding:14px 16px 40px; } #cir-root h1 { font-size:1.15rem; margin:0; }
   #cir-root .top { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }
   #cir-root .flow { display:flex; align-items:stretch; gap:6px; flex-wrap:wrap; margin-bottom:14px; } #cir-root .node { flex:1 1 120px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 10px; text-align:center; min-width:110px; }
   #cir-root .node .n { font-size:1.4rem; font-weight:800; color:#fff; } #cir-root .node .l { font-size:.72rem; color:var(--dim); } #cir-root .node.z { border-color:#a78bfa; } #cir-root .node.m { border-color:var(--warn); } #cir-root .node.k { border-color:#f472b6; }
@@ -8039,13 +8099,13 @@ function showToast(message, kind) {
        <div class="node z"><div class="n">${tot('sector_z')}</div><div class="l">🗄️ Sector Z · kanban piezas c/ mecanizado${tag(nz)}</div></div><div class="arrow">→</div>
        <div class="node m"><div class="n">${tot('mecanizado')}</div><div class="l">⚙️ Mecanizado</div></div><div class="arrow">→</div>
        <div class="node k"><div class="n">${tot('kanban')}</div><div class="l">🏬 Estantería kanban post-mecanizado${tag(nk)}</div></div>`;
-    const tabs = [['plan', '📅 Planificación'], ['term', '🔧 Terminación'], ['z', '🗄️ Sector Z' + tag(nz)], ['mec', '⚙️ Mecanizado'], ['k', '🏬 Kanban' + tag(nk)]];
-    const TAB_SEC = { plan: 'circuito', term: 'ter_stock', z: 'kan_z', mec: 'mec_stock', k: 'kan_mec' };
+    const tabs = [['plan', '📅 Planificación'], ['term', '🔧 Terminación'], ['z', '🗄️ Sector Z' + tag(nz)], ['mec', '⚙️ Mecanizado'], ['k', '🏬 Kanban' + tag(nk)], ['hist', '🧾 Historial']];
+    const TAB_SEC = { plan: 'circuito', term: 'ter_stock', z: 'kan_z', mec: 'mec_stock', k: 'kan_mec', hist: 'circuito' };
     const tabsOk = tabs.filter(t => puede(TAB_SEC[t[0]]));
     if (!tabsOk.length) { document.getElementById('cir-tabs').innerHTML = ''; screen.innerHTML = '<div class="empty">Tu usuario no tiene habilitada ninguna pestaña de esta pantalla.</div>'; return; }
     if (!tabsOk.some(t => t[0] === C.tab)) C.tab = tabsOk[0][0];
     document.getElementById('cir-tabs').innerHTML = tabsOk.map(t => `<button class="tab ${C.tab === t[0] ? 'on' : ''}" onclick="cirTab('${t[0]}')">${t[1]}</button>`).join('');
-    try { screen.innerHTML = { term: vTerm, z: vZ, k: vK, plan: vPlan, mec: vMec }[C.tab](); rtMobile(screen); }
+    try { screen.innerHTML = { term: vTerm, z: vZ, k: vK, plan: vPlan, mec: vMec, hist: vHistorial }[C.tab](); rtMobile(screen); }
     catch (e) { console.error('Programación mecanizado:', e); screen.innerHTML = '<div class="err">Error al mostrar esta pantalla: ' + esc(e.message) + '</div>'; }
   }
   async function reload() { await load(); cardsT = Date.now(); render(); paintCards(); }
@@ -8413,7 +8473,7 @@ function showToast(message, kind) {
   const CSS = `
   #ven-root { position:fixed; inset:0; background:#0f172a; color:#e2e8f0; z-index:60; overflow:auto; display:none; font-size:14px; line-height:1.45; --card:#1e293b; --line:#334155; --dim:#94a3b8; --acc:#38bdf8; }
   #ven-root.on { display:block; } #ven-root * { box-sizing:border-box; }
-  #ven-root .wrap { max-width:1600px; margin:0 auto; padding:14px 16px 40px; } #ven-root h1 { font-size:1.15rem; margin:0; } #ven-root h2 { font-size:.95rem; margin:0 0 6px; }
+  #ven-root .wrap { max-width:1100px; margin:0 auto; padding:14px 16px 40px; } #ven-root h1 { font-size:1.15rem; margin:0; } #ven-root h2 { font-size:.95rem; margin:0 0 6px; }
   #ven-root .top { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
   #ven-root button { background:#334155; color:#fff; border:none; border-radius:7px; padding:6px 11px; font-size:.8rem; cursor:pointer; } #ven-root button:hover { background:#475569; }
   #ven-root .chips { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; align-items:center; } #ven-root .chip { background:var(--card); border:1px solid var(--line); color:#cbd5e1; border-radius:99px; padding:5px 12px; } #ven-root .chip.on { border-color:var(--acc); color:#fff; background:#0b2a40; }
@@ -8899,7 +8959,7 @@ function showToast(message, kind) {
   // ---------- pantalla ----------
   const CSS = `
   #pf-root{position:fixed;inset:0;background:#0f172a;color:#e2e8f0;z-index:60;overflow:auto;display:none;font-size:14px;line-height:1.45;--card:#1e293b;--line:#334155;--dim:#94a3b8;--acc:#f97316;--ok:#34d399;--warn:#fbbf24;--bad:#f87171}
-  #pf-root.on{display:block}#pf-root *{box-sizing:border-box}#pf-root .wrap{max-width:1600px;margin:0 auto;padding:14px 16px 50px}
+  #pf-root.on{display:block}#pf-root *{box-sizing:border-box}#pf-root .wrap{max-width:1150px;margin:0 auto;padding:14px 16px 50px}
   #pf-root h1{font-size:1.15rem;margin:0}#pf-root .top{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
   #pf-root .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}#pf-root .tab{background:var(--card);border:1px solid var(--line);color:#e2e8f0;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:.85rem}#pf-root .tab.on{background:var(--acc);color:#0f172a;border-color:var(--acc);font-weight:700}
   #pf-root .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px}#pf-root .panel h2{font-size:.95rem;margin:0 0 4px}#pf-root .sub{color:var(--dim);font-size:.8rem;margin:0 0 8px}
