@@ -4257,14 +4257,16 @@ function openDesapDespacharDialog(id) {
   const dsd = d.desaparecio_dia ? new Date(d.desaparecio_dia + 'T00:00:00').getTime() : null;
   const yaRem = dsd == null ? [] : (despachosLog || []).filter(x => x.remito_ref && x.codigo === d.codigo && x.dia && Math.abs(new Date(x.dia + 'T00:00:00').getTime() - dsd) <= 20 * 864e5);
   const avisoRem = yaRem.length ? `<div class="stock-field" style="background:#451a03; border:1px solid #b45309; border-radius:8px; padding:8px 10px; font-size:0.76rem; color:#fde68a;">⚠ Ya registraste ${yaRem.reduce((a, x) => a + (Number(x.cantidad) || 0), 0)} u. de este código desde un remito (${yaRem.map(x => x.dia.split('-').reverse().join('/')).join(', ')}). Si es la misma salida, no la marques otra vez: se contaría dos veces.</div>` : '';
+  const hoyIso = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
   showStockDialog(`
     <h3>✅ Marcar como despachado</h3>
     <div class="text-dim" style="margin-bottom:12px; line-height:1.5;"><span style="color:#fff;">${escHtml(d.descripcion || d.codigo)}</span><br>${escHtml(d.cliente)} · NV ${escHtml(d.comprobante)} · Cód ${escHtml(d.codigo)}<br>Pendiente cuando desapareció de SGA: ${fmtN(d.pend)} u.</div>
     <div class="stock-field"><label>Cantidad a sumar a Despachado</label><input type="number" id="desap-cant" value="${d.pend}" min="0" max="${d.pend}" step="any"></div>
+    <div class="stock-field"><label>Fecha en que se despachó</label><input type="date" id="desap-dia" value="${escHtml(d.desaparecio_dia || hoyIso)}" max="${hoyIso}"></div>
     ${avisoRem}
     ${kan ? `<div class="stock-field"><label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer;"><input type="checkbox" id="desap-kan" checked style="margin-top:3px;"> <span>📦 Descontar de la ${escHtml(kan.nom)} (hay ${kan.hay} · k ${kan.k})<br><span class="text-dim" style="font-size:0.72rem;">Esta pieza lleva kanban y salió sin pasar por el tablero. Se baja lo despachado, menos lo que ya se hubiera descontado al preparar el pedido, y nunca más de lo que hay.</span></span></label></div>` : ''}
     <div class="stock-field"><label>Nota (opcional)</label><input type="text" id="desap-nota" autocomplete="off" placeholder="ej. facturado directo en SGA"></div>
-    <div class="text-dim" style="font-size:0.75rem; margin-bottom:10px;">Suma esta cantidad al indicador de Kg despachados (de hoy) y sale de esta lista para siempre.</div>
+    <div class="text-dim" style="font-size:0.75rem; margin-bottom:10px;">Suma esta cantidad al indicador de Kg despachados (en la fecha elegida) y sale de esta lista para siempre.</div>
     <div class="stock-actions">
       <button class="stock-btn-cancel" onclick="closeStockDialog()">Cancelar</button>
       <button class="stock-btn-primary" id="desap-save-btn" onclick="saveDesapResolver(${d.id}, 'despachado')">✅ Confirmar</button>
@@ -4295,8 +4297,10 @@ async function saveDesapResolver(id, como) {
   if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
   try {
     const kanEl = document.getElementById('desap-kan');
+    const diaEl = document.getElementById('desap-dia');
     const args = { p_id: id, p_como: como, p_cant: como === 'despachado' ? cant : null, p_nota: nota };
     if (como === 'despachado' && kanEl && !kanEl.checked) args.p_descontar = false;
+    if (como === 'despachado' && diaEl && diaEl.value) args.p_dia = diaEl.value;
     const { data: resu, error } = await supabaseClient.rpc('items_desaparecidos_resolver', args);
     if (error) throw error;
     const descK = resu && Number(resu.descontado) > 0 ? Number(resu.descontado) : 0, ubK = resu && resu.ubicacion === 'sector_z' ? 'Sector Z' : 'estantería kanban';
@@ -4310,7 +4314,7 @@ async function saveDesapResolver(id, como) {
   } catch (e) {
     console.error('No se pudo resolver el ítem desaparecido de SGA:', e);
     let msg = 'No se pudo guardar.';
-    if (e && (e.code === '42883' || e.code === 'PGRST202' || /items_desaparecidos_resolver/i.test(e.message || ''))) msg = 'La base todavía no tiene esta función. Avisale a quien administra el tablero (falta correr el SQL 028 y el 031).';
+    if (e && (e.code === '42883' || e.code === 'PGRST202' || /items_desaparecidos_resolver/i.test(e.message || ''))) msg = 'La base todavía no tiene esta función. Avisale a quien administra el tablero (falta correr el SQL 028, el 031 y el 040).';
     else if (e && e.code === '42501') msg = 'Tu usuario no tiene permiso para resolver esto (hace falta ser Administrador).';
     else if (e && e.message) msg += ' ' + e.message;
     alert(msg);
@@ -7455,17 +7459,17 @@ function showToast(message, kind) {
       } catch (e) { alert(/Could not find the function|schema cache|items_bajas_resolver/i.test(e.message || '') ? 'Falta correr el SQL 033 en Supabase.' : 'No se pudo vincular: ' + (e.message || e)); }
       return;
     }
-    if (!confirm(`Se marca el desaparecido de SGA (NV ${d.comprobante}, ${d.codigo}) como despachado por ${fmtN(cant)} u., y esta línea de remito queda vinculada a él. Si la pieza lleva kanban, se descuenta de la estantería. No se registra nada más por este remito.${cant < x.falta ? '\n\nOjo: el desaparecido tiene menos pendiente (' + fmtN(d.pend) + ') que lo del remito (' + fmtN(x.falta) + '); el resto de la línea queda sin registrar.' : ''}\n\n¿Confirmás?`)) return;
+    if (!confirm(`Se marca el desaparecido de SGA (NV ${d.comprobante}, ${d.codigo}) como despachado por ${fmtN(cant)} u., con la fecha del remito (${kvFecha(x.l.fecha)}), y esta línea de remito queda vinculada a él. Si la pieza lleva kanban, se descuenta de la estantería. No se registra nada más por este remito.${cant < x.falta ? '\n\nOjo: el desaparecido tiene menos pendiente (' + fmtN(d.pend) + ') que lo del remito (' + fmtN(x.falta) + '); el resto de la línea queda sin registrar.' : ''}\n\n¿Confirmás?`)) return;
     try {
-      const { data, error } = await supabaseClient.rpc('items_desaparecidos_resolver', { p_id: id, p_como: 'despachado', p_cant: cant, p_nota: 'Remito ' + x.l.comprobante, p_remito_ref: ref });
+      const { data, error } = await supabaseClient.rpc('items_desaparecidos_resolver', { p_id: id, p_como: 'despachado', p_cant: cant, p_nota: 'Remito ' + x.l.comprobante, p_remito_ref: ref, p_dia: x.l.fecha });
       if (error) throw error;
       d.resuelto = true; d.resuelto_como = 'despachado'; d.resuelto_cant = cant;
-      if (typeof despachosLog !== 'undefined') despachosLog.push({ id: 'rem-' + ref, itemId: d.item_id, cliente: d.cliente, comprobante: d.comprobante, codigo: d.codigo, descripcion: d.descripcion, cantidad: cant, kg: Math.round(cant * (Number(d.kxu) || 0) * 10) / 10, dia: TODAY(), remito_ref: ref });
+      if (typeof despachosLog !== 'undefined') despachosLog.push({ id: 'rem-' + ref, itemId: d.item_id, cliente: d.cliente, comprobante: d.comprobante, codigo: d.codigo, descripcion: d.descripcion, cantidad: cant, kg: Math.round(cant * (Number(d.kxu) || 0) * 10) / 10, dia: x.l.fecha, remito_ref: ref });
       CONC.sel.delete(ref); concCompute(); concDraw();
       const dk = data && Number(data.descontado) > 0 ? Number(data.descontado) : 0; if (dk) window.cirRefreshStock();
       try { if (typeof showToast === 'function') showToast('Vinculado al desaparecido' + (dk ? ' · se descontaron ' + dk + ' de la estantería' : ''), 'success'); } catch (e) { /* sin aviso */ }
       try { if (typeof actualizarBadgeDesap === 'function') actualizarBadgeDesap(); if (typeof renderIndicadoresPanel === 'function' && typeof currentFilter !== 'undefined' && currentFilter === 'indicadores') renderIndicadoresPanel(); } catch (e) { /* sin refrescar */ }
-    } catch (e) { alert(/Could not find the function|schema cache|p_remito_ref/i.test(e.message || '') ? 'Falta correr el parche 032 en Supabase.' : 'No se pudo vincular: ' + (e.message || e)); }
+    } catch (e) { alert(/Could not find the function|schema cache|p_remito_ref|p_dia/i.test(e.message || '') ? 'Falta correr el parche 032 y el 040 en Supabase.' : 'No se pudo vincular: ' + (e.message || e)); }
   };
   window.cirConcRegistrar = async () => {
     const sel = CONC.rows.filter(x => CONC.sel.has(x.ref)); if (!sel.length) return;
