@@ -2004,7 +2004,7 @@ async function bootApp() {
   const __t0 = performance.now(); const __lap = {};
   bootMsg('Cargando pedidos…');
   const pItems = loadAllItems().then(x => { __lap.pedidos = performance.now() - __t0; window.__bootOk = true; return x; }); pItems.catch(() => {});
-  const pEnt = loadEntregas(), pAv = loadAvanceEtapas();
+  const pEnt = loadEntregas(), pAv = loadAvanceEtapas(), pEtF = loadEtapaFechas();
   document.getElementById('asof-badge').textContent = 'ACTUALIZADO AL ' + TODAY_STR;
 
   // Perfil (rol + es_inspector_final) — una sola vez al loguearse.
@@ -2042,7 +2042,7 @@ async function bootApp() {
     showItemsBanner('No se pudieron cargar los ítems: ' + ((e && e.message) || e) + '. Recargá la página; si sigue igual, avisale a quien administra el tablero.');
   }
 
-  await pEnt; await pAv;
+  await pEnt; await pAv; await pEtF;
   __lap.tablas = performance.now() - __t0;
   rebuildData();
   renderKpis();
@@ -2335,6 +2335,9 @@ let entregasByItem = {};      // item_id -> [{id, cantidad, fecha_entrega}]
 let SPLIT_ROWS = {};          // item_id -> filas visibles (entregas pendientes + parciales por etapa) en orden de fecha
 let ENTREGA_ROWS = {};        // item_id -> filas por ENTREGA (sin separar por etapa): lo que edita "Dividir en entregas"
 let avanceEtapasMap = {};     // item_id -> { a_moldeo, a_term }: unidades que ya pasaron a Moldeo/Fusión / a Terminación (parcial a mano)
+let etapaFechasMap = {};      // item_id -> { [etapa 0..5]: 'yyyy-mm-dd' }: primera vez que se vio ese ítem en esa etapa
+let etapaFechasCargado = false;
+const etapaFechasIntentadas = new Set();   // "item_id|etapa" ya mandados a guardar esta sesión (no reintentar en cada rebuildData)
 let ROW_BY_KEY = new Map();
 function rowKey(r) { return r._pk || String(r.id); }
 function findRow(key) { return ROW_BY_KEY.get(String(key)); }
@@ -2360,6 +2363,66 @@ async function loadAvanceEtapas() {
   } catch (e) {
     console.warn('avance_etapas no disponible (falta el SQL 015):', e && e.message);
     setAvanceEtapas([]);
+  }
+}
+// Fecha en que cada ítem entró a cada etapa (0..5, igual que STAGE_LABELS). Historial permanente:
+// una vez guardada una fecha, nunca se pisa (ver detectarYGuardarEtapaFechas más abajo).
+function setEtapaFechas(rows) {
+  const m = {};
+  (rows || []).forEach(r => { const id = String(r.item_id); (m[id] = m[id] || {})[Number(r.etapa)] = r.fecha; });
+  etapaFechasMap = m;
+}
+function etapaFechaDe(itemId, etapa) {
+  const m = etapaFechasMap[String(itemId)];
+  return m ? m[etapa] : null;
+}
+async function loadEtapaFechas() {
+  try {
+    const data = [];
+    for (let from = 0; ; from += 1000) {
+      const { data: page, error } = await supabaseClient.from('item_etapa_fechas').select('item_id,etapa,fecha').range(from, from + 999);
+      if (error) throw error;
+      data.push(...(page || []));
+      if (!page || page.length < 1000) break;
+    }
+    setEtapaFechas(data);
+  } catch (e) {
+    console.warn('item_etapa_fechas no disponible (falta el SQL 039):', e && e.message);
+    setEtapaFechas([]);
+  } finally {
+    etapaFechasCargado = true;
+  }
+}
+// Se fija, para cada ítem vivo, si llegó a una etapa que todavía no tiene fecha guardada —
+// y si es así, la guarda con la fecha de HOY (no hay forma de saber la fecha real pasada).
+// No reintenta en la misma sesión lo que ya mandó a guardar (etapaFechasIntentadas), y el
+// upsert con ignoreDuplicates hace que, si dos personas lo detectan casi al mismo tiempo, o si
+// ya estaba guardado desde otra sesión, no pase nada (gana la primera fecha, nunca se pisa).
+// Solo lo intenta quien tiene permiso de escribir (colaborador/editor) — un Visualizador no
+// puede, así que simplemente no dispara el guardado (la fecha queda pendiente hasta que alguien
+// con permiso abra el tablero).
+async function detectarYGuardarEtapaFechas() {
+  if (!etapaFechasCargado) return;
+  if (!CURRENT_PROFILE || !['colaborador', 'editor'].includes(CURRENT_PROFILE.rol)) return;
+  const nuevas = [];
+  DATA.forEach(row => {
+    if (row._realRank === null || row._realRank === undefined) return;   // cancelado: no se trackea
+    const effRank = (row._manualRank != null) ? Math.max(row._realRank, row._manualRank) : row._realRank;
+    for (let i = 0; i <= effRank; i++) {
+      const key = row.id + '|' + i;
+      if (etapaFechaDe(row.id, i) != null || etapaFechasIntentadas.has(key)) continue;
+      etapaFechasIntentadas.add(key);
+      nuevas.push({ item_id: row.id, etapa: i, fecha: TODAY_ISO });
+    }
+  });
+  if (!nuevas.length) return;
+  try {
+    const { error } = await supabaseClient.from('item_etapa_fechas').upsert(nuevas, { onConflict: 'item_id,etapa', ignoreDuplicates: true });
+    if (error) throw error;
+    nuevas.forEach(n => { (etapaFechasMap[String(n.item_id)] = etapaFechasMap[String(n.item_id)] || {})[n.etapa] = n.fecha; });
+  } catch (e) {
+    console.warn('No se pudieron guardar fechas de etapa:', e && e.message);
+    nuevas.forEach(n => etapaFechasIntentadas.delete(n.item_id + '|' + n.etapa));   // para reintentar más adelante
   }
 }
 // Separa las filas de un ítem según lo que ya se pasó a mano a Moldeo/Fusión y a Terminación.
@@ -2453,6 +2516,7 @@ function rebuildData() {
   DATA = DATA.filter(r => !totalmenteDespachado(r));
   ROW_BY_KEY = new Map(DATA.map(r => [rowKey(r), r]));
   recomputeEffectiveStages();
+  detectarYGuardarEtapaFechas();
 }
 // Reparto automático de lo preparado y lo despachado entre las entregas de un ítem.
 function splitShares(id) {
@@ -4978,6 +5042,29 @@ function hojasDeItem(r) {
   preparadosLogList.filter(l => String(l.itemId) === String(r.id) && l.hojaNumero).forEach(l => { if (!nums.includes(l.hojaNumero)) nums.push(l.hojaNumero); });
   return nums;
 }
+// "(desde DD/MM)" al lado del estado/área, con la fecha guardada (ver detectarYGuardarEtapaFechas) de
+// cuándo llegó a esa etapa. Vacío si todavía no se guardó (ítem de antes de este cambio, sin fecha real
+// conocida) o mientras nadie con permiso de escritura abrió el tablero para que quede registrada.
+function etapaDesdeTxt(r) {
+  const rank = STAGE_LABELS.indexOf(r.area_actual);
+  const f = rank >= 0 ? etapaFechaDe(r.id, rank) : null;
+  return f ? ` <span class="text-dim" style="font-size:0.7rem;">(desde ${formatDate(f)})</span>` : '';
+}
+// Historial completo de fechas por etapa para el modal de detalle: lista cada etapa ya alcanzada
+// (0..rank actual) con la fecha en que se la vio por primera vez. "—" si todavía no se guardó nada
+// (ítem previo a este cambio, o nadie con permiso de escritura abrió el tablero todavía).
+function buildEtapaFechasHtml(r) {
+  const realRank = (r._realRank === null || r._realRank === undefined) ? null : r._realRank;
+  const manRank = r._manualRank;
+  const effRank = (realRank != null) ? ((manRank != null) ? Math.max(realRank, manRank) : realRank) : null;
+  if (effRank == null) return '<span class="text-dim">—</span>';
+  const filas = [];
+  for (let i = 0; i <= effRank; i++) {
+    const f = etapaFechaDe(r.id, i);
+    filas.push(`<div style="font-size:0.78rem;">${escHtml(STAGE_LABELS[i])}: ${f ? formatDate(f) : '<span class="text-dim">sin fecha registrada</span>'}</div>`);
+  }
+  return filas.join('');
+}
 function buildStatusPill(r) {
   if (r.estado_general === 'Fundido / En Terminación' && prepPendienteDespacho(r) > 0) {
     const hs = hojasDeItem(r);
@@ -4985,13 +5072,13 @@ function buildStatusPill(r) {
     const falta = remainingPend(r);
     const parcial = !isPrepared(r);
     const pill = parcial
-      ? `<span class="pill pill-despachado rt-click" style="cursor:pointer;" title="Una parte está preparada y el resto sigue en Terminación" onclick="event.stopPropagation(); window.rutaOpen && rutaOpen('${rowKey(r)}')">📦 Preparado p/ despachar: ${prepPendienteDespacho(r).toLocaleString()}</span><div class="text-dim" style="font-size:0.7rem;margin-top:3px;">Resto en Terminación: ${falta.toLocaleString()}</div>`
-      : `<span class="pill pill-ready rt-click" style="cursor:pointer;" title="Preparado: listo para despachar" onclick="event.stopPropagation(); window.rutaOpen && rutaOpen('${rowKey(r)}')">✅ Preparado p/ despachar</span>`;
+      ? `<span class="pill pill-despachado rt-click" style="cursor:pointer;" title="Una parte está preparada y el resto sigue en Terminación" onclick="event.stopPropagation(); window.rutaOpen && rutaOpen('${rowKey(r)}')">📦 Preparado p/ despachar: ${prepPendienteDespacho(r).toLocaleString()}</span><div class="text-dim" style="font-size:0.7rem;margin-top:3px;">Resto en Terminación: ${falta.toLocaleString()}${etapaDesdeTxt(r)}</div>`
+      : `<span class="pill pill-ready rt-click" style="cursor:pointer;" title="Preparado: listo para despachar" onclick="event.stopPropagation(); window.rutaOpen && rutaOpen('${rowKey(r)}')">✅ Preparado p/ despachar</span>${etapaDesdeTxt(r)}`;
     return pill + hojaTxt + (window.rutaExtra ? window.rutaExtra(r) : '') + (window.pfExtra ? window.pfExtra(r) : '');
   }
-  if (r.estado_general === 'Fundido / En Terminación') return `<span class="pill pill-ready rt-click" style="cursor:pointer;" title="Tocá para ver la ruta de Terminación" onclick="event.stopPropagation(); window.rutaOpen && rutaOpen('${rowKey(r)}')">📦 Fundido / Terminación</span>${window.rutaExtra ? window.rutaExtra(r) : ''}${window.pfExtra ? window.pfExtra(r) : ''}`;
+  if (r.estado_general === 'Fundido / En Terminación') return `<span class="pill pill-ready rt-click" style="cursor:pointer;" title="Tocá para ver la ruta de Terminación" onclick="event.stopPropagation(); window.rutaOpen && rutaOpen('${rowKey(r)}')">📦 Fundido / Terminación</span>${etapaDesdeTxt(r)}${window.rutaExtra ? window.rutaExtra(r) : ''}${window.pfExtra ? window.pfExtra(r) : ''}`;
   if (r.estado_general === 'Cancelado') return `<span class="pill pill-danger">${r.area_actual}</span>`;
-  return `<span class="pill pill-warning">⏳ En: ${r.area_actual}</span>${window.pfExtra ? window.pfExtra(r) : ''}`;
+  return `<span class="pill pill-warning">⏳ En: ${r.area_actual}</span>${etapaDesdeTxt(r)}${window.pfExtra ? window.pfExtra(r) : ''}`;
 }
 function buildRepBadge(r) {
   if (r.es_repuesto) return '<span class="tag-rep">REPUESTO</span> ';
@@ -6327,6 +6414,7 @@ function showToast(message, kind) {
         <div class="modal-row"><div class="k">Kilos</div><div class="v">${r.kilos.toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1})} Kg</div></div>
         <div class="modal-row"><div class="k">Estado / Área</div><div class="v">${buildStatusPill(r)}${buildAvanceManualHtml(r)}</div></div>
         <div class="modal-row"><div class="k">Flujo Áreas</div><div class="v">${buildPipeHtml(r)}</div></div>
+        <div class="modal-row"><div class="k">Fechas por etapa</div><div class="v">${buildEtapaFechasHtml(r)}</div></div>
         <div class="modal-row"><div class="k">Preparado p/ Desp.</div><div class="v">${buildPrepCellHtml(r)}</div></div>
         ${r.notas ? `<div class="modal-row"><div class="k">💬 Comentario (SGA)</div><div class="v" style="color:#fbbf24;">${escHtml(r.notas)}</div></div>` : ''}
       `;
