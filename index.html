@@ -4442,7 +4442,7 @@ function openAddStockDialog(codigoPrefill, descPrefill) {
   const buscarHtml = !codigoPrefill ? `
     <div class="stock-field" id="stock-search-field">
       <label>Buscar pieza por nombre (opcional)</label>
-      <input type="text" id="stock-in-buscar" placeholder="Ej: brida, tapa, corona..." oninput="onStockBuscarInput()" autocomplete="off">
+      <input type="text" id="stock-in-buscar" placeholder="Ej: brida, tapa, corona, SH 90..." oninput="onStockBuscarInput()" autocomplete="off">
       <div id="stock-buscar-resultados" class="stock-buscar-resultados"></div>
     </div>` : '';
   const html = `
@@ -4465,6 +4465,10 @@ function openAddStockDialog(codigoPrefill, descPrefill) {
   showStockDialog(html);
 }
 
+// Nombre abreviado de una pieza (los aros, machos y hembras que cargó Martin en el Excel de alias)
+// si lo tiene. Lo expone el módulo de Mecanizado (window.cirAlias); si todavía no cargó ese módulo,
+// no hay alias y la búsqueda sigue funcionando igual por descripción y código.
+const stockAlias = cod => (typeof window.cirAlias === 'function' ? (window.cirAlias(cod) || '') : '');
 function onStockBuscarInput() {
   const input = document.getElementById('stock-in-buscar');
   const box = document.getElementById('stock-buscar-resultados');
@@ -4476,8 +4480,9 @@ function onStockBuscarInput() {
   for (const [cod, descripcion, material] of CATALOGO) {
     if (results.length >= 8) break;
     if (seen.has(cod)) continue;
-    if (normTxt(descripcion).includes(q) || normTxt(cod).includes(q)) {
-      results.push({ codigo: cod, descripcion, material });
+    const alias = stockAlias(cod);
+    if (normTxt(descripcion).includes(q) || normTxt(cod).includes(q) || (alias && normTxt(alias).includes(q))) {
+      results.push({ codigo: cod, descripcion, material, alias });
       seen.add(cod);
     }
   }
@@ -4485,8 +4490,9 @@ function onStockBuscarInput() {
     for (const d of DATA) {
       if (results.length >= 8) break;
       if (seen.has(d.codigo)) continue;
-      if (normTxt(d.descripcion).includes(q) || normTxt(d.codigo).includes(q)) {
-        results.push({ codigo: d.codigo, descripcion: d.descripcion, material: d.material });
+      const alias = stockAlias(d.codigo);
+      if (normTxt(d.descripcion).includes(q) || normTxt(d.codigo).includes(q) || (alias && normTxt(alias).includes(q))) {
+        results.push({ codigo: d.codigo, descripcion: d.descripcion, material: d.material, alias });
         seen.add(d.codigo);
       }
     }
@@ -4496,7 +4502,7 @@ function onStockBuscarInput() {
     box.classList.add('open');
     return;
   }
-  box.innerHTML = results.map(r => `<div class="stock-buscar-item" onclick="pickStockBuscar('${escJs(r.codigo)}','${escJs(r.descripcion)}','${escJs(r.material)}')"><span class="cod">${escHtml(r.codigo)}</span><span class="desc">${escHtml(r.descripcion)}</span></div>`).join('');
+  box.innerHTML = results.map(r => `<div class="stock-buscar-item" onclick="pickStockBuscar('${escJs(r.codigo)}','${escJs(r.descripcion)}','${escJs(r.material)}')"><span class="cod">${escHtml(r.codigo)}</span><span class="desc">${r.alias ? `<b>${escHtml(r.alias)}</b> — ${escHtml(r.descripcion)}` : escHtml(r.descripcion)}</span></div>`).join('');
   box.classList.add('open');
 }
 
@@ -6753,7 +6759,20 @@ function showToast(message, kind) {
     sane(text).forEach(w => { q = q.or('descripcion.ilike.%' + w + '%,codigo.ilike.%' + w + '%'); });
     const { data, error } = await q.order('descripcion').limit(limit || 60);
     if (error) throw new Error(error.message);
-    const rows = (data || []).filter(r => kindOk(kind, r.descripcion));
+    let rows = (data || []).filter(r => kindOk(kind, r.descripcion));
+    // además de buscar por descripción (SGA) o código, también se puede escribir el nombre abreviado
+    // de un aro/macho/hembra (el del Excel de alias) y encontrarlo igual — la descripción de SGA no
+    // lo contiene, así que la búsqueda de arriba sola no lo encuentra.
+    const qTxt = String(text || '').trim();
+    if (qTxt) {
+      const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const qn = norm(qTxt);
+      const codsAlias = Object.keys(ALIAS).filter(c => norm(ALIAS[c]).includes(qn) && !rows.some(r => r.codigo === c));
+      if (codsAlias.length) {
+        const { data: extra, error: e2 } = await supabaseClient.from('catalogo_articulos').select('codigo,descripcion').in('codigo', codsAlias);
+        if (!e2 && extra) rows = rows.concat(extra.filter(r => kindOk(kind, r.descripcion)));
+      }
+    }
     rows.forEach(r => { NAMES[r.codigo] = r.descripcion; });
     return rows;
   }
@@ -6795,7 +6814,7 @@ function showToast(message, kind) {
       if (f.type === 'select') return `<label>${f.label}</label><select id="cf_${f.id}">${f.options.map(o => `<option value="${esc(o[0])}"${o[0] === f.value ? ' selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`;
       if (f.type === 'date') return `<label>${f.label}</label><input id="cf_${f.id}" type="date" value="${f.value}" oninput="cirDateHint()"><div class="d" id="cir-datehint" style="margin:4px 0 0;"></div>`;
       if (f.type === 'text') return `<label>${f.label}</label><input id="cf_${f.id}" type="text" value="${esc(f.value || '')}" placeholder="${esc(f.ph || '')}">`;
-      if (f.type === 'pieza') return `<label>${f.label}</label><input id="cf_${f.id}" type="text" data-kind="${f.kind || ''}" data-cod="${esc(f.value || '')}" value="${esc(f.value ? f.value + ' — ' + nombreFull(f.value) : '')}" placeholder="${f.kind ? 'Tocá para ver la lista, o escribí para filtrar' : 'Escribí nombre o código y elegí'}" autocomplete="off" oninput="cirPiezaSearch('${f.id}')" onfocus="cirPiezaSearch('${f.id}', true)"><div class="cir-res" id="cr_${f.id}"></div>`;
+      if (f.type === 'pieza') return `<label>${f.label}</label><input id="cf_${f.id}" type="text" data-kind="${f.kind || ''}" data-cod="${esc(f.value || '')}" value="${esc(f.value ? f.value + ' — ' + nombre(f.value) : '')}" placeholder="${f.kind ? 'Tocá para ver la lista, o escribí para filtrar' : 'Escribí nombre, código o abreviatura (ej: SH 90) y elegí'}" autocomplete="off" oninput="cirPiezaSearch('${f.id}')" onfocus="cirPiezaSearch('${f.id}', true)"><div class="cir-res" id="cr_${f.id}"></div>`;
       if (f.type === 'dec') return `<label>${f.label}</label><input id="cf_${f.id}" type="text" inputmode="decimal" value="${f.value == null ? '' : f.value}" placeholder="${esc(f.ph || '')}">`;
       return `<label>${f.label}</label><input id="cf_${f.id}" type="number" min="${f.min == null ? 1 : f.min}" max="${f.max}" value="${f.value}">`;
     }).join('') + `<div class="cir-err" id="cir-err"></div><div class="btns"><button onclick="cirCloseAsk()">Cancelar</button><button class="pri" id="cir-ok">${okText}</button></div>`;
@@ -6840,11 +6859,11 @@ function showToast(message, kind) {
       if (conSug) { const sg = await sugerencias(kind, salCod); rows = sg.slice(0, 12).map(x => x.r); hint = '<div class="code" style="padding:2px 0 4px;">Ordenados por parecido con el aro elegido. Escribí para buscar otro.</div>'; }
       else rows = await catSearch(kind, t, kind && !t ? 80 : 60);
       if (my !== psSeq) return;
-      box.innerHTML = hint + (rows.length ? rows.map(it => `<div class="it" data-c="${esc(it.codigo)}" onclick="cirPiezaPick('${id}', this.dataset.c)"><b>${esc(it.descripcion)}</b><span class="code"> ${esc(it.codigo)}</span></div>`).join('') : '<div class="code" style="padding:4px 0;">Sin resultados.</div>');
+      box.innerHTML = hint + (rows.length ? rows.map(it => `<div class="it" data-c="${esc(it.codigo)}" onclick="cirPiezaPick('${id}', this.dataset.c)"><b>${ALIAS[it.codigo] ? esc(ALIAS[it.codigo]) + ' — ' + esc(it.descripcion) : esc(it.descripcion)}</b><span class="code"> ${esc(it.codigo)}</span></div>`).join('') : '<div class="code" style="padding:4px 0;">Sin resultados.</div>');
     } catch (e) { if (my === psSeq) box.innerHTML = '<div class="late" style="padding:4px 0;">No se pudo buscar: ' + esc(e.message || e) + '</div>'; }
   };
   window.cirPiezaPick = async (id, cod) => {
-    const inp = document.getElementById('cf_' + id); inp.dataset.cod = cod; inp.value = cod + ' — ' + nombreFull(cod);
+    const inp = document.getElementById('cf_' + id); inp.dataset.cod = cod; inp.value = cod + ' — ' + nombre(cod);
     document.getElementById('cr_' + id).innerHTML = '';
     // receta: al elegir el aro armado se completan solos el nombre y (si hay un candidato claro) macho y hembra
     if (id === 's' && inp.dataset.kind === 'aro') {
