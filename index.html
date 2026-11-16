@@ -7695,21 +7695,36 @@ function showToast(message, kind) {
         <div class="sub"><b>Próximos feriados:</b> ${prox}</div>${exc ? `<div style="font-size:.8rem;"><b>Excepciones cargadas:</b>${exc}</div>` : '<div class="empty" style="padding:0;">Sin excepciones cargadas.</div>'}</div>`;
   }
   window.cirHistQ = t => { C.histQ = t; render(); const e = document.getElementById('hist-q'); if (e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); } };
+  window.cirHistTipo = t => { C.histTipo = t || null; render(); };
+  // filtro rápido por tipo de movimiento (además del buscador de texto libre): lo que entró a
+  // Mecanizado (entregas desde Sector Z/Terminación, entregas sueltas) o lo que salió de Terminación
+  // (lo que le entregó a Mecanizado). No incluye el consumo de machos/hembras al armar un aro (eso
+  // "sale" de Mecanizado, no "entra").
+  const HIST_TIPOS = {
+    entro_mec: m => m.ubicacion === 'mecanizado' && Number(m.cantidad) > 0,
+    salio_term: m => m.ubicacion === 'terminacion' && Number(m.cantidad) < 0,
+  };
   function vHistorial() {
     const norm = t => String(t).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
     const q = sane(C.histQ), all = C.movs || [];
-    const L = all.filter(m => q.every(w => norm(buscable(m.codigo) + ' ' + (m.motivo || '') + ' ' + (UBIC[m.ubicacion] || m.ubicacion || '') + ' ' + (m.pedido_ref || '')).includes(w)));
+    const tipoFn = HIST_TIPOS[C.histTipo];
+    const L = all.filter(m => (!tipoFn || tipoFn(m)) && q.every(w => norm(buscable(m.codigo) + ' ' + (m.motivo || '') + ' ' + (UBIC[m.ubicacion] || m.ubicacion || '') + ' ' + (m.pedido_ref || '')).includes(w)));
     const porDia = new Map();
     L.forEach(m => { const d = m.dia || new Date(m.ts).toISOString().slice(0, 10); if (!porDia.has(d)) porDia.set(d, []); porDia.get(d).push(m); });
     const dias = [...porDia.keys()].sort((a, b) => b.localeCompare(a));
     const qbox = `<input id="hist-q" class="kq" style="min-width:280px" placeholder="Buscar aro, macho, hembra, código o motivo…" value="${esc(C.histQ || '')}" oninput="cirHistQ(this.value)">`;
+    const tipoBox = `<select id="hist-tipo" class="kq" onchange="cirHistTipo(this.value)">
+      <option value="">Todos los movimientos</option>
+      <option value="entro_mec"${C.histTipo === 'entro_mec' ? ' selected' : ''}>⬇️ Entró a Mecanizado</option>
+      <option value="salio_term"${C.histTipo === 'salio_term' ? ' selected' : ''}>⬆️ Salió de Terminación</option>
+    </select>`;
     const body = dias.map(d => {
       const rows = porDia.get(d).map(m => { const cargadoOtroDia = m.dia && m.dia !== new Date(m.ts).toISOString().slice(0, 10);
         return `<div>${new Date(m.ts).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} · <b>${esc(UBIC[m.ubicacion] || m.ubicacion)}</b> ${m.cantidad > 0 ? '+' : ''}${m.cantidad} × ${esc(nombre(m.codigo))} — ${esc(m.motivo || '')}${m.pedido_ref ? ' (' + esc(m.pedido_ref) + ')' : ''}${cargadoOtroDia ? ' <span class="dim" style="font-size:.7rem;">(cargado después)</span>' : ''}</div>`; }).join('');
       return `<div class="panel"><h2>${fmt(d)}${d === TODAY() ? ' · hoy' : ''}</h2><div class="log">${rows}</div></div>`;
     }).join('');
     return `<div class="sub" style="color:var(--dim);margin-bottom:10px">Movimientos de Terminación, Sector Z, Mecanizado y Kanban (entregas, aros armados, ajustes de stock), agrupados por día, de más reciente a más viejo. Se guardan hasta los últimos ${all.length} movimientos cargados.</div>
-      <div style="margin-bottom:12px">${qbox}</div>
+      <div style="margin-bottom:12px; display:flex; gap:8px; flex-wrap:wrap;">${qbox}${tipoBox}</div>
       ${body || '<div class="panel"><div class="empty">Nada con este filtro.</div></div>'}`;
   }
   function vMec() {
