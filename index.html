@@ -6810,16 +6810,28 @@ function showToast(message, kind) {
   // ---------- modal ----------
   function ask(title, desc, fields, okText, onOk) {
     const m = document.getElementById('cir-modal'); m.style.maxWidth = '';
+    // un campo con showIf: {field,value} solo se ve (y solo importa) cuando el campo que controla
+    // tiene ese valor — ej: "Pedido (si va directo)" solo cuando "¿A dónde sale?" está en "pedido".
+    const wrap = (f, html) => f.showIf ? `<div class="cf-row" data-cf="${esc(f.id)}">${html}</div>` : html;
     m.innerHTML = `<h3>${title}</h3><div class="d">${desc || ''}</div>` + fields.map(f => {
-      if (f.type === 'select') return `<label>${f.label}</label><select id="cf_${f.id}">${f.options.map(o => `<option value="${esc(o[0])}"${o[0] === f.value ? ' selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`;
-      if (f.type === 'date') return `<label>${f.label}</label><input id="cf_${f.id}" type="date" value="${f.value}" oninput="cirDateHint()"><div class="d" id="cir-datehint" style="margin:4px 0 0;"></div>`;
-      if (f.type === 'text') return `<label>${f.label}</label><input id="cf_${f.id}" type="text" value="${esc(f.value || '')}" placeholder="${esc(f.ph || '')}">`;
-      if (f.type === 'pieza') return `<label>${f.label}</label><input id="cf_${f.id}" type="text" data-kind="${f.kind || ''}" data-cod="${esc(f.value || '')}" value="${esc(f.value ? f.value + ' — ' + nombre(f.value) : '')}" placeholder="${f.kind ? 'Tocá para ver la lista, o escribí para filtrar' : 'Escribí nombre, código o abreviatura (ej: SH 90) y elegí'}" autocomplete="off" oninput="cirPiezaSearch('${f.id}')" onfocus="cirPiezaSearch('${f.id}', true)"><div class="cir-res" id="cr_${f.id}"></div>`;
-      if (f.type === 'dec') return `<label>${f.label}</label><input id="cf_${f.id}" type="text" inputmode="decimal" value="${f.value == null ? '' : f.value}" placeholder="${esc(f.ph || '')}">`;
-      return `<label>${f.label}</label><input id="cf_${f.id}" type="number" min="${f.min == null ? 1 : f.min}" max="${f.max}" value="${f.value}">`;
+      if (f.type === 'select') return wrap(f, `<label>${f.label}</label><select id="cf_${f.id}">${f.options.map(o => `<option value="${esc(o[0])}"${o[0] === f.value ? ' selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`);
+      if (f.type === 'date') return wrap(f, `<label>${f.label}</label><input id="cf_${f.id}" type="date" value="${f.value}" oninput="cirDateHint()"><div class="d" id="cir-datehint" style="margin:4px 0 0;"></div>`);
+      if (f.type === 'text') return wrap(f, `<label>${f.label}</label><input id="cf_${f.id}" type="text" value="${esc(f.value || '')}" placeholder="${esc(f.ph || '')}">`);
+      if (f.type === 'pieza') return wrap(f, `<label>${f.label}</label><input id="cf_${f.id}" type="text" data-kind="${f.kind || ''}" data-cod="${esc(f.value || '')}" value="${esc(f.value ? f.value + ' — ' + nombre(f.value) : '')}" placeholder="${f.kind ? 'Tocá para ver la lista, o escribí para filtrar' : 'Escribí nombre, código o abreviatura (ej: SH 90) y elegí'}" autocomplete="off" oninput="cirPiezaSearch('${f.id}')" onfocus="cirPiezaSearch('${f.id}', true)"><div class="cir-res" id="cr_${f.id}"></div>`);
+      if (f.type === 'dec') return wrap(f, `<label>${f.label}</label><input id="cf_${f.id}" type="text" inputmode="decimal" value="${f.value == null ? '' : f.value}" placeholder="${esc(f.ph || '')}">`);
+      return wrap(f, `<label>${f.label}</label><input id="cf_${f.id}" type="number" min="${f.min == null ? 1 : f.min}" max="${f.max}" value="${f.value}">`);
     }).join('') + `<div class="cir-err" id="cir-err"></div><div class="btns"><button onclick="cirCloseAsk()">Cancelar</button><button class="pri" id="cir-ok">${okText}</button></div>`;
     document.getElementById('cir-ov').classList.add('on');
     cirDateHint();
+    const dependientes = fields.filter(f => f.showIf);
+    if (dependientes.length) {
+      const actualizarShowIf = () => dependientes.forEach(f => {
+        const ctl = document.getElementById('cf_' + f.showIf.field), row = m.querySelector('.cf-row[data-cf="' + f.id + '"]');
+        if (row) row.style.display = (ctl && ctl.value === f.showIf.value) ? '' : 'none';
+      });
+      dependientes.forEach(f => { const ctl = document.getElementById('cf_' + f.showIf.field); if (ctl) ctl.addEventListener('change', actualizarShowIf); });
+      actualizarShowIf();
+    }
     document.getElementById('cir-ok').onclick = async () => {
       const v = {}; const err = document.getElementById('cir-err'); err.textContent = '';
       for (const f of fields) {
@@ -7001,7 +7013,7 @@ function showToast(message, kind) {
     ask('Armar aros — plan #' + pid, `${esc(recNom(r))}: consume 1 macho + 1 hembra por aro.` + (sug === 'kanban' ? '<br>🏬 La estantería kanban no está en verde: se sugiere reponerla.' : ''), [
       { id: 'n', label: 'Aros armados (máx. ' + max + ')', value: max, max },
       { type: 'select', id: 'd', label: '¿A dónde sale el aro armado?', options: [['kanban', '🏬 Estantería kanban']].concat(peds.length ? [['pedido', '📦 Directo a un pedido (venta en caliente)']] : []), value: (sug === 'pedido' && !peds.length) ? 'kanban' : sug }]
-        .concat(peds.length ? [{ type: 'select', id: 'p', label: 'Pedido (si va directo)', options: peds, value: peds[0][0] }] : []).concat([{ type: 'date', id: 'f', label: 'Fecha en que se armó (hoy por defecto; cambiala si fue otro día)', value: TODAY() }]), 'Registrar',
+        .concat(peds.length ? [{ type: 'select', id: 'p', label: 'Pedido (si va directo)', options: peds, value: peds[0][0], showIf: { field: 'd', value: 'pedido' } }] : []).concat([{ type: 'date', id: 'f', label: 'Fecha en que se armó (hoy por defecto; cambiala si fue otro día)', value: TODAY() }]), 'Registrar',
       async v => { const row = v.d === 'pedido' ? findRow(v.p) : null; if (v.d === 'pedido' && (!row || v.n > remainingPend(row))) throw new Error('El pedido elegido necesita menos aros (' + (row ? remainingPend(row) : 0) + ').');
         await rpc('mec_armar', { p_plan: pid, p_cant: v.n, p_destino: v.d, p_pedido: row ? row.comprobante : null, p_fecha: v.f });
         if (row) { try { await marcarPreparado(row, v.n); } catch (e) { throw new Error('Se registró el armado pero no se pudo marcar el pedido como preparado. Avisale a quien administra el tablero.'); } } }); };
