@@ -6903,6 +6903,11 @@ function showToast(message, kind) {
   };
   A.entregarParte = (pid, c) => { const p = C.planes.find(x => x.id === pid); if (!p) return; const falta = Math.max(0, pendPlan(p) - holdOf(p, c)), disp = stock(c, 'sector_z') + stock(c, 'terminacion'), max = Math.min(falta, disp);
     ask('Entregar una parte a Mecanizado', esc(nombre(c)) + `<br>Plan #${pid} · falta entregar ${falta} · disponible ${disp}. El resto se entrega después.`, [{ id: 'n', label: 'Cantidad que entregás ahora (máx. ' + max + ')', value: max, max }], 'Entregar', v => rpc('mec_entregar', { p_plan: pid, p_codigo: c, p_cant: v.n })); };
+  // Entregar ignorando lo que el parche 035 ya reservó para este plan: por si Terminación entregó el total
+  // igual sin tener en cuenta esa reserva (por ej. porque no correspondía a este plan, o para no arriesgar).
+  A.entregarIgnorarReserva = (pid, c) => { const p = C.planes.find(x => x.id === pid); if (!p) return; const nec = pendPlan(p), ya = holdOf(p, c), disp = stock(c, 'sector_z') + stock(c, 'terminacion'), max = Math.min(nec, disp);
+    ask('Entregar sin contar lo reservado', esc(nombre(c)) + `<br>Plan #${pid} · necesita ${nec} · el sistema ya tiene ${ya} reservados para este plan en Mecanizado (parche 035), pero si en Terminación se entregó el total igual, registralo acá sin que se lo descuente. Disponible en Sector Z / Terminación: ${disp}.`,
+      [{ id: 'n', label: 'Cantidad que entregás (máx. ' + max + ')', value: max, max }], 'Entregar', v => rpc('mec_entregar', { p_plan: pid, p_codigo: c, p_cant: v.n, p_ignorar_reserva: true })); };
   // Detalle de un día del calendario: lo que entrega Terminación y lo que arma Mecanizado, con las acciones ahí mismo.
   let DIA_SEL = null;
   A.dia = d => {
@@ -6913,7 +6918,7 @@ function showToast(message, kind) {
     let hayParaEntregar = false;
     const bloquesE = entr.map(p => { const r = rec(p.receta);
       const filas = [r.macho, r.hembra].map(c => { const falta = Math.max(0, pendPlan(p) - holdOf(p, c)), disp = stock(c, 'sector_z') + stock(c, 'terminacion'), mx = Math.min(falta, disp); if (mx > 0) hayParaEntregar = true;
-        const acc = !falta ? '<span class="ok">✔ entregado</span>' : (puedeOperar() ? btn('Entregar ' + mx, `cir_diaEntregar(${p.id},'${esc(c)}')`, 'pri', !mx) + (mx > 1 ? btn('Una parte…', `cir_entregarParte(${p.id},'${esc(c)}')`) : '') : '') + (falta > disp ? `<div class="code">faltan ${falta - disp} por terminar</div>` : '');
+        const acc = (!falta ? '<span class="ok">✔ entregado</span>' : (puedeOperar() ? btn('Entregar ' + mx, `cir_diaEntregar(${p.id},'${esc(c)}')`, 'pri', !mx) + (mx > 1 ? btn('Una parte…', `cir_entregarParte(${p.id},'${esc(c)}')`) : '') : '')) + (holdOf(p, c) > 0 && puedeOperar() ? btn('Entregar igual…', `cir_entregarIgnorarReserva(${p.id},'${esc(c)}')`) : '') + (falta > disp ? `<div class="code">faltan ${falta - disp} por terminar</div>` : '');
         return `<tr><td>${nameCell(c)}</td><td class="num">${pendPlan(p)}</td><td class="num">${holdOf(p, c)}</td><td class="num"><b style="color:${falta ? 'var(--warn)' : 'var(--ok)'}">${falta}</b></td><td class="num">${stock(c, 'sector_z')} / ${stock(c, 'terminacion')}</td><td>${acc}</td></tr>`; }).join('');
       return `<div style="margin:8px 0 4px"><b>${esc(recNom(r))}</b> <span class="code">· plan #${p.id} · arma Mecanizado el ${fmt(p.fecha)} · ${pendPlan(p)} aros</span></div><table><tr><th>Pieza</th><th class="num">Necesita</th><th class="num">Ya en Mecanizado</th><th class="num">Falta entregar</th><th class="num">Disp. Z / Term.</th><th></th></tr>${filas}</table>`; }).join('');
     const bloquesA = arma.map(p => { const r = rec(p.receta), mx = Math.min(p.hold_macho, p.hold_hembra, pendPlan(p));
@@ -7151,7 +7156,7 @@ function showToast(message, kind) {
         const falta = Math.max(0, pendPlan(p) - holdOf(p, c)), disp = stock(c, 'sector_z') + stock(c, 'terminacion');
         rows.push(`<tr><td>${dueTxt(dueOf(p))}<div class="code">arma Mecanizado el ${fmt(p.fecha)} · plan #${p.id}</div></td><td>${nameCell(c)}</td><td class="num">${pendPlan(p)}</td><td class="num">${holdOf(p, c)}</td>
           <td class="num"><b style="color:${falta ? 'var(--warn)' : 'var(--ok)'}">${falta}</b></td><td class="num">${stock(c, 'sector_z')} / ${stock(c, 'terminacion')}</td>
-          <td>${falta ? (puedeOperar() ? btn('Entregar ' + Math.min(falta, disp), `cir_entregar(${p.id},'${esc(c)}')`, 'pri', !disp) : '') + (disp < falta ? `<div class="code">faltan ${falta - disp} por terminar</div>` : '') : '<span class="ok">✔ entregado</span>'}</td></tr>`); }); });
+          <td>${falta ? (puedeOperar() ? btn('Entregar ' + Math.min(falta, disp), `cir_entregar(${p.id},'${esc(c)}')`, 'pri', !disp) : '') + (disp < falta ? `<div class="code">faltan ${falta - disp} por terminar</div>` : '') : '<span class="ok">✔ entregado</span>'}${holdOf(p, c) > 0 && puedeOperar() ? btn('Entregar igual…', `cir_entregarIgnorarReserva(${p.id},'${esc(c)}')`) : ''}</td></tr>`); }); });
     const term = Object.keys(C.stock.terminacion || {}).filter(c => stock(c, 'terminacion') > 0).map(c => `<tr><td>${nameCell(c)}</td><td class="num">${stock(c, 'terminacion')}</td><td><div class="row-actions">${puedeOperar() ? btn('Terminé piezas…', `cir_terminar('${esc(c)}')`) : ''}${puedePlanificar() ? btn('Ajustar', `cir_ajustar('terminacion','${esc(c)}')`) : ''}</div></td></tr>`).join('');
     const mold = C.moldeos.map(o => `<tr><td>${nameCell(o.codigo)}${o.nota ? `<div class="code">${esc(o.nota)}</div>` : ''}</td><td class="num">${o.cantidad}</td><td>${fmt(o.fecha)}</td><td><div class="row-actions">${puedeOperar() ? btn('Pasó a Terminación…', `cir_pasoTerm(${o.id})`) : ''}${puedePlanificar() ? btn('🗑', `cir_delMoldeo(${o.id})`) : ''}</div></td></tr>`).join('');
     return resumenTerm() + alertasDet('sector_z', alertPanel('sector_z', 'Terminación tiene que reponer esta estantería.', false)) +
@@ -7864,7 +7869,7 @@ function showToast(message, kind) {
           : i.disp >= i.falta ? `<span class="pz-st ok" title="Sector Z + Terminación">✔ Alcanza · hay ${i.disp}</span>`
           : i.disp > 0 ? `<span class="pz-st bad" title="Sector Z + Terminación">⚠ Hay ${i.disp} · faltan ${i.falta - i.disp} por terminar</span>`
           : `<span class="pz-st bad">⚠ No hay · faltan ${i.falta} por terminar</span>`;
-        const acts = i.falta && puedeOperar() ? `<div class="pz-act">${btn('Entregar ' + parte, `cir_entregar(${p.id},'${esc(i.c)}')`, 'pri', !i.disp)}${parte > 1 ? btn('Entregar una parte…', `cir_entregarParte(${p.id},'${esc(i.c)}')`, '', !i.disp) : ''}</div>` : '';
+        const acts = (i.falta && puedeOperar() ? `<div class="pz-act">${btn('Entregar ' + parte, `cir_entregar(${p.id},'${esc(i.c)}')`, 'pri', !i.disp)}${parte > 1 ? btn('Entregar una parte…', `cir_entregarParte(${p.id},'${esc(i.c)}')`, '', !i.disp) : ''}</div>` : '') + (ya > 0 && puedeOperar() ? `<div class="pz-act">${btn('Entregar igual…', `cir_entregarIgnorarReserva(${p.id},'${esc(i.c)}')`)}</div>` : '');
         return `<div class="pz"><div class="pz-h"><span class="pz-tag ${esM ? 'm' : 'h'}">${esM ? 'MACHO' : 'HEMBRA'}</span><span class="pz-n">${esc(nombre(i.c))}</span></div>${ALIAS[i.c] ? '' : `<div class="code">${esc(i.c)}</div>`}
           <div class="pz-row"><div class="pz-big">${i.falta}<small>${i.falta ? 'a entregar' : ''}</small></div>${est}</div>
           <div class="code">Ya entregaste ${ya} de ${n}</div>${acts}</div>`; }).join('');
