@@ -6765,7 +6765,7 @@ function showToast(message, kind) {
     // lo contiene, así que la búsqueda de arriba sola no lo encuentra.
     const qTxt = String(text || '').trim();
     if (qTxt) {
-      const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
       const qn = norm(qTxt);
       const codsAlias = Object.keys(ALIAS).filter(c => norm(ALIAS[c]).includes(qn) && !rows.some(r => r.codigo === c));
       if (codsAlias.length) {
