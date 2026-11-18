@@ -7427,7 +7427,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     } catch (e) { CONC.lines = []; CONC.nota = 'No se pudo cargar: ' + (e.message || e); }
     finally { CONC.cargando = false; concCompute(); concDraw(); }
   }
-  // Para cada línea de remito, se descuentan unidades de los despachos del tablero del mismo código (±10 días, primero el mismo cliente). Lo que sobra es lo que falta registrar.
+  // Para cada línea de remito, primero se descuentan unidades de los despachos del tablero del MISMO cliente y código (±10 días); recién si sigue faltando, se prueba contra despachos de otro cliente. Lo que sobra es lo que falta registrar.
   function concCompute() {
     const logs = (typeof despachosLog !== 'undefined') ? despachosLog : [], DIA = 864e5, VENT = 10 * DIA, pool = {}, yaRef = new Set(), refLog = {};
     const DES = (typeof itemsDesaparecidosList !== 'undefined' && Array.isArray(itemsDesaparecidosList)) ? itemsDesaparecidosList : [];
@@ -7436,16 +7436,31 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     logs.forEach(l => { if (l.remito_ref) { yaRef.add(l.remito_ref); refLog[l.remito_ref] = l; return; } (pool[l.codigo] = pool[l.codigo] || []).push({ rem: Number(l.cantidad) || 0, log: l, t: kvUTC(l.dia), cli: concNorm(l.cliente), tard: tard.has(l.comprobante + '|' + l.codigo + '|' + Number(l.cantidad)) }); });
     const rows = []; CONC.sinKg = 0; CONC.estado = [];
     const ESTADO = (l, txt, forz) => CONC.estado.push({ l, txt, ref: concRef(l), forz: !!forz });
+    const ctx = [];
     CONC.lines.slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || a.comprobante.localeCompare(b.comprobante) || a.linea - b.linea).forEach(l => {
       const ref = concRef(l);
       if (yaRef.has(ref)) { const g = refLog[ref]; ESTADO(l, '✔ Registrado desde este remito' + (g ? ' el ' + kvFecha(g.dia) : '')); return; }
       if (CONC.ign.has(ref)) { ESTADO(l, '🚫 Marcado como "no es un despacho del tablero"'); return; }
       let need = Number(l.cantidad) || 0; if (need <= 0) return;
       if (l.kilos != null && Number(l.kilos) === 0) { CONC.sinKg++; ESTADO(l, 'ℹ Servicio sin kilos: no suma al indicador'); return; }   // servicios (p. ej. perforado): sin kilos no hay nada que sumar al indicador
-      const t = kvUTC(l.fecha), cli = concNorm(l.cliente); let usados = null;
-      (pool[l.codigo] || []).filter(p => p.rem > 0 && p.t - t >= -VENT && p.t - t <= (p.tard ? 45 * DIA : VENT))
-        .sort((a, b) => ((b.cli === cli) - (a.cli === cli)) || (Math.abs(a.t - t) - Math.abs(b.t - t)))
-        .forEach(p => { if (need <= 0) return; const take = Math.min(need, p.rem); p.rem -= take; need -= take; (usados = usados || []).push({ take, log: p.log }); });
+      ctx.push({ l, ref, need, usados: null, t: kvUTC(l.fecha), cli: concNorm(l.cliente) });
+    });
+    // 1ª pasada: cubrir cada línea con despachos del MISMO cliente (y código, ±10 días). Así el despacho real de
+    // un cliente nunca se lo "come" el remito de otro que casualmente tiene el mismo código y una fecha más temprana.
+    ctx.forEach(c => {
+      (pool[c.l.codigo] || []).filter(p => p.rem > 0 && p.cli === c.cli && p.t - c.t >= -VENT && p.t - c.t <= (p.tard ? 45 * DIA : VENT))
+        .sort((a, b) => Math.abs(a.t - c.t) - Math.abs(b.t - c.t))
+        .forEach(p => { if (c.need <= 0) return; const take = Math.min(c.need, p.rem); p.rem -= take; c.need -= take; (c.usados = c.usados || []).push({ take, log: p.log }); });
+    });
+    // 2ª pasada: lo que siga faltando recién ahí se prueba contra despachos de otro cliente (por si quedó cargado con otro nombre)
+    ctx.forEach(c => {
+      if (c.need <= 1e-9) return;
+      (pool[c.l.codigo] || []).filter(p => p.rem > 0 && p.t - c.t >= -VENT && p.t - c.t <= (p.tard ? 45 * DIA : VENT))
+        .sort((a, b) => Math.abs(a.t - c.t) - Math.abs(b.t - c.t))
+        .forEach(p => { if (c.need <= 0) return; const take = Math.min(c.need, p.rem); p.rem -= take; c.need -= take; (c.usados = c.usados || []).push({ take, log: p.log }); });
+    });
+    ctx.forEach(c => {
+      const l = c.l, ref = c.ref, usados = c.usados, need = c.need, t = c.t, cli = c.cli;
       const cubre = (usados || []).map(u => fmtN(u.take, u.take % 1 ? 1 : 0) + ' u. del despacho del ' + kvFecha(u.log.dia) + ' (' + (u.log.comprobante || '-') + ' · ' + (u.log.cliente || '-') + ' · ' + fmtN(u.log.cantidad) + ' u.)').join('; ');
       if (need <= 1e-9) { ESTADO(l, '✔ Ya figura como despachado en el tablero: ' + cubre, true); return; }
       if (need > 1e-9) {
