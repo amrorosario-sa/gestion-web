@@ -6671,7 +6671,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     '2027-01-01': 'Año Nuevo',
     '2026-03-23': 'Puente turístico (no laborable)', '2026-07-10': 'Puente turístico (no laborable)', '2026-12-07': 'Puente turístico (no laborable)',
   };
-  const C = { kanTab: 'sector_z', kanFilter: 'todos', kanQ: '', rechazos: [], motivos: null, mode: 'full', tab: 'plan', loaded: false, error: null, stock: {}, planes: [], moldeos: [], k: [], exc: [], recetas: [], cfg: {}, movs: [] };
+  const C = { kanTab: 'sector_z', kanFilter: 'todos', kanQ: '', rechazos: [], motivos: null, mode: 'full', tab: 'plan', loaded: false, error: null, stock: {}, planes: [], moldeos: [], k: [], exc: [], recetas: [], cfg: {}, movs: [], recepciones: [] };
 
   // ---------- utilidades ----------
   const esc = s => (typeof escHtml === 'function' ? escHtml(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
@@ -6721,7 +6721,9 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
   const rec = id => C.recetas.find(r => r.id === id);
   const planesOrd = () => C.planes.slice().sort((a, b) => a.fecha.localeCompare(b.fecha) || a.id - b.id);
   const pendPlan = p => p.cantidad - p.armados;
-  const holdOf = (p, c) => c === rec(p.receta).macho ? p.hold_macho : p.hold_hembra;
+  // piezas que Terminación ya entregó para este plan y Mecanizado todavía no confirmó que recibió (parche 042)
+  const pendRecepOf = (p, c) => (C.recepciones || []).reduce((a, rc) => (rc.plan_id === p.id && rc.codigo === c) ? a + (rc.cantidad - rc.confirmado - rc.devuelto) : a, 0);
+  const holdOf = (p, c) => (c === rec(p.receta).macho ? p.hold_macho : p.hold_hembra) + pendRecepOf(p, c);
   const kRow = (u, c) => C.k.find(x => x.ubicacion === u && x.codigo === c);
   const kOf = (u, c) => { const r = kRow(u, c); return r ? r.k : null; };
   function nivel(u, c) { const k = kOf(u, c); if (k == null) return null; const st = stock(c, u); return st >= 2 * k ? 'verde' : st >= k ? 'amarillo' : 'rojo'; }
@@ -6796,6 +6798,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
       ]);
       C.stock = {}; st.forEach(r => { (C.stock[r.ubicacion] = C.stock[r.ubicacion] || {})[r.codigo] = Number(r.cantidad); });
       C.planes = planes; C.moldeos = moldeos; C.k = k; C.exc = exc; C.recetas = recetas; C.movs = movs; C.armados = armados;
+      try { C.recepciones = await fetchAll('mec_recepciones', { col: 'id' }); } catch (e) { C.recepciones = []; }
       C.cfg = {}; cfg.forEach(r => { C.cfg[r.clave] = r.valor; });
       await kvLoad();
       try { const rr = await supabaseClient.from('mec_rechazos').select('*').order('id', { ascending: false }).limit(30); C.rechazos = rr.error ? [] : (rr.data || []); } catch (e) { C.rechazos = []; }
@@ -7147,6 +7150,17 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
   A.cerrarPlan = pid => { const p = C.planes.find(x => x.id === pid); if (!p) return;
     if (!confirm(`¿Cerrar el plan #${pid}? Quedan ${p.armados} aros armados y se deja de pedir lo que falta (${pendPlan(p)}). Lo ya entregado y no armado queda como piezas sueltas en Mecanizado.`)) return;
     rpc('mec_cerrar_plan', { p_plan: pid }).then(reload).catch(e => alert(e.message)); };
+  // Mecanizado confirma (o reporta un problema con) lo que Terminación ya marcó como entregado (parche 042)
+  const recepOf = id => (C.recepciones || []).map(x => Object.assign({}, x, { pend: x.cantidad - x.confirmado - x.devuelto })).find(x => x.id === id);
+  A.confirmarRecepcion = id => { const rc = recepOf(id); if (!rc) return;
+    ask('Confirmar recepción en Mecanizado', esc(nombre(rc.codigo)) + ` — Plan #${rc.plan_id}. Entregado por Terminación y todavía sin confirmar: ${rc.pend}.`,
+      [{ id: 'n', label: 'Cantidad que recibiste (máx. ' + rc.pend + ')', value: rc.pend, max: rc.pend }], 'Confirmar',
+      v => rpc('mec_confirmar_recepcion', { p_id: rc.id, p_cant: v.n })); };
+  A.recepcionProblema = id => { const rc = recepOf(id); if (!rc) return;
+    ask('No llegó / hay un problema', esc(nombre(rc.codigo)) + ` — Plan #${rc.plan_id}. Esto vuelve a Terminación como pendiente de entregar de nuevo. Sin confirmar: ${rc.pend}.`,
+      [{ id: 'n', label: 'Cantidad que no llegó (máx. ' + rc.pend + ')', value: rc.pend, max: rc.pend },
+       { type: 'text', id: 'x', label: 'Detalle (opcional)', ph: 'Ej: no llegó nada, o llegó menos de lo marcado' }], 'Registrar',
+      v => rpc('mec_recepcion_problema', { p_id: rc.id, p_cant: v.n, p_nota: String(v.x || '').trim() || null })); };
   Object.keys(A).forEach(k => { window['cir_' + k] = A[k]; });
 
   // ---------- vistas ----------
@@ -7974,16 +7988,26 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     const sueltasN = Object.keys(C.stock.mecanizado || {}).filter(x => libre(x) > 0).length;
     const rechRec = C.rechazos.filter(r => (parse(hoy) - parse(r.dia)) / 86400000 <= 7).length;
     const faltaEntrega = hoyP.some(p => Math.min(p.hold_macho, p.hold_hembra, pendPlan(p)) < pendPlan(p));
+    // entregas de Terminación que ya salieron de Sector Z / Terminación pero Mecanizado todavía no confirmó que recibió (parche 042)
+    const recPend = (C.recepciones || []).map(rc => Object.assign({}, rc, { pend: rc.cantidad - rc.confirmado - rc.devuelto })).filter(rc => rc.pend > 0).sort((a, b) => a.ts.localeCompare(b.ts));
+    const recTotal = recPend.reduce((a, rc) => a + rc.pend, 0);
+    const recUrgentes = recPend.filter(rc => (Date.now() - new Date(rc.ts).getTime()) / 3600000 >= 2).length;
+    const recCard = rc => { const p = C.planes.find(x => x.id === rc.plan_id), r = p && rec(p.receta);
+      const horas = (Date.now() - new Date(rc.ts).getTime()) / 3600000, late = horas >= 2;
+      const tiempo = horas < 1 ? 'recién' : horas < 24 ? `hace ${Math.round(horas)}h` : `hace ${Math.floor(horas / 24)}d`;
+      return `<div class="card ${late ? 'c-late' : 'c-hoy'}"><div class="card-top"><div><div class="big">${rc.pend} × ${esc(nombre(rc.codigo))}</div><div class="code">Plan #${rc.plan_id}${r ? ' · ' + esc(recNom(r)) : ''}${rc.cantidad !== rc.pend ? ` · entrega original ${rc.cantidad} (ya resuelto ${rc.cantidad - rc.pend})` : ''}</div></div><span class="chip ${late ? 'rojo' : 'hoy'}">${esc(tiempo.toUpperCase())}</span></div>${rc.nota ? `<div class="card-mid">${esc(rc.nota)}</div>` : ''}${puedeOperar() ? `<div class="row-actions" style="margin-top:8px;">${btn('✅ Confirmar recepción…', `cir_confirmarRecepcion(${rc.id})`, 'pri')}${btn('⚠ No llegó…', `cir_recepcionProblema(${rc.id})`)}</div>` : ''}</div>`; };
     const tiles = [
       ptile('mec', 'hoy', '⚙️', 'Armar hoy', sum(hoyP), 'aros · ' + hoyP.length + (hoyP.length === 1 ? ' plan' : ' planes'), (atras.length ? pbadge(atras.length + (atras.length === 1 ? ' ATRASADO' : ' ATRASADOS'), 'r') : '') + (hoyP.length && faltaEntrega ? pbadge('falta entrega', 'w') : '') + (hoyP.length && !faltaEntrega ? pbadge('todo listo', 'g') : ''), atras.length ? 'rojo' : (delDia.length ? 'hoy' : '')),
       ptile('mec', 'prox', '📅', 'Próximos días', prox.length, 'planes · ' + sum(prox) + ' aros', prox.length ? `<span class="code">Próximo: ${fmt(prox[0].fecha)}</span>` : '<span class="code">nada planificado</span>'),
       ptile('mec', 'kan', '🏬', 'Piezas de kanban', alK.length, 'para reponer', (rojos ? pbadge(rojos + ' en rojo', 'r') : '') + (amar ? pbadge(amar + ' en amarillo', 'w') : '') + (!alK.length ? pbadge('todo en verde', 'g') : ''), rojos ? 'rojo' : (amar ? 'hoy' : '')),
-      ptile('mec', 'rech', '🧰', 'Sueltas y rechazos', sueltasN + ' · ' + rechRec, 'sueltas · rechazos (7 días)', C.rechazos.length ? `<span class="code">Último rechazo: ${fmt(C.rechazos[0].dia)}</span>` : '<span class="code">sin rechazos</span>')];
+      ptile('mec', 'rech', '🧰', 'Sueltas y rechazos', sueltasN + ' · ' + rechRec, 'sueltas · rechazos (7 días)', C.rechazos.length ? `<span class="code">Último rechazo: ${fmt(C.rechazos[0].dia)}</span>` : '<span class="code">sin rechazos</span>'),
+      ptile('mec', 'rec', '📥', 'Recepción', recPend.length, 'entregas · ' + recTotal + ' piezas', (recUrgentes ? pbadge(recUrgentes + ' hace +2h', 'r') : '') + (!recPend.length ? pbadge('todo confirmado', 'g') : ''), recUrgentes ? 'rojo' : '')];
     const details = {
       hoy: hoyP.length ? `<div class="sec-title">Lo que tenés que armar</div>${hoyP.map(card).join('')}` : '<div class="panel"><div class="empty" style="font-size:.9rem;">✔ No tenés aros planificados para hoy ni atrasados.</div></div>',
       prox: `<div class="panel"><h2>📅 Próximos días</h2><div class="sub">Lo que viene en tu programa.</div>${proxRows ? `<table><tr><th>Armar el</th><th>Aro</th><th class="num">Cantidad</th></tr>${proxRows}</table>` : '<div class="empty">No hay nada más planificado.</div>'}</div>`,
       kan: alK.length ? alertPanel('kanban', 'Hay que armar aros para reponerla.', false) : '<div class="panel"><div class="empty" style="font-size:.9rem;">✔ Todas las piezas de la estantería kanban están en verde.</div></div>',
-      rech: sueltasPanel(false) + stockTabla('mecanizado', '⚙️ Todo lo que hay ahora en Mecanizado') + rechazosPanel() };
+      rech: sueltasPanel(false) + stockTabla('mecanizado', '⚙️ Todo lo que hay ahora en Mecanizado') + rechazosPanel(),
+      rec: (recPend.length ? `<div class="sec-title">Esperando que Mecanizado confirme que las recibió</div>${recPend.map(recCard).join('')}` : '<div class="panel"><div class="empty" style="font-size:.9rem;">✔ No hay entregas esperando confirmación — todo lo entregado ya fue recibido.</div></div>') };
     return diaHeader('⚙️ Mecanizado — mi programa del día', []) + acciones + ptiles('mec', tiles, details);
   }
 
