@@ -178,6 +178,7 @@
   .chip-clear:hover { background: #334155; color: #fff; border-color: var(--accent); }
 
   .result-info { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px; padding: 0 4px; gap: 8px; }
+  body.sin-pedidos .kpi-grid, body.sin-pedidos .filters-section, body.sin-pedidos .result-info, body.sin-pedidos .split-container { display: none !important; }
   .result-info b { color: var(--accent); }
   .view-toggle-btn { background: #1e293b; color: #cbd5e1; border: 1px solid #475569; padding: 5px 12px; border-radius: 8px; font-size: 0.75rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s; }
   .view-toggle-btn:hover { background: #334155; color: #fff; }
@@ -1584,6 +1585,13 @@ async function loadAdminUsers() {
   renderAdminUsers();
 }
 
+function pantallaInicioOptsHtml(cur) {
+  const grupos = SIDE_GROUPS.map(g => {
+    const opts = g.items.filter(it => !it.admin).map(it => '<option value="' + it.id + '"' + (cur === it.id ? ' selected' : '') + '>' + it.ic + ' ' + escHtml(it.t) + '</option>').join('');
+    return opts ? '<optgroup label="' + escHtml(g.nombre) + '">' + opts + '</optgroup>' : '';
+  }).join('');
+  return '<option value=""' + (!cur ? ' selected' : '') + '>📋 Pedidos (como siempre)</option>' + grupos;
+}
 function renderAdminUsers() {
   const box = document.getElementById('admin-dialog-content');
   const areaOpts = (cur) => '<option value="">— Sin área —</option>' + Object.keys(AREA_PRESETS).map(a => '<option value="' + escHtml(a) + '"' + (cur === a ? ' selected' : '') + '>' + escHtml(a) + '</option>').join('');
@@ -1602,6 +1610,8 @@ function renderAdminUsers() {
         '<select data-f="area" onchange="applyAreaPreset(this)" title="Al elegir un área se tildan sus secciones típicas">' + areaOpts(u.area || '') + '</select>' +
         '<label style="font-size:0.76rem; color:#fbbf24; display:flex; gap:5px; align-items:center;"><input type="checkbox" data-f="es_admin"' + (u.es_admin ? ' checked' : '') + (isMe ? ' disabled' : '') + '> Administrador</label>' +
       '</div>' +
+      '<div class="adm-home" style="margin:6px 0; font-size:0.8rem; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">🏠 Pantalla de inicio: <select data-f="pantalla_inicio">' + pantallaInicioOptsHtml(u.pantalla_inicio || '') + '</select>' +
+        '<span class="text-dim" style="font-size:0.72rem;">Si no tiene ninguna sección de "Pedidos" (abajo), entra derecho acá en vez de la pantalla principal.</span></div>' +
       '<div class="adm-secs">' + checks + '</div>' +
       '<button class="stock-btn-primary" style="padding:6px 14px; border-radius:6px; border:none; font-weight:700; cursor:pointer;" onclick="saveAdminUser(\'' + u.id + '\', this)">Guardar</button>' +
       (isMe ? '' : ' <button class="hdr-btn" style="margin:0 0 0 6px;" onclick="resetAdminPassword(\'' + u.id + '\', this)">🔑 Cambiar contraseña</button>' +
@@ -2017,6 +2027,7 @@ async function saveAdminUser(uid, btn) {
     nombre: card.querySelector('[data-f="nombre"]').value.trim() || null,
     rol: card.querySelector('[data-f="rol"]').value,
     area: card.querySelector('[data-f="area"]').value || null,
+    pantalla_inicio: card.querySelector('[data-f="pantalla_inicio"]').value || null,
     secciones,
   };
   if (uid !== CURRENT_USER_ID) payload.es_admin = card.querySelector('[data-f="es_admin"]').checked;
@@ -2755,6 +2766,7 @@ const SECCIONES_DEF = [
   ['prog_terminacion', '🔧 Mis entregas del día (entrega a Mecanizado, desde Terminación o Sector Z)'],
   ['ter_stock', '🧰 Estantería de Terminación (piezas recién terminadas, antes de pasar a Sector Z)'],
   ['kan_z', '🗄️ Sector Z — estantería kanban de piezas que llevan Mecanizado (k, stock)'],
+  ['ter_e1', '🗺️ Estantería 1 — mapa físico (informativo)'],
   ['circuito', '📅 Armar plan de mecanizado (planificación: jefe de planta / planificación)'],
   ['prog_mecanizado', '⚙️ Mi programa del día'],
   ['mec_stock', '🧰 Stock en Mecanizado'],
@@ -2774,7 +2786,7 @@ const SECCIONES_GRUPOS = [
   { g: '📋 Pantalla principal de Pedidos (por etapa, datos de SGA)', items: ['moldeo', 'listas', 'preparado', 'proceso', 'repuestos', 'vencidas', 'prioridades', 'stock', 'despachado', 'armar_hoja', 'indicadores', 'rechazo', 'replanificar'] },
   { g: '🔥 Fusión', items: ['parte_fusion'] },
   { g: '🧱 Moldeo', items: ['kanban_moldeo', 'moldeo_dia', 'plan_moldeo'] },
-  { g: '🔧 Terminación', items: ['prog_terminacion', 'ter_stock', 'kan_z'] },
+  { g: '🔧 Terminación', items: ['prog_terminacion', 'ter_stock', 'kan_z', 'ter_e1'] },
   { g: '🔩 Mecanizado', items: ['circuito', 'prog_mecanizado', 'mec_stock', 'kan_mec'] },
   { g: '📦 Kanban y Stock', items: ['kan_aros'] },
   { g: '📥 Cargas', items: ['cargar_remitos', 'conciliar_remitos', 'cargar_moldeo'] },
@@ -2859,6 +2871,28 @@ function puedeVer(sec) {
 function recomputeHojaInspector() {
   isHojaInspector = puedeVer('armar_hoja');
 }
+// ---- Acceso a la pantalla principal de Pedidos (Version 119): quien no tiene ninguna sección del
+// grupo "Pedidos" no ve el total ni la tabla completa — entra directo a su "pantalla de inicio"
+// (profiles.pantalla_inicio, elegible por un admin en Usuarios y permisos; si no está elegida, o ya
+// no la puede ver, se usa la primera pantalla del menú lateral que sí tenga disponible).
+const PEDIDOS_SECCIONES = SECCIONES_GRUPOS[0].items;
+function tienePedidos() { return !CURRENT_PROFILE || CURRENT_PROFILE.es_admin || PEDIDOS_SECCIONES.some(puedeVer); }
+function pantallaInicioItem() {
+  if (!CURRENT_PROFILE) return null;
+  const all = SIDE_GROUPS.flatMap(g => g.items);
+  const puede = it => it.admin ? !!CURRENT_PROFILE.es_admin : puedeVer(it.sec);
+  if (CURRENT_PROFILE.pantalla_inicio) { const it = all.find(x => x.id === CURRENT_PROFILE.pantalla_inicio); if (it && puede(it)) return it; }
+  return all.find(puede) || null;
+}
+function aplicarAccesoPedidos() {
+  const it = (CURRENT_PROFILE && !tienePedidos()) ? pantallaInicioItem() : null;
+  document.body.classList.toggle('sin-pedidos', !!it);
+  const navPedidos = document.getElementById('nav-pedidos');
+  if (navPedidos) navPedidos.style.display = it ? 'none' : '';
+  if (it && !document.querySelector('#cir-root.on, #ven-root.on, #pf-root.on') && window.sideGo) {
+    try { window.sideGo(it.id); } catch (e) { console.error('Pantalla de inicio:', e); }
+  }
+}
 function applyInspectorVisibility() {
   recomputeHojaInspector();
   Object.keys(SECCION_ELEMS).forEach(sec => {
@@ -2882,6 +2916,7 @@ function applyInspectorVisibility() {
   const nav = document.getElementById('main-nav');
   if (nav) nav.style.display = ['indicadores', 'rechazo', 'replanificar', 'sgadesap'].some(k => puedeVer(k)) ? '' : 'none';
   if (window.sideBuild) window.sideBuild();
+  aplicarAccesoPedidos();
 }
 
 // ---- Menú lateral (Version 93): grupos que se despliegan, anclable; cada lugar es un permiso propio ----
@@ -2897,7 +2932,7 @@ const SIDE_GROUPS = [
   { id: 'ter', ic: '🔧', nombre: 'Terminación', items: [
     { id: 'ter_ent', ic: '🔧', t: 'Entregas del día', sec: 'prog_terminacion', run: () => window.cirOpen('term') },
     { id: 'ter_stock', ic: '🧰', t: 'Estantería de Terminación', sec: 'ter_stock', run: () => window.cirOpen('full', { tab: 'term' }) },
-    { id: 'ter_e1', ic: '🗺️', t: 'Estantería 1 — mapa físico (informativo)', admin: true, run: () => window.cirOpen('e1'), noMark: true },
+    { id: 'ter_e1', ic: '🗺️', t: 'Estantería 1 — mapa físico (informativo)', sec: 'ter_e1', run: () => window.cirOpen('e1'), noMark: true },
     { id: 'ter_z', ic: '🗄️', t: 'Sector Z', sec: 'kan_z', run: () => window.cirOpen('kan', { kan: 'sector_z' }) },
     { id: 'ter_cargar', ic: '📋', t: 'Cargar / contar stock', sec: 'ter_stock', edit: true, run: () => window.cirCargarStock && window.cirCargarStock('terminacion'), noMark: true },
   ] },
@@ -7938,7 +7973,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
   ];
   const E1_LIBRES = [[6, 1], [7, 1], [11, 2]];
   function vEstanteria1() {
-    if (!(typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE && CURRENT_PROFILE.es_admin)) return '<div class="panel"><div class="empty">Esta vista es solo para administradores.</div></div>';
+    if (!(typeof puedeVer === 'function' && puedeVer('ter_e1'))) return '<div class="panel"><div class="empty">No tenés acceso a esta vista.</div></div>';
     const porZona = E1_ZONAS.map(z => { const total = stock(z.c, 'sector_z'); let rest = total;
       const porSlot = z.slots.map(() => { const put = Math.max(0, Math.min(10, rest)); rest -= put; return put; });
       return Object.assign({}, z, { total, porSlot, sobra: Math.max(0, rest) }); });
