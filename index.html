@@ -6607,7 +6607,7 @@ function showToast(message, kind) {
 // =====================================================================
 (function () {
   'use strict';
-  const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z', mecanizado: 'Mecanizado', kanban: 'Estantería kanban' };
+const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - en proceso', mecanizado: 'Mecanizado', kanban: 'Estantería Kanban Mecanizado' };
   const FERIADOS = {
     '2026-01-01': 'Año Nuevo', '2026-02-16': 'Carnaval', '2026-02-17': 'Carnaval', '2026-03-24': 'Día de la Memoria', '2026-04-02': 'Día del Veterano de Malvinas', '2026-04-03': 'Viernes Santo',
     '2026-05-01': 'Día del Trabajador', '2026-05-25': 'Revolución de Mayo', '2026-06-15': 'Paso a la Inmortalidad de Güemes', '2026-06-20': 'Paso a la Inmortalidad de Belgrano', '2026-07-09': 'Día de la Independencia',
@@ -7109,17 +7109,19 @@ function showToast(message, kind) {
     const col = n => n === 'rojo' ? 'var(--bad)' : 'var(--warn)';
     const accion = x => x.L <= 0 ? '<span class="ok">✔ ya hay en proceso</span>' : (u === 'sector_z' ? (puedePlanificar() ? btn(`Lanzar OI por ${x.L}`, `cir_moldeo(${x.L},'${esc(x.c)}',1)`, 'pri') : '') : (conPlan && puedePlanificar() ? btn(`Lanzar OT por ${x.L}`, `cir_nuevoPlan(${x.L},'${esc(x.c)}',1)`, 'pri') : ''));
     const rows = L.map(x => `<tr class="rj-r" onclick="cirSv(this)" title="${esc(svTxt(u, x.c))}"><td><span style="color:${col(x.n)}">●</span> <b title="${esc(nombreFull(x.c))}">${esc(nombre(x.c))}</b></td>
-        <td class="rj-bar"><div class="rj-gb"><i style="width:${Math.min(100, Math.round(100 * x.h / (2 * x.k)))}%;background:${col(x.n)}"></i><u></u></div><div class="code">hay <b>${x.h}</b> · k ${x.k}</div></td>
+<td class="rj-bar"><div class="rj-gb"><i style="width:${Math.min(100, Math.round(100 * x.h / (2 * x.k)))}%;background:${col(x.n)}"></i><u></u></div><div class="code">hay <b style="color:#fff;font-size:1.05rem">${x.h}</b> · k ${x.k}</div></td>
         <td class="num"><b>${x.v}</b></td><td class="num">${x.L > 0 ? `<b style="color:#fff;font-size:1rem">${x.L}</b>` : '<span class="code">—</span>'}</td><td>${accion(x)}</td></tr>
       <tr class="rj-d" style="display:none"><td colspan="5">${svRows(u, x.c)}</td></tr>`).join('');
     const toggleLbl = `Mostrar solo aros${nNoAros ? ` <span class="code">(${nNoAros} pieza${nNoAros === 1 ? '' : 's'} que no ${nNoAros === 1 ? 'es' : 'son'} aro${soloAros ? ', ocultas' : ', incluidas'})</span>` : ''}`;
     const toggle = `<label style="display:flex; align-items:center; gap:7px; font-size:.82rem; color:#cbd5e1; margin:8px 0;"><input type="checkbox" ${soloAros ? 'checked' : ''} onchange="cirAroFiltro('${u}', this.checked)"> ${toggleLbl}</label>`;
     const vacio = `<div class="empty">No hay aros en alerta${nNoAros ? ` (sí hay ${nNoAros} pieza${nNoAros === 1 ? '' : 's'} que no ${nNoAros === 1 ? 'es' : 'son'} aro en alerta — destildá el filtro de arriba para ver${nNoAros === 1 ? 'la' : 'las'}).` : '.'}</div>`;
-    return `<div class="panel"><div class="rs-tit"><h2>${u === 'sector_z' ? '🗄️' : '🏬'} ${UBIC[u]} — a reponer</h2><span class="code">${esc(quien)}</span></div>
+    const apId = 'ap-' + u;
+    const apOpen = (window.cirSecOpen && window.cirSecOpen[apId] === false) ? '' : 'open';
+    return `<details class="panel" id="sec-${apId}" ${apOpen} ontoggle="window.cirSecOpen=window.cirSecOpen||{};window.cirSecOpen['${apId}']=this.open"><summary style="cursor:pointer;"><div class="rs-tit"><h2 style="display:inline-block;margin:0;">${u === 'sector_z' ? '🗄️' : '🏬'} ${UBIC[u]} — a reponer</h2><span class="code">${esc(quien)}</span></div></summary>
       ${toggle}
       ${!L.length ? vacio : `<div class="rj-chips"><span class="rj-chip" style="color:var(--bad);border-color:#7f1d1d">🔴 ${nr} en rojo</span><span class="rj-chip" style="color:var(--warn);border-color:#78350f">🟡 ${na} en amarillo</span><span class="rj-chip" style="color:var(--ok);border-color:#14532d">🟢 ${nv} bien</span>${ya ? `<span class="rj-chip" style="color:var(--dim)">✔ ${ya} ya en proceso</span>` : ''}</div>
       <table class="rj"><tr><th>Pieza</th><th>En estantería <span class="code">(raya blanca = k)</span></th><th class="num">Stock virtual</th><th class="num">Hay que reponer</th><th></th></tr>${rows}</table>
-      <div class="code" style="margin-top:6px">Tocá una fila para ver la cuenta del stock virtual (estantería + planificados − pedidos).</div>`}</div>`;
+      <div class="code" style="margin-top:6px">Tocá una fila para ver la cuenta del stock virtual (estantería + planificados − pedidos).</div>`}</details>`;
   }
   window.cirAroFiltro = (u, checked) => { C.aroFiltro = C.aroFiltro || {}; C.aroFiltro[u] = checked; render(); };
   window.cirSv = tr => { const d = tr.nextElementSibling; if (d) d.style.display = d.style.display === 'none' ? '' : 'none'; };
@@ -7704,15 +7706,18 @@ function showToast(message, kind) {
     const prox = Object.keys(FERIADOS).filter(f => f >= TODAY()).sort().slice(0, 4).map(f => `${fmt(f)} · ${esc(FERIADOS[f])}`).join(' &nbsp;|&nbsp; ');
     const exc = C.exc.slice().sort((a, b) => a.fecha.localeCompare(b.fecha)).map(e => `<div style="display:flex; gap:8px; align-items:center; padding:3px 0;"><span>${fmt(e.fecha)} — <b>${e.tipo === 'no' ? 'no se trabaja' : 'sí se trabaja'}</b>${e.nota ? ' · ' + esc(e.nota) : ''}</span>${puedePlanificar() ? btn('Quitar', `cir_quitarExc('${e.fecha}')`) : ''}</div>`).join('');
     const recs = C.recetas.map(r => `<tr><td><b>${esc(recNom(r))}</b>${ALIAS[r.salida] ? `<div class="code">${esc(r.nombre)}</div>` : ''}</td><td>${nameCell(r.macho)}</td><td>${nameCell(r.hembra)}</td><td>${nameCell(r.salida)}</td><td>${puedePlanificar() ? btn('🗑', `cir_delReceta('${esc(r.id)}')`) : ''}</td></tr>`).join('');
-    return `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>📅 Planificación por fecha (4 semanas)</h2>${puedePlanificar() ? btn('+ Nuevo plan', 'cir_nuevoPlan()', 'pri') : ''}</div>
-        <div class="sub">Cuántos aros arma Mecanizado cada día. La entrega de Terminación se calcula sola: el día hábil anterior. Los días apagados no son hábiles y se saltan.</div><div class="week">${cells.map(cell).join('')}</div></div>
-      <div class="panel"><h2>Planes cargados</h2>${rows ? `<table><tr><th>Mecanizado arma</th><th>Terminación entrega</th><th>Plan</th><th class="num">Aros</th><th class="num">Armados</th><th>Avance</th><th></th></tr>${rows}</table>` : '<div class="empty">Sin planes.</div>'}</div>` +
+    const secOpen = id => (window.cirSecOpen && window.cirSecOpen[id] === false) ? '' : 'open';
+    const secTog = id => `ontoggle="window.cirSecOpen=window.cirSecOpen||{};window.cirSecOpen['${id}']=this.open"`;
+    return `<details class="panel" id="sec-cal" ${secOpen('cal')} ${secTog('cal')}><summary style="cursor:pointer;"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:center;"><h2 style="display:inline-block;margin:0;">📅 Planificación por fecha (4 semanas)</h2><span onclick="event.stopPropagation()">${puedePlanificar() ? btn('+ Nuevo plan', 'cir_nuevoPlan()', 'pri') : ''}</span></div></summary>
+        <div class="sub">Cuántos aros arma Mecanizado cada día. La entrega de Terminación se calcula sola: el día hábil anterior. Los días apagados no son hábiles y se saltan.</div><div class="week">${cells.map(cell).join('')}</div></details>
+      <details class="panel" id="sec-planes" ${secOpen('planes')} ${secTog('planes')}><summary style="cursor:pointer;"><h2 style="display:inline-block;margin:0;">Planes cargados</h2></summary>${rows ? `<table><tr><th>Mecanizado arma</th><th>Terminación entrega</th><th>Plan</th><th class="num">Aros</th><th class="num">Armados</th><th>Avance</th><th></th></tr>${rows}</table>` : '<div class="empty">Sin planes.</div>'}</details>
+      <details class="panel" id="sec-ekt" ${secOpen('ekt')} ${secTog('ekt')}><summary style="cursor:pointer;"><h2 style="display:inline-block;margin:0;">🏬 Estantería Kanban Terminación</h2></summary><div class="sub">Estantería física de Terminación (mapa informativo).</div>${btn('🗺️ Ver estantería 1 — mapa físico', "cirOpen('e1')", 'pri')}</details>` +
       alertPanel('kanban', 'Planificación tiene que reponer esta estantería.', true) + alertPanel('sector_z', 'Terminación tiene que reponer esta estantería.', false) +
-      `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>🔩 Recetas de aros</h2>${puedePlanificar() ? btn('+ Nueva receta', 'cir_receta()') : ''}</div><div class="sub">Qué macho y qué hembra arman cada aro, y con qué código se maneja el aro armado.</div>
-        ${recs ? `<table><tr><th>Aro</th><th>Macho</th><th>Hembra</th><th>Aro armado</th><th></th></tr>${recs}</table>` : '<div class="empty">Todavía no hay recetas: cargá una para poder planificar.</div>'}</div>
-      <div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>📆 Días no hábiles</h2>${puedePlanificar() ? btn('+ Agregar excepción', 'cir_excepcion()') : ''}</div>
+      `<details class="panel" id="sec-rec" ${secOpen('rec')} ${secTog('rec')}><summary style="cursor:pointer;"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:center;"><h2 style="display:inline-block;margin:0;">🔩 Recetas de aros</h2><span onclick="event.stopPropagation()">${puedePlanificar() ? btn('+ Nueva receta', 'cir_receta()') : ''}</span></div></summary><div class="sub">Qué macho y qué hembra arman cada aro, y con qué código se maneja el aro armado.</div>
+        ${recs ? `<table><tr><th>Aro</th><th>Macho</th><th>Hembra</th><th>Aro armado</th><th></th></tr>${recs}</table>` : '<div class="empty">Todavía no hay recetas: cargá una para poder planificar.</div>'}</details>
+      <details class="panel" id="sec-dias" ${secOpen('dias')} ${secTog('dias')}><summary style="cursor:pointer;"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:center;"><h2 style="display:inline-block;margin:0;">📆 Días no hábiles</h2><span onclick="event.stopPropagation()">${puedePlanificar() ? btn('+ Agregar excepción', 'cir_excepcion()') : ''}</span></div></summary>
         <div class="sub">Se descuentan solos los sábados, domingos y feriados nacionales (calendario 2026 cargado; falta cargar los de 2027 en adelante). Los puentes turísticos también quedan sin trabajo por defecto: se pueden dejar como "sí se trabaja" con una excepción.</div>
-        <div class="sub"><b>Próximos feriados:</b> ${prox}</div>${exc ? `<div style="font-size:.8rem;"><b>Excepciones cargadas:</b>${exc}</div>` : '<div class="empty" style="padding:0;">Sin excepciones cargadas.</div>'}</div>`;
+        <div class="sub"><b>Próximos feriados:</b> ${prox}</div>${exc ? `<div style="font-size:.8rem;"><b>Excepciones cargadas:</b>${exc}</div>` : '<div class="empty" style="padding:0;">Sin excepciones cargadas.</div>'}</details>`;
   }
   window.cirHistQ = t => { C.histQ = t; render(); const e = document.getElementById('hist-q'); if (e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); } };
   window.cirHistTipo = t => { C.histTipo = t || null; render(); };
