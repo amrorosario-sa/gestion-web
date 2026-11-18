@@ -1564,6 +1564,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 
 // ---- Pantalla de administración de usuarios (solo es_admin) ----
 let ADMIN_USERS = [];
+let ADMIN_FILTRO = new Set(); // ids tildados en "elegir personas a mostrar"
 let CATALOGO_MEC = new Set(); // códigos con la marca "lleva mecanizado"
 function openAdminDialog() {
   if (!CURRENT_PROFILE || !CURRENT_PROFILE.es_admin) return;
@@ -1579,13 +1580,15 @@ async function loadAdminUsers() {
   const { data, error } = await supabaseClient.from('profiles').select('*').order('email');
   if (error) { box.innerHTML = '<h3>👥 Usuarios y permisos</h3><div class="text-dim">No se pudo cargar: ' + escHtml(error.message) + '</div>'; return; }
   ADMIN_USERS = data || [];
+  ADMIN_FILTRO = new Set();
   renderAdminUsers();
 }
 
 function renderAdminUsers() {
   const box = document.getElementById('admin-dialog-content');
   const areaOpts = (cur) => '<option value="">— Sin área —</option>' + Object.keys(AREA_PRESETS).map(a => '<option value="' + escHtml(a) + '"' + (cur === a ? ' selected' : '') + '>' + escHtml(a) + '</option>').join('');
-  const cards = ADMIN_USERS.map(u => {
+  const visibles = ADMIN_FILTRO.size ? ADMIN_USERS.filter(u => ADMIN_FILTRO.has(u.id)) : [];
+  const cards = visibles.map(u => {
     const secs = expandLegacySecs(Array.isArray(u.secciones) ? u.secciones : SECCIONES_DEFAULT);
     const isMe = u.id === CURRENT_USER_ID;
     const checks = seccionesGruposHtml('data-sec', sec => secs.includes(sec));
@@ -1606,12 +1609,65 @@ function renderAdminUsers() {
       '<span class="adm-msg"></span>' +
     '</div>';
   }).join('');
+  const vacio = ADMIN_USERS.length ? '<div class="text-dim">Tildá arriba a quién querés ver.</div>' : '<div class="text-dim">No hay usuarios.</div>';
   box.innerHTML = '<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;"><h3>👥 Usuarios y permisos</h3><button style="background:#334155; border:none; color:#fff; width:28px; height:28px; border-radius:50%; cursor:pointer;" onclick="closeAdminDialog()">✕</button></div>' +
     '<div class="text-dim" style="margin-bottom:12px; line-height:1.5;">' +
     '<b>Rol</b>: visualizador solo mira; colaborador además carga Preparado/Despachos/Stock; editor además fija prioridades y catálogo. ' +
     '<b>Secciones</b>: lo que cada persona ve en el tablero (Stock, Despachado y Hoja de Pesada además quedan bloqueados en la base de datos).</div>' +
+    renderAdminFiltro() +
     addUserFormHtml() +
-    (cards || '<div class="text-dim">No hay usuarios.</div>');
+    (cards || vacio);
+}
+
+function renderAdminFiltro() {
+  const items = ADMIN_USERS.map(u => {
+    const label = u.nombre || u.email;
+    return '<label style="display:flex; align-items:center; gap:6px; padding:3px 0;"><input type="checkbox" onchange="toggleAdminFiltro(\'' + u.id + '\', this.checked)"' + (ADMIN_FILTRO.has(u.id) ? ' checked' : '') + '> ' + escHtml(label) + '</label>';
+  }).join('');
+  const sel = [...ADMIN_FILTRO];
+  const copiar = sel.length >= 2 ?
+    '<div style="margin-top:10px; padding-top:10px; border-top:1px solid #334155;">' +
+    '<div class="text-dim" style="font-size:0.78rem; margin-bottom:6px;">📋 Copiar permisos entre las ' + sel.length + ' personas tildadas:</div>' +
+    '<select id="adm-filtro-copiar-from" style="margin-right:6px;">' +
+      sel.map(uid => { const u = ADMIN_USERS.find(x => x.id === uid); return '<option value="' + uid + '">' + escHtml(u ? (u.nombre || u.email) : uid) + '</option>'; }).join('') +
+    '</select>' +
+    '<button class="hdr-btn" style="margin:0;" onclick="copiarPermisosSeleccionados(document.getElementById(\'adm-filtro-copiar-from\').value)">→ Copiar sus permisos a las demás tildadas</button>' +
+    '</div>' : '';
+  return '<details class="adm-user" open style="border-color:var(--accent);">' +
+    '<summary style="cursor:pointer; font-weight:700; color:#fff;">🔎 Elegir personas a mostrar' + (sel.length ? ' (' + sel.length + ' tildada' + (sel.length === 1 ? '' : 's') + ')' : '') + '</summary>' +
+    '<div style="margin-top:10px;">' +
+    '<div style="display:flex; gap:10px; margin-bottom:8px;">' +
+      '<button class="hdr-btn" style="margin:0;" onclick="setAdminFiltroTodos(true)">Tildar todos</button>' +
+      '<button class="hdr-btn" style="margin:0;" onclick="setAdminFiltroTodos(false)">Destildar todos</button>' +
+    '</div>' +
+    '<div class="adm-secs">' + items + '</div>' +
+    copiar +
+    '</div></details>';
+}
+
+function toggleAdminFiltro(uid, checked) {
+  if (checked) ADMIN_FILTRO.add(uid); else ADMIN_FILTRO.delete(uid);
+  renderAdminUsers();
+}
+
+function setAdminFiltroTodos(on) {
+  ADMIN_FILTRO = on ? new Set(ADMIN_USERS.map(u => u.id)) : new Set();
+  renderAdminUsers();
+}
+
+function copiarPermisosSeleccionados(fromUid) {
+  const from = ADMIN_USERS.find(u => u.id === fromUid);
+  if (!from) return;
+  const secs = expandLegacySecs(Array.isArray(from.secciones) ? from.secciones : SECCIONES_DEFAULT);
+  let n = 0;
+  ADMIN_FILTRO.forEach(uid => {
+    if (uid === fromUid) return;
+    const card = document.querySelector('.adm-user[data-uid="' + uid + '"]');
+    if (!card) return;
+    card.querySelectorAll('input[data-sec]').forEach(cb => { cb.checked = secs.includes(cb.getAttribute('data-sec')); });
+    n++;
+  });
+  showToast('Permisos de ' + (from.nombre || from.email) + ' copiados a ' + n + (n === 1 ? ' persona' : ' personas') + ' — revisá y tocá Guardar en cada una.', 'success');
 }
 
 
