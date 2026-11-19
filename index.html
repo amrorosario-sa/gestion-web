@@ -6916,9 +6916,10 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
       if (error) throw error; C.pasos = (data || []).filter(m => !m.deshecho); } catch (e) { C.pasos = []; }
   }
   // Aros armados recientes en Mecanizado (de un plan o fuera de plan), para poder deshacer uno cargado por error.
+  // Ojo: esto es DISTINTO de C.armados (el histórico completo que usa "📊 Aros armados por día") — no reusar ese nombre.
   async function loadArmados() {
     try { const { data, error } = await supabaseClient.from('mec_movimientos').select('*').in('motivo', ['aro armado', 'aro armado fuera de plan']).order('id', { ascending: false }).limit(30);
-      if (error) throw error; C.armados = (data || []).filter(m => !m.deshecho); } catch (e) { C.armados = []; }
+      if (error) throw error; C.armadosRecientes = (data || []).filter(m => !m.deshecho); } catch (e) { C.armadosRecientes = []; }
   }
   const kgSga = c => { try { const r = (typeof BASE !== 'undefined' ? BASE : []).find(x => x.codigo === c && Number(x.kxu) > 0); return r ? Number(r.kxu) : null; } catch (e) { return null; } };
   const kgDe = c => KG[c] > 0 ? KG[c] : kgSga(c);
@@ -7177,7 +7178,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
         await rpc('mec_armar_libre', { p_receta: v.r, p_cant: v.n, p_destino: v.d, p_pedido: row ? row.comprobante : null, p_fecha: v.f });
         if (row) { try { await marcarPreparado(row, v.n); } catch (e) { throw new Error('Se registró el armado pero no se pudo marcar el pedido como preparado. Avisale a quien administra el tablero.'); } } });
   };
-  A.deshacerArmado = id => { const m = (C.armados || []).find(x => x.id === id); if (!m) return;
+  A.deshacerArmado = id => { const m = (C.armadosRecientes || []).find(x => x.id === id); if (!m) return;
     ask('Deshacer armado', esc(nombre(m.codigo)) + ` — ${m.cantidad} u.<br>El aro sale de la estantería kanban y el macho y la hembra vuelven a Mecanizado. Si era de un plan, le devuelve la reserva. Solo se puede si esa cantidad todavía está entera en kanban y no salió directo a un pedido.`, [], 'Deshacer',
       () => rpc('mec_armar_deshacer', { p_mov: id })); };
   A.salidaLibre = c => {
@@ -7934,8 +7935,8 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
         <td><div class="row-actions">${puedeOperar() ? btn('Armar' + (max ? ' hasta ' + max : ''), `cir_armar(${p.id})`, 'pri', !max) + btn('Rechazar…', `cir_rechazarPlan(${p.id})`, '', !(p.hold_macho || p.hold_hembra)) : ''}${puedePlanificar() ? btn('Cerrar…', `cir_cerrarPlan(${p.id})`) : ''}</div>${(fm > 0 || fh > 0) ? `<div class="code">falta que Terminación entregue ${Math.max(fm, 0)} machos / ${Math.max(fh, 0)} hembras (el ${fmt(dueOf(p))})</div>` : ''}</td></tr>`; }).join('');
     return resumenMec() + alertasDet('kanban', alertPanel('kanban', 'Hay que armar aros para reponerla.', false)) + `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>⚙️ Armado de aros — por fecha</h2>${puedePlanificar() ? btn('📋 Contar / ajustar stock', 'cir_ajustarMec()') : ''}</div><div class="sub">Lo planificado para cada día. Cuando Terminación entrega los machos y hembras, se arma. El aro sale a la estantería kanban o directo a un pedido (venta en caliente).</div>
       ${planes ? `<table><tr><th>Armar el</th><th>Plan</th><th class="num">Faltan armar</th><th class="num">Machos acá</th><th class="num">Hembras acá</th><th></th></tr>${planes}</table>` : '<div class="empty">No hay planes pendientes.</div>'}</div>` +
-      `${(C.armados || []).length ? `<div class="panel"><h2>↩ Armaste hace poco</h2><div class="sub">Si armaste algo por error, tocá <b>Deshacer</b>: el aro sale de la estantería kanban y el macho y la hembra vuelven a Mecanizado (si era de un plan, se le devuelve la reserva). Solo se puede si esa cantidad todavía está entera en kanban y no salió directo a un pedido.</div>
-        <table><tr><th>Aro</th><th class="num">Cantidad</th><th>De dónde</th><th>Cuándo</th><th></th></tr>${C.armados.map(m => `<tr><td>${nameCell(m.codigo)}</td><td class="num"><b>${m.cantidad}</b></td><td>${m.plan_id ? 'Plan #' + m.plan_id : 'Fuera de plan'}</td><td>${esc(String(m.ts || '').slice(0, 10).split('-').reverse().join('/'))}<div class="code">${esc(String(m.ts || '').slice(11, 16))}</div></td><td>${puedeOperar() ? btn('↩ Deshacer', `cir_deshacerArmado(${m.id})`) : ''}</td></tr>`).join('')}</table></div>` : ''}` + sueltasPanel() + rechazosPanel();
+      `${(C.armadosRecientes || []).length ? `<div class="panel"><h2>↩ Armaste hace poco</h2><div class="sub">Si armaste algo por error, tocá <b>Deshacer</b>: el aro sale de la estantería kanban y el macho y la hembra vuelven a Mecanizado (si era de un plan, se le devuelve la reserva). Solo se puede si esa cantidad todavía está entera en kanban y no salió directo a un pedido.</div>
+        <table><tr><th>Aro</th><th class="num">Cantidad</th><th>De dónde</th><th>Cuándo</th><th></th></tr>${C.armadosRecientes.map(m => `<tr><td>${nameCell(m.codigo)}</td><td class="num"><b>${m.cantidad}</b></td><td>${m.plan_id ? 'Plan #' + m.plan_id : 'Fuera de plan'}</td><td>${esc(String(m.ts || '').slice(0, 10).split('-').reverse().join('/'))}<div class="code">${esc(String(m.ts || '').slice(11, 16))}</div></td><td>${puedeOperar() ? btn('↩ Deshacer', `cir_deshacerArmado(${m.id})`) : ''}</td></tr>`).join('')}</table></div>` : ''}` + sueltasPanel() + rechazosPanel();
   }
 
   // ---------- vistas simples del día (supervisor de Mecanizado / Terminación) ----------
