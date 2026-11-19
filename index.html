@@ -780,7 +780,7 @@
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
       <div>
         <div style="font-weight:700; color:#fff; font-size:0.95rem;">🚚 Historial de Despachos</div>
-        <div class="text-dim" style="margin-top:4px;">Piezas marcadas como despachadas desde "Preparado para Despacho", agrupadas por día. Queda guardado para siempre, aunque SGA ya no traiga esa pieza al día siguiente (por estar facturada).</div>
+        <div class="text-dim" style="margin-top:4px;">Piezas marcadas como despachadas desde "Preparado para Despacho", agrupadas por día. Queda guardado para siempre, aunque SGA ya no traiga esa pieza al día siguiente (por estar facturada). Usá el buscador de arriba (Cliente, Producto, OC, Código) para encontrar un despacho puntual sin tener que ir día por día.</div>
       </div>
     </div>
     <div id="despachado-semanas"></div>
@@ -5010,11 +5010,27 @@ function applyFilters() {
     if (despachadoSection) despachadoSection.style.display = 'block';
     if (armarHojaSection) armarHojaSection.style.display = 'none';
     if (splitContainer) splitContainer.style.display = 'none';
-    renderDespachadoPanel();
-    document.getElementById('count-filtered').textContent = despachosLog.length;
+    // El mismo buscador (Cliente, Producto, OC, Código) y el filtro de Cliente de arriba
+    // también se aplican acá, sobre todo el historial de despachos (no solo lo de hoy/ayer).
+    const despSearch = (document.getElementById('filter-search').value || '').toLowerCase().trim();
+    const despClientSel = document.getElementById('filter-client').value;
+    const despList = despachosLog.filter(d => {
+      if (despClientSel && d.cliente !== despClientSel) return false;
+      if (despSearch) {
+        const match = (d.cliente || '').toLowerCase().includes(despSearch) ||
+                      (d.comprobante || '').toLowerCase().includes(despSearch) ||
+                      (d.oc || '').toLowerCase().includes(despSearch) ||
+                      (d.codigo || '').toLowerCase().includes(despSearch) ||
+                      (d.descripcion || '').toLowerCase().includes(despSearch);
+        if (!match) return false;
+      }
+      return true;
+    });
+    renderDespachadoPanel(despList);
+    document.getElementById('count-filtered').textContent = despList.length;
     document.getElementById('count-total').textContent = DATA.length;
-    document.getElementById('kg-filtered').textContent = despachosLog.reduce((s,d)=>s+(d.kg||0),0).toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1});
-    document.getElementById('cant-filtered').textContent = despachosLog.reduce((s,d)=>s+(d.cantidad||0),0).toLocaleString();
+    document.getElementById('kg-filtered').textContent = despList.reduce((s,d)=>s+(d.kg||0),0).toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1});
+    document.getElementById('cant-filtered').textContent = despList.reduce((s,d)=>s+(d.cantidad||0),0).toLocaleString();
     return;
   } else if (currentFilter === 'armar_hoja') {
     if (stockSection) stockSection.style.display = 'none';
@@ -5638,18 +5654,23 @@ function showToast(message, kind) {
         </div>`;
     }
 
-    function renderDespachadoPanel() {
+    function renderDespachadoPanel(list) {
       renderDespachadoSemanas();
       const el = document.getElementById('despachado-list');
       if (!el) return;
+      const filtrado = list || despachosLog;
       if (!despachosLog.length) {
         el.innerHTML = '<div class="text-dim" style="padding: 20px 4px;">Todavía no se marcó nada como despachado desde acá. Usá el botón "🚚 Despachar" en cada ítem dentro de "Preparado para Despacho".</div>';
+        return;
+      }
+      if (!filtrado.length) {
+        el.innerHTML = '<div class="text-dim" style="padding: 20px 4px;">Ningún despacho coincide con la búsqueda — probá con otro cliente, pieza, código o Nº de comprobante.</div>';
         return;
       }
       const hoy = diaLocalStr();
       const ayer = diaLocalStr(new Date(Date.now() - 86400000));
       const byDay = {};
-      despachosLog.forEach(d => {
+      filtrado.forEach(d => {
         const dia = d.dia || '(sin fecha)';
         (byDay[dia] || (byDay[dia] = [])).push(d);
       });
