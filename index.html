@@ -7541,17 +7541,17 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
       if (l.kilos != null && Number(l.kilos) === 0) { CONC.sinKg++; ESTADO(l, 'ℹ Servicio sin kilos: no suma al indicador'); return; }   // servicios (p. ej. perforado): sin kilos no hay nada que sumar al indicador
       ctx.push({ l, ref, need, usados: null, t: kvUTC(l.fecha), cli: concNorm(l.cliente) });
     });
-    // 1ª pasada: cubrir cada línea con despachos del MISMO cliente (y código, ±10 días). Así el despacho real de
-    // un cliente nunca se lo "come" el remito de otro que casualmente tiene el mismo código y una fecha más temprana.
+    // El remito ya viene con el nombre del cliente, así que SOLO se cubre con despachos de ese
+    // MISMO cliente (y código, ±10 días) — nunca con despachos de otro cliente, aunque casualmente
+    // tengan el mismo código y una fecha cercana. Pedido de Martin (19/11): antes había una 2ª pasada
+    // que, si no alcanzaba a cubrir con el mismo cliente, probaba contra despachos de CUALQUIER otro
+    // cliente (pensada para cuando un despacho había quedado cargado con el nombre del cliente mal
+    // escrito) — eso podía "comerse" piezas que en realidad eran de otro pedido y dejar el remito
+    // registrado de menos. Se sacó esa 2ª pasada. Si un despacho real quedó cargado con el cliente mal
+    // escrito, ahora esa línea va a aparecer para registrar de nuevo: revisarla a mano con "Ver también
+    // las líneas que no aparecen" y, si corresponde, "No es ese despacho: registrar igual".
     ctx.forEach(c => {
       (pool[c.l.codigo] || []).filter(p => p.rem > 0 && p.cli === c.cli && p.t - c.t >= -VENT && p.t - c.t <= (p.tard ? 45 * DIA : VENT))
-        .sort((a, b) => Math.abs(a.t - c.t) - Math.abs(b.t - c.t))
-        .forEach(p => { if (c.need <= 0) return; const take = Math.min(c.need, p.rem); p.rem -= take; c.need -= take; (c.usados = c.usados || []).push({ take, log: p.log }); });
-    });
-    // 2ª pasada: lo que siga faltando recién ahí se prueba contra despachos de otro cliente (por si quedó cargado con otro nombre)
-    ctx.forEach(c => {
-      if (c.need <= 1e-9) return;
-      (pool[c.l.codigo] || []).filter(p => p.rem > 0 && p.t - c.t >= -VENT && p.t - c.t <= (p.tard ? 45 * DIA : VENT))
         .sort((a, b) => Math.abs(a.t - c.t) - Math.abs(b.t - c.t))
         .forEach(p => { if (c.need <= 0) return; const take = Math.min(c.need, p.rem); p.rem -= take; c.need -= take; (c.usados = c.usados || []).push({ take, log: p.log }); });
     });
