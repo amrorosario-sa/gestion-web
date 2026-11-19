@@ -837,7 +837,7 @@
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
       <div>
         <div style="font-weight:700; color:#fff; font-size:0.95rem;">🧾 Armar Hoja de Pesada — Inspección Final</div>
-        <div class="text-dim" style="margin-top:4px;">Elegí un cliente y tildá las piezas ya "Preparadas para Despacho" que vas a pesar ahora — de la selección sale UNA sola Hoja de Pesada, para ese cliente.</div>
+        <div class="text-dim" style="margin-top:4px;">Elegí un cliente y tildá las piezas que vas a pesar ahora (ya preparadas, o todavía en Terminación: se marcan como preparadas solas al confirmar) — de la selección sale UNA sola Hoja de Pesada, para ese cliente.</div>
       </div>
     </div>
     <div class="filter-group" style="max-width:360px; margin-bottom:14px;">
@@ -2682,8 +2682,15 @@ function prepSinHojaDisponible(row) {
     .reduce((s, l) => s + (l.cantidad || 0), 0);
   return Math.max(0, prepCantClamped(row) - totalPesado - despachadoSinHoja(row));
 }
+// Disponible para armar hoja de pesada: si el item sigue fisicamente en Terminacion (area_actual),
+// tambien cuenta lo que todavia no se marco "Preparado" (se marca solo, igual que el atajo de
+// Terminacion, al confirmar la hoja - ver prepararParaHoja). Si ya salio de Terminacion, solo lo
+// que ya esta Preparado y sin pesar (como antes).
+function hojaDisponible(r) {
+  return r.area_actual === 'En Terminación' ? termHojaDisp(r) : prepSinHojaDisponible(r);
+}
 function hojaDisponibleRows() {
-  return BASE.filter(r => prepSinHojaDisponible(r) > 0.0001);
+  return BASE.filter(r => hojaDisponible(r) > 0.0001);
 }
 
 function diaLocalStr(d) {
@@ -5019,7 +5026,7 @@ function applyFilters() {
     document.getElementById('count-filtered').textContent = rowsDisp.length;
     document.getElementById('count-total').textContent = DATA.length;
     document.getElementById('kg-filtered').textContent = '—';
-    document.getElementById('cant-filtered').textContent = rowsDisp.reduce((s,r)=>s+prepSinHojaDisponible(r),0).toLocaleString();
+    document.getElementById('cant-filtered').textContent = rowsDisp.reduce((s,r)=>s+hojaDisponible(r),0).toLocaleString();
     return;
   } else {
     if (stockSection) stockSection.style.display = 'none';
@@ -6367,11 +6374,11 @@ function showToast(message, kind) {
       const validIds = new Set(rows.map(r => r.id));
       [...armarHojaSelIds].forEach(id => { if (!validIds.has(id)) armarHojaSelIds.delete(id); });
       if (!rows.length) {
-        listEl.innerHTML = '<div class="text-dim" style="padding: 20px 4px;">Este cliente no tiene piezas preparadas pendientes de pesar en este momento.</div>';
+        listEl.innerHTML = '<div class="text-dim" style="padding: 20px 4px;">Este cliente no tiene piezas pendientes de pesar en este momento.</div>';
         return;
       }
       const cardsHtml = rows.map(r => {
-        const disp = prepSinHojaDisponible(r);
+        const disp = hojaDisponible(r);
         const checked = armarHojaSelIds.has(r.id) ? 'checked' : '';
         return `
           <div class="stock-card">
@@ -6458,7 +6465,7 @@ function showToast(message, kind) {
     function startArmarHojaFromSelection() {
       if (armarHojaSelIds.size === 0) return;
       selectedHojaIds = new Set(armarHojaSelIds);
-      openHojaModal();
+      openHojaModal(true);
     }
 
     function hojaGmailUrl() {
