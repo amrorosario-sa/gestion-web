@@ -2682,12 +2682,14 @@ function prepSinHojaDisponible(row) {
     .reduce((s, l) => s + (l.cantidad || 0), 0);
   return Math.max(0, prepCantClamped(row) - totalPesado - despachadoSinHoja(row));
 }
-// Disponible para armar hoja de pesada: si el item sigue fisicamente en Terminacion (area_actual),
-// tambien cuenta lo que todavia no se marco "Preparado" (se marca solo, igual que el atajo de
-// Terminacion, al confirmar la hoja - ver prepararParaHoja). Si ya salio de Terminacion, solo lo
-// que ya esta Preparado y sin pesar (como antes).
+// Disponible para armar hoja de pesada: SOLO lo que Terminación ya marcó "Preparado" y todavía
+// no se pesó (prepSinHojaDisponible). No incluye lo que está en Terminación pero todavía no se
+// guardó como Preparado — eso tiene que marcarse primero desde la tabla/celda de Terminación.
+// (Antes del 19/11 era así; se había ampliado para un caso puntual de pedido parcial, pero traía
+// de más cualquier pedido en Terminación con saldo, lo hayan marcado Preparado o no — revertido
+// a pedido de Martin el 20/11.)
 function hojaDisponible(r) {
-  return r.area_actual === 'En Terminación' ? termHojaDisp(r) : prepSinHojaDisponible(r);
+  return prepSinHojaDisponible(r);
 }
 function hojaDisponibleRows() {
   return BASE.filter(r => hojaDisponible(r) > 0.0001);
