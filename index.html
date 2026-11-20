@@ -3715,12 +3715,18 @@ function renderIndicadoresPanel() {
     const kgvE = e => (indState.kgTipo === 'bruto' && Number(e.kg_bruto) > 0) ? Number(e.kg_bruto) : (Number(e.kg) || 0);
     const resumen = (n, u, kg) => `${n} registro${n === 1 ? '' : 's'} · ${fmtN(u)} u. · ${fmtN(kg, 1)} Kg`;
     const COLS_MOV = [{ h: 'Día' }, { h: 'Cliente' }, { h: 'NV' }, { h: 'Código' }, { h: 'Descripción' }, { h: 'Unid.', num: 1 }, { h: 'Kg', num: 1 }];
+    const COLS_MOV_OC = [{ h: 'Día' }, { h: 'Cliente' }, { h: 'NV' }, { h: 'OC' }, { h: 'Código' }, { h: 'Descripción' }, { h: 'Unid.', num: 1 }, { h: 'Kg', num: 1 }];
     const COLS_RZ = COLS_MOV.concat([{ h: 'Motivo' }]);
     const sortDia = arr => arr.slice().sort((a, b) => (b.dia || '').localeCompare(a.dia || ''));
-    const secMov = (titulo, arr, kgFn) => {
+    const secMov = (titulo, arr, kgFn, conOc) => {
       const s = sortDia(arr);
-      return { raw: s.map(x => [Number(x.cantidad) || 0, kgFn(x)]), titulo, cols: COLS_MOV, resumen: resumen(s.length, s.reduce((a, x) => a + (Number(x.cantidad) || 0), 0), s.reduce((a, x) => a + kgFn(x), 0)),
-        rows: s.map(x => [E(x.dia ? formatDate(x.dia) : '—'), E(x.cliente || ''), E(x.comprobante || ''), E(x.codigo || ''), E(x.descripcion || ''), fmtN(x.cantidad), fmtN(kgFn(x), 1)]) };
+      return { raw: s.map(x => [Number(x.cantidad) || 0, kgFn(x)]), titulo, cols: conOc ? COLS_MOV_OC : COLS_MOV, resumen: resumen(s.length, s.reduce((a, x) => a + (Number(x.cantidad) || 0), 0), s.reduce((a, x) => a + kgFn(x), 0)),
+        rows: s.map(x => {
+          const base = [E(x.dia ? formatDate(x.dia) : '—'), E(x.cliente || ''), E(x.comprobante || '')];
+          if (conOc) base.push(E(x.oc || ''));
+          base.push(E(x.codigo || ''), E(x.descripcion || ''), fmtN(x.cantidad), fmtN(kgFn(x), 1));
+          return base;
+        }) };
     };
     const secRz = (titulo, arr) => {
       const s = sortDia(arr);
@@ -3729,13 +3735,13 @@ function renderIndicadoresPanel() {
     };
     const kgNum = x => Number(x.kg) || 0;
     const tSem = w => `Semana del ${cortoIso(w.r.ini)} al ${cortoIso(w.r.fin)}`;
-    IND_DET.desKg = sem.map(w => ({ titulo: '🚚 Despachado · ' + tSem(w), secs: [secMov('', despachosLog.filter(d => enRango(d.dia, w.r)), kgNum)] }));
+    IND_DET.desKg = sem.map(w => ({ titulo: '🚚 Despachado · ' + tSem(w), secs: [secMov('', despachosLog.filter(d => enRango(d.dia, w.r)), kgNum, true)] }));
     IND_DET.funKg = sem.map(w => ({ titulo: '🔥 Fundido · ' + tSem(w), secs: [secMov('', eventosProd.filter(e => e.tipo === 'fundido' && enRango(e.dia, w.r)), kgvE)] }));
     IND_DET.molKg = sem.map(w => ({ titulo: '🧱 Moldeado · ' + tSem(w), secs: [secMov('', eventosProd.filter(e => e.tipo === 'moldeado' && enRango(e.dia, w.r)), kgvE)] }));
     IND_DET.recKg = sem.map(w => ({ titulo: '❌ Rechazo · ' + tSem(w), secs: [secRz('', rechazosList.filter(x => enRango(x.dia, w.r)))] }));
     IND_DET.ingdes = meses.map(m => ({ titulo: '📥 Ingresado vs despachado · ' + m.label, secs: [
       secMov('📥 Ingresado (pedidos nuevos)', eventosProd.filter(e => e.tipo === 'ingreso' && enRango(e.dia, m.r)), kgNum),
-      secMov('🚚 Despachado', despachosLog.filter(d => enRango(d.dia, m.r)), kgNum)] }));
+      secMov('🚚 Despachado', despachosLog.filter(d => enRango(d.dia, m.r)), kgNum, true)] }));
     IND_DET.pareto = filas.map(f => ({ titulo: '📉 Rechazos · ' + f[0], secs: [secRz('', recPer.filter(x => (((x.motivo || '').trim()) || '(sin motivo)') === f[0]))] }));
     const COLS_ET = [{ h: 'Cliente' }, { h: 'NV' }, { h: 'Código' }, { h: 'Descripción' }, { h: 'Unid.', num: 1 }, { h: 'Kg', num: 1 }, { h: 'Entrega' }];
     const secEt = (lista) => {
