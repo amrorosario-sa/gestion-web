@@ -6857,7 +6857,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
         fetchAll('mec_stock'), fetchAll('mec_planes', { col: 'id' }), fetchAll('mec_moldeos', { col: 'id' }), fetchAll('mec_k'), fetchAll('mec_excepciones'),
         fetchAll('mec_recetas'), fetchAll('mec_config'),
         supabaseClient.from('mec_movimientos').select('*').order('id', { ascending: false }).limit(500).then(r => { if (r.error) throw r.error; return r.data || []; }),
-        supabaseClient.from('mec_movimientos').select('*').in('motivo', ['aro armado', 'aro armado fuera de plan']).order('dia', { ascending: false }).order('id', { ascending: false }).limit(400).then(r => { if (r.error) throw r.error; return r.data || []; }),
+        supabaseClient.from('mec_movimientos').select('*').in('motivo', ['aro armado', 'aro armado fuera de plan']).eq('deshecho', false).order('dia', { ascending: false }).order('id', { ascending: false }).limit(400).then(r => { if (r.error) throw r.error; return r.data || []; }),
       ]);
       C.stock = {}; st.forEach(r => { (C.stock[r.ubicacion] = C.stock[r.ubicacion] || {})[r.codigo] = Number(r.cantidad); });
       C.planes = planes; C.moldeos = moldeos; C.k = k; C.exc = exc; C.recetas = recetas; C.movs = movs; C.armados = armados;
@@ -7181,6 +7181,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
   A.deshacerArmado = id => { const m = (C.armadosRecientes || []).find(x => x.id === id); if (!m) return;
     ask('Deshacer armado', esc(nombre(m.codigo)) + ` — ${m.cantidad} u.<br>El aro sale de la estantería kanban y el macho y la hembra vuelven a Mecanizado. Si era de un plan, le devuelve la reserva. Solo se puede si esa cantidad todavía está entera en kanban y no salió directo a un pedido.`, [], 'Deshacer',
       () => rpc('mec_armar_deshacer', { p_mov: id })); };
+  A.armDeshFiltro = v => { C.armDeshFiltro = v || ''; render(); };
   A.salidaLibre = c => {
     const mx = libre(c);
     ask('Sale de Mecanizado (pieza suelta)', esc(nombre(c)) + ` — sueltas en Mecanizado: ${mx}.<br>La pieza ya fue procesada y sale a la estantería kanban, o directo a un pedido.`, [
@@ -7936,7 +7937,12 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     return resumenMec() + alertasDet('kanban', alertPanel('kanban', 'Hay que armar aros para reponerla.', false)) + `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>⚙️ Armado de aros — por fecha</h2>${puedePlanificar() ? btn('📋 Contar / ajustar stock', 'cir_ajustarMec()') : ''}</div><div class="sub">Lo planificado para cada día. Cuando Terminación entrega los machos y hembras, se arma. El aro sale a la estantería kanban o directo a un pedido (venta en caliente).</div>
       ${planes ? `<table><tr><th>Armar el</th><th>Plan</th><th class="num">Faltan armar</th><th class="num">Machos acá</th><th class="num">Hembras acá</th><th></th></tr>${planes}</table>` : '<div class="empty">No hay planes pendientes.</div>'}</div>` +
       `${(C.armadosRecientes || []).length ? `<div class="panel"><h2>↩ Armaste hace poco</h2><div class="sub">Si armaste algo por error, tocá <b>Deshacer</b>: el aro sale de la estantería kanban y el macho y la hembra vuelven a Mecanizado (si era de un plan, se le devuelve la reserva). Solo se puede si esa cantidad todavía está entera en kanban y no salió directo a un pedido.</div>
-        <table><tr><th>Aro</th><th class="num">Cantidad</th><th>De dónde</th><th>Cuándo</th><th></th></tr>${C.armadosRecientes.map(m => `<tr><td>${nameCell(m.codigo)}</td><td class="num"><b>${m.cantidad}</b></td><td>${m.plan_id ? 'Plan #' + m.plan_id : 'Fuera de plan'}</td><td>${esc(String(m.ts || '').slice(0, 10).split('-').reverse().join('/'))}<div class="code">${esc(String(m.ts || '').slice(11, 16))}</div></td><td>${puedeOperar() ? btn('↩ Deshacer', `cir_deshacerArmado(${m.id})`) : ''}</td></tr>`).join('')}</table></div>` : ''}` + sueltasPanel() + rechazosPanel();
+        <div style="margin:8px 0 10px;"><select class="kq" onchange="cir_armDeshFiltro(this.value)"><option value="">Todos los aros</option>${[...new Set(C.armadosRecientes.map(m => m.codigo))].sort((a, b) => nombre(a).localeCompare(nombre(b), 'es')).map(c => `<option value="${esc(c)}"${C.armDeshFiltro === c ? ' selected' : ''}>${esc(nombre(c))}</option>`).join('')}</select></div>
+        ${(() => { const fls = C.armadosRecientes.filter(m => !C.armDeshFiltro || m.codigo === C.armDeshFiltro);
+          const filaArm = m => { const d = new Date(m.ts), pad = n => String(n).padStart(2, '0');
+            return `<tr><td>${nameCell(m.codigo)}</td><td class="num"><b>${m.cantidad}</b></td><td>${m.plan_id ? 'Plan #' + m.plan_id : 'Fuera de plan'}</td><td>${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}<div class="code">${pad(d.getHours())}:${pad(d.getMinutes())}</div></td><td>${puedeOperar() ? btn('↩ Deshacer', `cir_deshacerArmado(${m.id})`) : ''}</td></tr>`; };
+          return fls.length ? `<table><tr><th>Aro</th><th class="num">Cantidad</th><th>De dónde</th><th>Cuándo</th><th></th></tr>${fls.map(filaArm).join('')}</table>` : '<div class="empty">Ningún armado reciente de ese aro.</div>'; })()}
+      </div>` : ''}` + sueltasPanel() + rechazosPanel();
   }
 
   // ---------- vistas simples del día (supervisor de Mecanizado / Terminación) ----------
