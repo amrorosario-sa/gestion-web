@@ -7278,12 +7278,19 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
   window.cirAroFiltro = (u, checked) => { C.aroFiltro = C.aroFiltro || {}; C.aroFiltro[u] = checked; render(); };
   window.cirSv = tr => { const d = tr.nextElementSibling; if (d) d.style.display = d.style.display === 'none' ? '' : 'none'; };
   function shelf(u, actions) {
-    const cs = [...new Set([...Object.keys(C.stock[u] || {}).filter(c => stock(c, u) > 0), ...C.k.filter(r => r.ubicacion === u).map(r => r.codigo)])];
+    const csAll = [...new Set([...Object.keys(C.stock[u] || {}).filter(c => stock(c, u) > 0), ...C.k.filter(r => r.ubicacion === u).map(r => r.codigo)])];
+    C.aroFiltro = C.aroFiltro || {};
+    const soloAros = C.aroFiltro[u] !== false;
+    const nNoAros = csAll.filter(c => !esAro(c)).length;
+    const cs = soloAros ? csAll.filter(c => esAro(c)) : csAll;
     const rows = cs.map(c => { const hk = kOf(u, c) != null, n = nivel(u, c);
       return `<tr><td>${nameCell(c)}</td><td class="num"><b>${stock(c, u)}</b></td><td>${hk ? `<span class="${n === 'verde' ? 'ok' : n === 'rojo' ? 'rep' : 'soon'}">${NIV[n]}</span><div class="code">k ${kOf(u, c)}</div>` : '<span class="code">sin k</span>'}</td>
         <td class="num">${hk ? `<b>${sv(u, c)}</b>${svRows(u, c)}` : '—'}</td>
         <td><div class="row-actions">${actions(c)}${puedePlanificar() ? btn('k…', `cir_k('${u}','${esc(c)}')`) : ''}</div></td></tr>`; }).join('');
-    return rows ? `<table><tr><th>Pieza</th><th class="num">En estantería</th><th>Nivel</th><th class="num">Stock virtual</th><th></th></tr>${rows}</table>` : '<div class="empty">Todavía no hay piezas ni k definidos. Cargá el stock inicial con "Ajustar stock" y definí el k de cada pieza.</div>';
+    const toggle = csAll.length ? aroToggle(u, nNoAros, soloAros) : '';
+    const buscador = rows ? `<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;"><input class="kq" style="margin-left:0" placeholder="Buscar…" oninput="cirBuscar(this,'tr:not(:first-child)','td.num b')"> <span class="code" data-cirq></span></div>` : '';
+    const vacio = soloAros && nNoAros ? `<div class="empty">No hay aros acá (sí hay ${nNoAros} pieza${nNoAros === 1 ? '' : 's'} que no ${nNoAros === 1 ? 'es' : 'son'} aro — destildá el filtro de arriba para ver${nNoAros === 1 ? 'la' : 'las'}).</div>` : '<div class="empty">Todavía no hay piezas ni k definidos. Cargá el stock inicial con "Ajustar stock" y definí el k de cada pieza.</div>';
+    return toggle + (rows ? `${buscador}<table><tr><th>Pieza</th><th class="num">En estantería</th><th>Nivel</th><th class="num">Stock virtual</th><th></th></tr>${rows}</table>` : vacio);
   }
   const shelfHead = (u, titulo) => `<div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>${titulo}</h2><div class="row-actions">${puedePlanificar() ? btn('+ Definir k', `cir_kNuevo('${u}')`) + btn('Ajustar stock', `cir_ajustar('${u}')`) : ''}</div></div>`;
 
@@ -7291,20 +7298,50 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
   // Nombres abreviados: por código o por nombre completo en MAYÚSCULAS. Si no hay, se muestra el nombre del catálogo.
   const corto = c => nombre(c);
   const rsItem = (c, n, cls) => `<div class="rs-i ${cls || ''}" title="${esc(nombreFull(c))}"><span>${esc(corto(c))}</span><b>${n}</b></div>`;
-  const rsBox = (titulo, sub, items, vacio, max) => { max = max || 24;
+  const aroToggle = (key, nNoAros, soloAros) => `<label style="display:flex; align-items:center; gap:7px; font-size:.82rem; color:#cbd5e1; margin:8px 0;"><input type="checkbox" ${soloAros ? 'checked' : ''} onchange="cirAroFiltro('${key}', this.checked)"> Mostrar solo aros${nNoAros ? ` <span class="code">(${nNoAros} pieza${nNoAros === 1 ? '' : 's'} que no ${nNoAros === 1 ? 'es' : 'son'} aro${soloAros ? ', ocultas' : ', incluidas'})</span>` : ''}</label>`;
+  window.cirBuscar = (input, itemSel, sumSel) => {
+    const panel = input.closest('.panel'); if (!panel) return;
+    const normQ = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const q = normQ(input.value || '').trim();
+    const items = [...panel.querySelectorAll(itemSel)];
+    let nShown = 0, sum = 0;
+    items.forEach(el => {
+      const hay = normQ(el.textContent + ' ' + (el.getAttribute('title') || ''));
+      const show = !q || hay.includes(q);
+      el.style.display = show ? '' : 'none';
+      if (show) { nShown++;
+        if (sumSel) { const b = el.querySelector(sumSel); const v = b ? parseInt(b.textContent.replace(/[^\d-]/g, ''), 10) : NaN; if (!isNaN(v)) sum += v; }
+      }
+    });
+    panel.querySelectorAll('.rs-more').forEach(d => { if (q && [...d.querySelectorAll(itemSel)].some(el => el.style.display !== 'none')) d.open = true; });
+    const cntEl = panel.querySelector('[data-cirq]');
+    if (cntEl) cntEl.textContent = !q ? '' : (sumSel ? `${nShown} · suma ${sum}` : `${nShown} coincidencia${nShown === 1 ? '' : 's'}`);
+  };
+  const rsBox = (titulo, sub, items, vacio, max, extra) => { max = max || 24;
     const mas = items.length > max ? `<details class="rs-more"><summary>Ver las ${items.length - max} restantes</summary><div class="rs">${items.slice(max).join('')}</div></details>` : '';
-    return `<div class="panel"><div class="rs-tit"><h2>${titulo}</h2><span class="code">${sub || ''}</span></div>${items.length ? `<div class="rs">${items.slice(0, max).join('')}</div>${mas}` : `<div class="empty">${vacio}</div>`}</div>`; };
+    const buscador = items.length ? `<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;"><input class="kq" style="margin-left:0" placeholder="Buscar…" oninput="cirBuscar(this,'.rs-i','b')"> <span class="code" data-cirq></span></div>` : '';
+    return `<div class="panel"><div class="rs-tit"><h2>${titulo}</h2><span class="code">${sub || ''}</span></div>${extra || ''}${buscador}${items.length ? `<div class="rs">${items.slice(0, max).join('')}</div>${mas}` : `<div class="empty">${vacio}</div>`}</div>`; };
   const alertasDet = (u, html) => { const n = alertas(u).length; return n ? `<details style="margin-bottom:12px;"><summary style="cursor:pointer; font-weight:700; color:#fff; padding:6px 0;">⚠️ Alertas y acciones para reponer (${n}) — tocá para ver el detalle</summary>${html}</details>` : ''; };
   const ORD_NIV = { rojo: 0, amarillo: 1, verde: 2 };
   function resumenShelf(u, titulo) {
-    const L = C.k.filter(r => r.ubicacion === u).map(r => ({ c: r.codigo, n: stock(r.codigo, u), niv: nivel(u, r.codigo) || 'verde' }))
+    const Lall = C.k.filter(r => r.ubicacion === u).map(r => ({ c: r.codigo, n: stock(r.codigo, u), niv: nivel(u, r.codigo) || 'verde' }))
       .sort((a, b) => ORD_NIV[a.niv] - ORD_NIV[b.niv] || nombre(a.c).localeCompare(nombre(b.c), 'es'));
+    C.aroFiltro = C.aroFiltro || {};
+    const soloAros = C.aroFiltro[u] !== false;
+    const nNoAros = Lall.filter(x => !esAro(x.c)).length;
+    const L = soloAros ? Lall.filter(x => esAro(x.c)) : Lall;
     const cnt = k => L.filter(x => x.niv === k).length;
-    return rsBox(titulo, `🔴 ${cnt('rojo')} · 🟡 ${cnt('amarillo')} · 🟢 ${cnt('verde')}`, L.map(x => rsItem(x.c, x.n, x.niv)), 'Todavía no hay piezas con k definido.', 30);
+    const vacio = soloAros && nNoAros ? `No hay aros con k definido (sí hay ${nNoAros} pieza${nNoAros === 1 ? '' : 's'} que no ${nNoAros === 1 ? 'es' : 'son'} aro — destildá el filtro de abajo para ver${nNoAros === 1 ? 'la' : 'las'}).` : 'Todavía no hay piezas con k definido.';
+    return rsBox(titulo, `🔴 ${cnt('rojo')} · 🟡 ${cnt('amarillo')} · 🟢 ${cnt('verde')}`, L.map(x => rsItem(x.c, x.n, x.niv)), vacio, 30, aroToggle(u, nNoAros, soloAros));
   }
   function resumenTerm() {
-    const L = Object.keys(C.stock.terminacion || {}).filter(c => stock(c, 'terminacion') > 0).map(c => ({ c, n: stock(c, 'terminacion') })).sort((a, b) => b.n - a.n);
-    return rsBox('🔧 Qué hay en Terminación', `${L.reduce((a, x) => a + x.n, 0)} piezas en total`, L.map(x => rsItem(x.c, x.n)), 'No hay piezas en Terminación.', 24);
+    const Lall = Object.keys(C.stock.terminacion || {}).filter(c => stock(c, 'terminacion') > 0).map(c => ({ c, n: stock(c, 'terminacion') })).sort((a, b) => b.n - a.n);
+    C.aroFiltro = C.aroFiltro || {};
+    const soloAros = C.aroFiltro.terminacion !== false;
+    const nNoAros = Lall.filter(x => !esAro(x.c)).length;
+    const L = soloAros ? Lall.filter(x => esAro(x.c)) : Lall;
+    const vacio = soloAros && nNoAros ? `No hay aros en Terminación (sí hay ${nNoAros} pieza${nNoAros === 1 ? '' : 's'} que no ${nNoAros === 1 ? 'es' : 'son'} aro — destildá el filtro de abajo para ver${nNoAros === 1 ? 'la' : 'las'}).` : 'No hay piezas en Terminación.';
+    return rsBox('🔧 Qué hay en Terminación', `${L.reduce((a, x) => a + x.n, 0)} piezas en total`, L.map(x => rsItem(x.c, x.n)), vacio, 24, aroToggle('terminacion', nNoAros, soloAros));
   }
   function resumenMec() {
     const ya = C.recetas.map(r => ({ c: r.salida, n: Math.min(stock(r.macho, 'mecanizado'), stock(r.hembra, 'mecanizado')) })).filter(x => x.n > 0).sort((a, b) => b.n - a.n);
@@ -7964,7 +8001,12 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     return `<div class="panel"><h2>❌ Últimos rechazos en Mecanizado</h2><div class="sub">Quedan registrados con motivo y Nº de probeta (trazabilidad) cuando la pieza lleva.</div>${rows ? `<table><tr><th>Día</th><th>Pieza</th><th class="num">Cant.</th><th>Destino</th><th>Motivo</th><th>Probeta</th></tr>${rows}</table>` : '<div class="empty">Todavía no hay rechazos registrados.</div>'}</div>`;
   }
   function sueltasPanel(soloSiHay) {
-    const codigos = Object.keys(C.stock.mecanizado || {}).filter(c => stock(c, 'mecanizado') > 0);
+    const codigosAll = Object.keys(C.stock.mecanizado || {}).filter(c => stock(c, 'mecanizado') > 0);
+    if (soloSiHay && !codigosAll.length) return '';
+    C.aroFiltro = C.aroFiltro || {};
+    const soloAros = C.aroFiltro.mecanizado !== false;
+    const nNoAros = codigosAll.filter(c => !esAro(c)).length;
+    const codigos = soloAros ? codigosAll.filter(c => esAro(c)) : codigosAll;
     const filas = codigos.map(c => { const tot = stock(c, 'mecanizado'), lib = libre(c), res = tot - lib;
       const rs = C.recetas.filter(r => r.macho === c || r.hembra === c);
       const sub = rs.length ? `<div class="code">${rs.map(r => (r.macho === c ? 'macho' : 'hembra') + ' de ' + esc(recNom(r))).join(' · ')}</div>` : '';
@@ -7975,10 +8017,12 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     }).join('');
     const hayLibres = codigos.some(c => libre(c) > 0);
     const hayArmable = C.recetas.some(r => Math.min(libre(r.macho), libre(r.hembra)) > 0);
-    if (soloSiHay && !codigos.length) return '';
+    const buscador = filas ? `<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;"><input class="kq" style="margin-left:0" placeholder="Buscar…" oninput="cirBuscar(this,'tr:not(:first-child)','td.num b')"> <span class="code" data-cirq></span></div>` : '';
+    const vacio = soloAros && nNoAros ? `<div class="empty">No hay aros en Mecanizado (sí hay ${nNoAros} pieza${nNoAros === 1 ? '' : 's'} que no ${nNoAros === 1 ? 'es' : 'son'} aro — destildá el filtro de abajo para ver${nNoAros === 1 ? 'la' : 'las'}).</div>` : '<div class="empty">No hay piezas en Mecanizado.</div>';
     return `<div class="panel"><div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;"><h2>🧰 Fuera de plan — piezas sueltas en Mecanizado</h2>${puedeOperar() ? btn('Armar aros fuera de plan…', 'cir_armarLibre()', hayArmable ? 'pri' : '') : ''}</div>
       <div class="sub">Si hacés algo distinto de lo planificado, cargalo acá. Son las piezas que Terminación entregó sin plan o lo que sobró de un plan cerrado.${hayLibres ? ' Las piezas reservadas para un plan se muestran grisadas, con el total entre reservado y suelto.' : ''}</div>
-      ${filas ? `<table><tr><th>Pieza</th><th class="num">Sueltas</th><th></th></tr>${filas}</table>` : '<div class="empty">No hay piezas en Mecanizado.</div>'}</div>`;
+      ${codigosAll.length ? aroToggle('mecanizado', nNoAros, soloAros) : ''}
+      ${filas ? `${buscador}<table><tr><th>Pieza</th><th class="num">Sueltas</th><th></th></tr>${filas}</table>` : vacio}</div>`;
   }
   // ---------- 📊 Aros armados por día: gráfico de barras, rango de fechas + filtro por aro ----------
   const diaCorto = s => s.slice(8, 10) + '/' + s.slice(5, 7);
@@ -8075,8 +8119,15 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
   const ptile = (mode, key, ic, name, n, l, st, cls) => `<button class="ptile ${cls || ''}${C.tile[mode] === key ? ' open' : ''}" onclick="cirTile('${mode}','${key}')"><span class="arrow">▾</span><span class="ic">${ic}</span><span class="name">${name}</span><span class="n">${n}</span><span class="l">${l}</span><span class="st">${st || ''}</span></button>`;
   const ptiles = (mode, tiles, details) => `<div class="ptiles">${tiles.join('')}</div>` + (C.tile[mode] && details[C.tile[mode]] != null ? `<div class="pdetail">${details[C.tile[mode]]}</div>` : '<div class="phint">👆 Tocá una tarjeta para ver el detalle</div>');
   window.cirTile = (mode, key) => { C.tile[mode] = C.tile[mode] === key ? null : key; render(); };
-  const stockTabla = (u, titulo) => { const cs = Object.keys(C.stock[u] || {}).filter(x => stock(x, u) > 0).sort((a, b) => nombre(a).localeCompare(nombre(b), 'es'));
-    return `<div class="panel"><h2>${titulo}</h2>${cs.length ? `<table><tr><th>Pieza</th><th class="num">Hay</th><th></th></tr>${cs.map(x => `<tr><td>${nameCell(x)}</td><td class="num"><b>${stock(x, u)}</b></td><td>${puedePlanificar() ? btn('Ajustar', `cir_ajustar('${u}','${esc(x)}')`) : ''}</td></tr>`).join('')}</table>` : '<div class="empty">No hay piezas cargadas en esta ubicación.</div>'}</div>`; };
+  const stockTabla = (u, titulo) => { const csAll = Object.keys(C.stock[u] || {}).filter(x => stock(x, u) > 0).sort((a, b) => nombre(a).localeCompare(nombre(b), 'es'));
+    C.aroFiltro = C.aroFiltro || {};
+    const soloAros = C.aroFiltro[u] !== false;
+    const nNoAros = csAll.filter(x => !esAro(x)).length;
+    const cs = soloAros ? csAll.filter(x => esAro(x)) : csAll;
+    const toggle = csAll.length ? aroToggle(u, nNoAros, soloAros) : '';
+    const buscador = cs.length ? `<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;"><input class="kq" style="margin-left:0" placeholder="Buscar…" oninput="cirBuscar(this,'tr:not(:first-child)','td.num b')"> <span class="code" data-cirq></span></div>` : '';
+    const vacio = soloAros && nNoAros ? `<div class="empty">No hay aros acá (sí hay ${nNoAros} pieza${nNoAros === 1 ? '' : 's'} que no ${nNoAros === 1 ? 'es' : 'son'} aro — destildá el filtro de arriba para ver${nNoAros === 1 ? 'la' : 'las'}).</div>` : '<div class="empty">No hay piezas cargadas en esta ubicación.</div>';
+    return `<div class="panel"><h2>${titulo}</h2>${toggle}${cs.length ? `${buscador}<table><tr><th>Pieza</th><th class="num">Hay</th><th></th></tr>${cs.map(x => `<tr><td>${nameCell(x)}</td><td class="num"><b>${stock(x, u)}</b></td><td>${puedePlanificar() ? btn('Ajustar', `cir_ajustar('${u}','${esc(x)}')`) : ''}</td></tr>`).join('')}</table>` : vacio}</div>`; };
 
   function vDiaMec() {
     const hoy = TODAY();
