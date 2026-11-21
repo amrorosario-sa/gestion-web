@@ -7786,13 +7786,14 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     const aro = rol === 'a', u = aro ? 'kanban' : (kRow('sector_z', c) ? 'sector_z' : kRow('kanban', c) ? 'kanban' : 'sector_z');
     const k = kOf(u, c), es = stock(c, u), te = aro ? 0 : stock(c, 'terminacion'), me = aro ? 0 : stock(c, 'mecanizado');
     const fu = aro ? 0 : (u === 'sector_z' ? enMoldeo(c) + pfZ(c) : enMoldeo(c) + pfK(c).pend);
+    const planif = aro ? 0 : (u === 'sector_z' ? planSinEntregarV(c) : planPend(c));
     const vir = k != null ? sv(u, c) : es + te + fu, nV = k != null ? nivelV(k, vir) : null;
     const loteBase = k != null && nV !== 'verde' ? lote(u, c) : 0;
     // lote "con Mecanizado": al lote de siempre (repone solo Terminación/estantería) se le suma lo que le falta
     // a la estantería de Mecanizado para llegar a 2×K (mismo nivel que usamos para la tarjeta verde). Solo aplica
     // a piezas cuyo kanban vive en Sector Z — para las de Mecanizado (aros armados) no hay "otra estantería" que sumar.
     const loteMec = loteBase && u === 'sector_z' ? loteBase + Math.max(0, 2 * k - me) : loteBase;
-    return { c, rol, u, k, fu, te, es, me, vir, nE: k != null ? nivel(u, c) : null, nV, lote: loteBase, loteMec, disp: te + es + me, conF: te + es + me + fu };
+    return { c, rol, u, k, fu, te, es, me, planif, vir, nE: k != null ? nivel(u, c) : null, nV, lote: loteBase, loteMec, disp: te + es + me, conF: te + es + me + fu };
   }
   function arFamilias() {
     const R = C.recetas || []; if (!R.length) return [];
@@ -7833,7 +7834,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
       loteCell = `<div class="lote-cell"><b class="rep">${p.lote}</b>${puedePlanificar() ? btn('Lanzar OT por ' + p.lote, `cir_nuevoPlan(${p.lote},'${esc(p.c)}',1)`, 'pri') : ''}</div>`;
     }
     return `<tr class="${aro ? 'ar-aro' : ''}"><td style="padding-left:${ind ? 26 : 6}px"><span class="artag ${p.rol}">${aro ? 'Aro' : p.rol === 'm' ? 'Macho' : 'Hembra'}</span><b title="${esc(nombreFull(p.c))} · ${esc(p.c)}">${esc(String(nom).slice(0, 70))}</b>${extra || ''}${ALIAS[p.c] ? '' : `<div class="code">${esc(p.c)}</div>`}</td>
-      <td class="num">${aro ? '' : p.fu}</td><td class="num">${aro ? '' : p.te}</td><td class="num"><b>${p.es}</b></td><td class="num">${aro ? '' : p.me}</td><td class="num"><b>${p.vir}</b></td><td class="num">${p.k == null ? '—' : p.k}</td><td>${pill(p.nE)}</td><td>${pill(p.nV)}</td><td class="num">${loteCell}</td></tr>`;
+      <td class="num">${aro ? '' : p.fu}</td><td class="num">${aro ? '' : p.te}</td><td class="num"><b>${p.es}</b></td><td class="num">${aro ? '' : p.me}</td><td class="num">${aro ? '' : (p.u === 'sector_z' ? '−' : '+') + p.planif}</td><td class="num"><b>${p.vir}</b></td><td class="num">${p.k == null ? '—' : p.k}</td><td>${pill(p.nE)}</td><td>${pill(p.nV)}</td><td class="num">${loteCell}</td></tr>`;
   }
   function vAros() {
     if (!C.recetas.length) return '<div class="panel"><div class="empty">Todavía no hay recetas cargadas (macho + hembra → aro armado). Cargalas en Programación mecanizado › Recetas.</div></div>';
@@ -7869,7 +7870,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
           foot = f.comp.map(c => { const S = f.pz.get(c); return `<span>${S.rol === 'm' ? 'Machos' : 'Hembras'} (${esc(nombre(c).slice(0, 34))}) disponibles: <b>${S.disp}</b> · ${S.rol === 'm' ? 'hembras' : 'machos'} de todos los aros sumadas: <b>${S._nec}</b>${S._otrosK ? ` · K del compartido: <b>${S.k == null ? '—' : S.k}</b> · suma de K de las otras: <b>${S._otrosK}</b>` : ''}</span>`; }).join(''); }
         const al = alertaPz(f);
         return `<div class="ar-fam"><div class="ar-h"><b>🔧 ${esc(f.tituloCorto.slice(0, 120))}</b><div class="ar-ch">${f.chips.map(c => `<span class="ar-c ${c.cls}">${c.t}</span>`).join('')}<span class="ar-c">armables hoy: <b>${f.armHoy}</b></span><span class="ar-c">con lo de fusión: <b>${f.armF}</b></span>${al ? '<span class="ar-c ro">⚠️ ALERTA</span>' : '<span class="ar-c ok">OK</span>'}</div></div>
-          <div class="ar-tw"><table><tr><th>Pieza</th><th class="num">Fusión</th><th class="num">Terminación</th><th class="num">Estantería</th><th class="num">Mecanizado</th><th class="num">Stock virtual</th><th class="num">K</th><th>Tarjeta estantería</th><th>Tarjeta virtual</th><th class="num">Lote</th></tr>${body}</table></div><div class="ar-f">${foot}</div></div>`; }).join('') || '<div class="panel"><div class="empty">Nada con este filtro.</div></div>'}`;
+          <div class="ar-tw"><table><tr><th>Pieza</th><th class="num">Fusión</th><th class="num">Terminación</th><th class="num">Estantería</th><th class="num">Mecanizado</th><th class="num" title="Lo planificado en Mecanizado que todavía no se entregó (resta del stock virtual); para piezas cuyo kanban vive en Mecanizado, es lo planificado sin armar (suma al stock virtual)">Planificado</th><th class="num">Stock virtual</th><th class="num">K</th><th>Tarjeta estantería</th><th>Tarjeta virtual</th><th class="num">Lote</th></tr>${body}</table></div><div class="ar-f">${foot}</div></div>`; }).join('') || '<div class="panel"><div class="empty">Nada con este filtro.</div></div>'}`;
   }
   window.cirArTab = t => { C.arTab = t; C.arFilter = 'todos'; render(); };
   window.cirArFilter = f => { C.arFilter = f; render(); };
