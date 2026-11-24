@@ -7124,6 +7124,19 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
   };
   A.cambiarFecha = pid => { const p = C.planes.find(x => x.id === pid);
     ask('Cambiar fecha del plan #' + pid, `${p.cantidad} × ${esc(recNom(rec(p.receta)))}`, [{ type: 'date', id: 'f', label: 'Nueva fecha en Mecanizado', value: p.fecha }], 'Guardar', v => tbl(supabaseClient.from('mec_planes').update({ fecha: v.f }).eq('id', pid))); };
+  // Cambiar la cantidad de un plan aunque ya tenga entregas o aros armados (máquina rota, pedido urgente, etc.).
+  // Si baja: lo entregado que sobre queda suelto en Mecanizado (no se pierde) y se reserva solo para otros planes que lo necesiten.
+  // Si sube: Terminación tiene que entregar la diferencia (lo suelto que ya hubiera en Mecanizado se reserva solo).
+  A.cambiarCantidad = pid => { const p0 = C.planes.find(x => x.id === pid); if (!p0) return; const r = rec(p0.receta);
+    ask('Cambiar cantidad del plan #' + pid, `${esc(recNom(r))} · armado el ${fmt(p0.fecha)}.<br>Ya armados: <b>${p0.armados}</b> · machos entregados: <b>${p0.hold_macho}</b> · hembras entregadas: <b>${p0.hold_hembra}</b>.<br>Si bajás la cantidad, lo entregado que sobre queda suelto en Mecanizado (no se pierde). Si la subís, Terminación tiene que entregar la diferencia.`,
+      [{ id: 'n', label: 'Nueva cantidad total de aros (incluye los ya armados; mínimo ' + (p0.armados + 1) + ')', value: p0.cantidad, min: p0.armados + 1, max: 9999 }], 'Guardar',
+      async v => {
+        const { data: p, error } = await supabaseClient.from('mec_planes').select('*').eq('id', pid).single(); if (error || !p) throw new Error('No se encontró el plan.');
+        const n = v.n; if (n <= p.armados) throw new Error('Ya hay ' + p.armados + ' aros armados: la cantidad tiene que ser mayor. Para terminar el plan usá "Cerrar".');
+        const pend = n - p.armados;
+        await tbl(supabaseClient.from('mec_planes').update({ cantidad: n, hold_macho: Math.min(p.hold_macho, pend), hold_hembra: Math.min(p.hold_hembra, pend) }).eq('id', pid));
+        if (n < p.cantidad) for (const c of new Set([r.macho, r.hembra])) { try { await rpc('_mec_reservar_libre', { p_codigo: c }); } catch (e) { /* si no puede reservar, las piezas quedan sueltas igual */ } }
+      }); };
   A.delPlan = async pid => { if (!confirm('¿Borrar el plan #' + pid + '?')) return; try { await tbl(supabaseClient.from('mec_planes').delete().eq('id', pid)); await reload(); } catch (e) { alert(e.message); } };
   A.receta = () => ask('Nueva receta de aro', 'Primero elegí el aro que se vende (el aro armado, sin macho ni hembra en el nombre). Después el macho y la hembra con que se arma: la app te propone los que más se parecen.', [
     { type: 'pieza', kind: 'aro', id: 's', label: 'Aro armado (el que se vende)', value: '' }, { type: 'pieza', kind: 'macho', id: 'm', label: 'Aro macho', value: '' }, { type: 'pieza', kind: 'hembra', id: 'h', label: 'Aro hembra', value: '' },
@@ -7952,7 +7965,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
         : armaTxt + (pzs ? ((fM || fH) ? `<div class="t">🔧 Terminación entrega: <b>${fM}</b> machos + <b>${fH}</b> hembras</div>` : `<div class="ok">🔧 ✔ todo entregado</div>`) : '<div class="none">🔧 sin entregas</div>') + (click ? '<div class="code" style="margin-top:4px">👆 tocá para entregar</div>' : '')) + '</div>'; };
     const rows = planesOrd().map(p => { const r = rec(p.receta), pd = pendPlan(p), pct = p.cantidad ? Math.round(100 * p.armados / p.cantidad) : 100;
       return `<tr><td><b>${fmt(p.fecha)}</b>${isBiz(p.fecha) ? '' : `<div class="late">no es día hábil (${esc(whyOff(p.fecha))})</div>`}</td><td>${dueTxt(dueOf(p))}</td><td><b>Plan #${p.id}</b> · ${esc(r ? recNom(r) : '?')}</td><td class="num">${p.cantidad}</td><td class="num">${p.armados}</td>
-        <td><div class="bar"><i style="width:${pct}%"></i></div></td><td><div class="row-actions">${pd > 0 && puedePlanificar() ? btn('Cambiar fecha', `cir_cambiarFecha(${p.id})`) + btn('Cerrar', `cir_cerrarPlan(${p.id})`) : (pd <= 0 ? '<span class="ok">' + (p.cantidad ? '✔ completo' : 'cerrado') + '</span>' : '')}${puedePlanificar() && !p.armados && !p.hold_macho && !p.hold_hembra ? btn('🗑', `cir_delPlan(${p.id})`) : ''}</div></td></tr>`; }).join('');
+        <td><div class="bar"><i style="width:${pct}%"></i></div></td><td><div class="row-actions">${pd > 0 && puedePlanificar() ? btn('Cambiar fecha', `cir_cambiarFecha(${p.id})`) + btn('Cambiar cantidad', `cir_cambiarCantidad(${p.id})`) + btn('Cerrar', `cir_cerrarPlan(${p.id})`) : (pd <= 0 ? '<span class="ok">' + (p.cantidad ? '✔ completo' : 'cerrado') + '</span>' : '')}${puedePlanificar() && !p.armados && !p.hold_macho && !p.hold_hembra ? btn('🗑', `cir_delPlan(${p.id})`) : ''}</div></td></tr>`; }).join('');
     const prox = Object.keys(FERIADOS).filter(f => f >= TODAY()).sort().slice(0, 4).map(f => `${fmt(f)} · ${esc(FERIADOS[f])}`).join(' &nbsp;|&nbsp; ');
     const exc = C.exc.slice().sort((a, b) => a.fecha.localeCompare(b.fecha)).map(e => `<div style="display:flex; gap:8px; align-items:center; padding:3px 0;"><span>${fmt(e.fecha)} — <b>${e.tipo === 'no' ? 'no se trabaja' : 'sí se trabaja'}</b>${e.nota ? ' · ' + esc(e.nota) : ''}</span>${puedePlanificar() ? btn('Quitar', `cir_quitarExc('${e.fecha}')`) : ''}</div>`).join('');
     const recs = C.recetas.map(r => `<tr><td><b>${esc(recNom(r))}</b>${ALIAS[r.salida] ? `<div class="code">${esc(r.nombre)}</div>` : ''}</td><td>${nameCell(r.macho)}</td><td>${nameCell(r.hembra)}</td><td>${nameCell(r.salida)}</td><td>${puedePlanificar() ? btn('🗑', `cir_delReceta('${esc(r.id)}')`) : ''}</td></tr>`).join('');
