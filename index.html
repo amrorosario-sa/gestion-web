@@ -6986,11 +6986,28 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
         else { const mn = f.min == null ? 1 : f.min; v[f.id] = Math.floor(Number(e.value)); if (!(v[f.id] >= mn) || v[f.id] > f.max) { err.textContent = 'La cantidad tiene que estar entre ' + mn + ' y ' + f.max + '.'; return; } }
       }
       const btn = document.getElementById('cir-ok'); btn.disabled = true;
-      try { await onOk(v); cirCloseAsk(); await reload(); }
+      try { await onOk(v); try { await reload(); } catch (e2) { /* la acción ya se hizo */ } cirCloseAsk(); }
       catch (e) { err.textContent = e.message || String(e); btn.disabled = false; }
     };
   }
   window.cirCloseAsk = () => { document.getElementById('cir-ov').classList.remove('on'); const m = document.getElementById('cir-modal'); if (m) m.style.maxWidth = ''; };
+  // Confirmación antes de una acción que no se deshace sola (ej: entregar a Mecanizado), por si se toca sin querer.
+  // El cuadro queda abierto (botones bloqueados, "Entregando…") hasta que termina la acción Y se recargan los datos:
+  // así no queda a la vista una tarjeta vieja con el botón de entregar todavía activo. Cancelar vuelve atrás sin hacer nada.
+  function confirmar(title, desc, okText, fn, back) {
+    const m = document.getElementById('cir-modal'); m.style.maxWidth = '';
+    m.innerHTML = `<h3>${title}</h3><div class="d">${desc}</div><div class="cir-err" id="cir-err"></div><div class="btns"><button id="cir-no">Cancelar</button><button class="pri" id="cir-ok">${okText}</button></div>`;
+    document.getElementById('cir-ov').classList.add('on');
+    const no = document.getElementById('cir-no'), ok = document.getElementById('cir-ok'), err = document.getElementById('cir-err');
+    no.onclick = () => { if (back) back(); else cirCloseAsk(); };
+    ok.onclick = async () => {
+      if (ok.disabled) return; ok.disabled = true; no.disabled = true; ok.textContent = 'Entregando…'; err.textContent = '';
+      try { await fn(); }
+      catch (e) { err.textContent = e.message || String(e); ok.disabled = false; no.disabled = false; ok.textContent = okText; return; }
+      try { await reload(); } catch (e2) { /* ya se hizo */ }
+      if (back) back(); else cirCloseAsk();
+    };
+  }
   window.cirDateHint = () => {
     const e = document.querySelector('#cir-modal input[type=date]'), h = document.getElementById('cir-datehint');
     if (!e || !h) return;
@@ -7070,12 +7087,17 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
       <div class="cir-err" id="cir-err"></div><div class="btns"><button onclick="cirCloseAsk()">Cerrar</button></div>`;
     document.getElementById('cir-ov').classList.add('on');
   };
-  A.diaEntregar = async (pid, c) => { try { await rpc('mec_entregar', { p_plan: pid, p_codigo: c, p_cant: null }); await reload(); A.dia(DIA_SEL); } catch (e) { alert(e.message); } };
-  A.diaTodo = async () => { const d = DIA_SEL; let n = 0; const errs = [];
-    for (const p of planesOrd().filter(x => dueOf(x) === d && pendPlan(x) > 0 && rec(x.receta))) { const r = rec(p.receta);
-      for (const c of [r.macho, r.hembra]) { const falta = Math.max(0, pendPlan(p) - holdOf(p, c)), disp = stock(c, 'sector_z') + stock(c, 'terminacion'); if (falta > 0 && disp > 0) { try { await rpc('mec_entregar', { p_plan: p.id, p_codigo: c, p_cant: null }); n++; } catch (e) { errs.push(e.message); } try { await reload(); } catch (e) { /* sigue */ } } } }
-    A.dia(d); if (errs.length) alert('Algunas entregas no se pudieron hacer:\n' + errs.join('\n')); };
-  A.entregar = async (pid, c) => { try { await rpc('mec_entregar', { p_plan: pid, p_codigo: c, p_cant: null }); await reload(); } catch (e) { alert(e.message); } };
+  const entregarConfirmando = (pid, c, back) => { const p = C.planes.find(x => x.id === pid); if (!p) return; const r = rec(p.receta); if (!r) return;
+    const falta = Math.max(0, pendPlan(p) - holdOf(p, c)), disp = stock(c, 'sector_z') + stock(c, 'terminacion'), mx = Math.min(falta, disp); if (!mx) return;
+    confirmar('¿Entregar a Mecanizado?', `<b style="font-size:1.1rem">${mx} × ${esc(nombre(c))}</b><br>Plan #${pid} · ${esc(recNom(r))} · para que Mecanizado arme el ${fmt(p.fecha)}.`, 'Sí, entregar',
+      () => rpc('mec_entregar', { p_plan: pid, p_codigo: c, p_cant: null }), back); };
+  A.diaEntregar = (pid, c) => entregarConfirmando(pid, c, () => A.dia(DIA_SEL));
+  A.diaTodo = () => { const d = DIA_SEL;
+    confirmar('¿Entregar todo lo disponible?', 'Se entrega a Mecanizado todo lo que hoy hay disponible de las piezas de este día (' + fmt(d) + ').', 'Sí, entregar todo', async () => { const errs = [];
+      for (const p of planesOrd().filter(x => dueOf(x) === d && pendPlan(x) > 0 && rec(x.receta))) { const r = rec(p.receta);
+        for (const c of [r.macho, r.hembra]) { const falta = Math.max(0, pendPlan(p) - holdOf(p, c)), disp = stock(c, 'sector_z') + stock(c, 'terminacion'); if (falta > 0 && disp > 0) { try { await rpc('mec_entregar', { p_plan: p.id, p_codigo: c, p_cant: null }); } catch (e) { errs.push(e.message); } try { await reload(); } catch (e) { /* sigue */ } } } }
+      if (errs.length) alert('Algunas entregas no se pudieron hacer:\n' + errs.join('\n')); }, () => A.dia(d)); };
+  A.entregar = (pid, c) => entregarConfirmando(pid, c, null);
   A.zaM = c => ask('Entregar a Mecanizado', esc(nombre(c)) + '<br>Entrega suelta, sin plan.', [{ id: 'n', label: 'Cantidad (máx. ' + stock(c, 'sector_z') + ')', value: Math.min(stock(c, 'sector_z'), 5), max: stock(c, 'sector_z') }], 'Entregar',
     v => rpc('mec_mover', { p_codigo: c, p_desde: 'sector_z', p_hasta: 'mecanizado', p_cant: v.n, p_motivo: 'entrega suelta a Mecanizado' }));
   A.moldeo = (def, cod, oi) => ask(oi ? 'Lanzar OI — ' + (nombre(cod) || cod) : 'Cargar moldeo / fusión para kanban', oi ? 'Orden interna de Terminación: se manda a moldear y fundir para reponer el kanban. La cantidad sugerida sale del stock virtual, que ya descuenta lo moldeado que entró por el parte de fusión (pendiente de fusión y en Terminación); podés cambiarla.' : 'Piezas que se mandan a moldear y fundir para reponer kanban (pedidos internos que no vienen de SGA).', [
