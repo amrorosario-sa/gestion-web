@@ -2982,12 +2982,13 @@ function sideApplyPin() {
 }
 window.sideMarcar = id => { SIDE_CUR = id; document.querySelectorAll('#side-menu .sm-it').forEach(b => b.classList.toggle('on', b.getAttribute('data-id') === id)); };
 window.sideToggle = on => { const o = on === undefined ? !document.body.classList.contains('side-open') : !!on; document.body.classList.toggle('side-open', o); };
-window.sideGroup = id => { if (SIDE_OPEN.has(id)) SIDE_OPEN.delete(id); else SIDE_OPEN.add(id); sideSaveOpen(); const g = document.querySelector('#side-menu .sm-grp[data-g="' + id + '"]'); if (g) g.classList.toggle('open', SIDE_OPEN.has(id)); };
+function sideOpenOnly(id) { SIDE_OPEN.clear(); if (id) SIDE_OPEN.add(id); sideSaveOpen(); document.querySelectorAll('#side-menu .sm-grp').forEach(el => el.classList.toggle('open', el.getAttribute('data-g') === id)); }   // acordeón: deja abierto como mucho un grupo a la vez
+window.sideGroup = id => { sideOpenOnly(SIDE_OPEN.has(id) ? null : id); };
 window.sidePin = () => { SIDE_PIN = !SIDE_PIN; sideLS.set('amro_side_pin', SIDE_PIN ? '1' : '0'); sideApplyPin(); if (!SIDE_PIN) document.body.classList.remove('side-open'); window.sideBuild(); };
 window.sideGo = id => {
   for (const g of SIDE_GROUPS) for (const it of g.items) if (it.id === id) {
     if (!(SIDE_PIN && sideDesktop())) sideToggle(false);   // desanclado: se cierra al elegir
-    if (!it.noMark) { if (!SIDE_OPEN.has(g.id)) { SIDE_OPEN.add(g.id); sideSaveOpen(); } window.sideMarcar(id); const el = document.querySelector('#side-menu .sm-grp[data-g="' + g.id + '"]'); if (el) el.classList.add('open'); }
+    if (!it.noMark) { sideOpenOnly(g.id); window.sideMarcar(id); }
     try { it.run(); } catch (e) { console.error('Menú lateral:', e); }
     return;
   }
@@ -7367,7 +7368,8 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
         return `<div class="pz"><div class="pz-h"><span class="pz-tag ${esM ? 'm' : 'h'}">${esM ? 'MACHO' : 'HEMBRA'}</span><span class="pz-n">${esc(nombre(i.c))}</span></div>
           <div class="pz-row"><div class="pz-big">${i.falta}<small>${i.falta ? 'a entregar' : ''}</small></div>${est}</div>
           <div class="code">Ya entregaste ${ya} de ${n}</div>${acts}</div>`; }).join('');
-      return `<div class="card ${late ? 'c-late' : (ht ? 'c-hoy' : '')}"><div class="code" style="letter-spacing:.05em;">PARA ARMAR</div><div class="big">${pendPlan(p)} × ${esc(recNom(r))}</div><div class="code">Mecanizado lo arma el ${fmt(p.fecha)} · plan #${p.id}</div><div style="margin:6px 0 2px;">${late ? `<span class="chip rojo">ATRASADA · era del ${fmt(dueOf(p))}</span>` : (ht ? '<span class="chip hoy">HOY</span>' : `<span class="code">entrega el ${fmt(dueOf(p))}</span>`)}</div>${pzs}</div>`; };
+      const dueLine = late ? `<div style="margin:4px 0 2px;"><span class="chip rojo">ATRASADA · era del ${fmt(dueOf(p))}</span></div>` : ht ? `<div style="margin:4px 0 2px;"><span class="chip hoy">HOY</span></div>` : `<div style="margin:4px 0 2px; font-size:.95rem; font-weight:700; color:#fff;">Entrega del ${fmt(dueOf(p))}</div>`;
+      return `<div class="card ${late ? 'c-late' : (ht ? 'c-hoy' : '')}"><div class="code" style="letter-spacing:.05em;">PARA ARMAR</div><div class="big">${pendPlan(p)} × ${esc(recNom(r))}</div>${dueLine}<div class="code">para que Mecanizado arme el ${fmt(p.fecha)} · plan #${p.id}</div>${pzs}</div>`; };
     const term = Object.keys(C.stock.terminacion || {}).filter(c => stock(c, 'terminacion') > 0);
     const termN = term.reduce((a, c) => a + stock(c, 'terminacion'), 0);
     const moldN = C.moldeos.reduce((a, o) => a + o.cantidad, 0);
@@ -7378,7 +7380,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
         <table><tr><th>Pieza</th><th class="num">Cantidad</th><th>Cargado</th><th></th></tr>${C.moldeos.map(o => `<tr><td>${nameCellNC(o.codigo)}${o.nota ? `<div class="code">${esc(o.nota)}</div>` : ''}</td><td class="num">${o.cantidad}</td><td>${fmt(o.fecha)}</td><td><div class="row-actions">${puedeOperar() ? btn('Pasó a Terminación…', `cir_pasoTerm(${o.id})`) : ''}${puedePlanificar() ? btn('🗑', `cir_delMoldeo(${o.id})`) : ''}</div></td></tr>`).join('')}</table></div>` : '');
     const tiles = [
       ptile('eterm', 'ent', '📥', 'A entregar a Mecanizado', pzsFalta(pend), 'piezas · ' + pend.length + (pend.length === 1 ? ' plan' : ' planes'), pend.length ? '' : pbadge('todo entregado', 'g'), pend.some(p => dueOf(p) < hoy) ? 'rojo' : (pend.some(p => dueOf(p) <= hoy) ? 'hoy' : '')),
-      ptile('eterm', 'fin', '🔧', 'A terminar', termN, 'piezas en Terminación' + (moldN ? ' · ' + moldN + ' en moldeo' : ''), ''),
+      ptile('eterm', 'fin', '🔧', 'Piezas en proceso de terminación', termN, 'piezas en Terminación' + (moldN ? ' · ' + moldN + ' en moldeo' : ''), ''),
       puedeOperar() ? `<button class="ptile" onclick="cir_entregaSuelta()"><span class="ic">➕</span><span class="name">Entrega suelta</span><span class="n">a Mec.</span><span class="l">pieza suelta, sin plan</span></button>` : ''
     ];
     const details = {
