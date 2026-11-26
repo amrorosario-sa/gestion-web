@@ -7194,6 +7194,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
       v => { const ub = v.u || u; let delta = v.n;
         if (v.m === 'contado') { if (v.n < 0) throw new Error('Lo contado no puede ser negativo.'); const cur = stock(v.c, ub); delta = v.n - cur; if (!delta) throw new Error('Ya figura esa cantidad (' + cur + '): no hay nada que ajustar.'); }
         else if (!delta) throw new Error('La diferencia no puede ser 0.');
+        if (ub !== 'kanban' && delta > 0 && C.recetas.some(r => r.salida === v.c)) throw new Error('Esta pieza es un aro ARMADO: no puede cargarse como "sin mecanizar" en Mecanizado, Terminación ni Sector Z. Cargala en la estantería kanban.');
         return rpc('mec_ajustar', { p_codigo: v.c, p_ubic: ub, p_delta: delta, p_motivo: v.x || 'ajuste' }); }); };
   // En Mecanizado hay dos instancias: lo que entró y todavía está SIN mecanizar, y lo ya MECANIZADO (estantería kanban).
   A.ajustarMec = () => A.ajustar('mecanizado', '', ['mecanizado', 'kanban'], { __q: '¿Qué contaste?', mecanizado: '⚙️ En Mecanizado — sin mecanizar', kanban: '🏬 Estantería — ya mecanizadas' });
