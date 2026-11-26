@@ -3432,6 +3432,8 @@ let desapVerResueltos = false;
 window.pfReaplicarEventos = function () { if (typeof window.pfEventos === 'function') { eventosProd = window.pfEventos(eventosProdRaw); } if (typeof currentFilter !== 'undefined' && currentFilter === 'indicadores') applyFilters(); };
 let rechazoVerReplan = false;
 let indState = { periodo: 'semana', desde: '', hasta: '', medida: 'kg', kgTipo: 'neto' };
+let despTipo = 'todos';      // Historial de Despachos: 'todos' | 'remito' | 'b' (salió en B / negro)
+let _despListUlt = null;
 
 function actualizarBadgeReplan() {
   const el = document.getElementById('replan-badge');
@@ -3499,6 +3501,7 @@ function sumPeriodo(r) {
   const kgATiempo = conFecha.filter(d => d.dia <= d.fecha_entrega).reduce((s, d) => s + num(d.kg), 0);
   return {
     desKg: des.reduce((s, d) => s + num(d.kg), 0), desU: des.reduce((s, d) => s + num(d.cantidad), 0), desN: des.length,
+    desNegKg: des.filter(d => d.en_negro).reduce((s, d) => s + num(d.kg), 0), desNegU: des.filter(d => d.en_negro).reduce((s, d) => s + num(d.cantidad), 0), desNegN: des.filter(d => d.en_negro).length,
     funKg: fun.reduce((s, e) => s + kgv(e), 0), funKgN: fun.reduce((s, e) => s + num(e.kg), 0), funU: fun.reduce((s, e) => s + num(e.cantidad), 0),
     molKg: mol.reduce((s, e) => s + kgv(e), 0), molU: mol.reduce((s, e) => s + num(e.cantidad), 0),
     recKg: rec.reduce((s, x) => s + num(x.kg), 0), recU: rec.reduce((s, x) => s + num(x.cantidad), 0), recN: rec.length,
@@ -3653,6 +3656,7 @@ function renderIndicadoresPanel() {
   const pBtn = (k, t) => `<button class="chip ${indState.periodo === k ? 'active' : ''}" onclick="setIndPeriodo('${k}')">${t}</button>`;
   const hayFundidos = eventosProd.some(e => e.tipo === 'fundido');
   const hayMoldeado = eventosProd.some(e => e.tipo === 'moldeado');
+  const hayNeg = despachosLog.some(d => d.en_negro);
   const pctRec = A.funKgN > 0 ? (A.recKg / A.funKgN * 100) : null;
   const pctRecPrev = B.funKgN > 0 ? (B.recKg / B.funKgN * 100) : null;
 
@@ -3669,6 +3673,10 @@ function renderIndicadoresPanel() {
   const bkRot = !!bk && sem.length > 6;
   const semChart = (clave, nombre, color) => barChartSvg({ labels: semLabels, series: [{ name: nombre, color, values: sem.map(w => w.v[clave]) }], fadeOld: !bk, marcarUltimo: !bk, rotate: bkRot, labelEvery: bkEvery, h: bkRot ? 230 : undefined, det: clave });
   const tot8 = clave => fmtN(sem.reduce((a, w) => a + w.v[clave], 0));
+  const desChart = () => barChartSvg({ labels: semLabels, series: hayNeg
+    ? [{ name: 'Con remito', color: '#c084fc', values: sem.map(w => w.v.desKg - w.v.desNegKg) }, { name: 'En B (negro)', color: '#fbbf24', values: sem.map(w => w.v.desNegKg) }]
+    : [{ name: 'Despachado', color: '#c084fc', values: sem.map(w => w.v.desKg) }],
+    fadeOld: !bk, marcarUltimo: !bk, rotate: bkRot, labelEvery: bkEvery, h: bkRot ? 230 : undefined, det: 'desKg' });
 
   // 4) Mensual: ingresado vs despachado (últimos 6 meses)
   const mesesR = [];
@@ -3787,7 +3795,10 @@ function renderIndicadoresPanel() {
     };
     const kgNum = x => Number(x.kg) || 0;
     const tSem = w => w.t || `Semana del ${cortoIso(w.r.ini)} al ${cortoIso(w.r.fin)}`;
-    IND_DET.desKg = sem.map(w => ({ titulo: '🚚 Despachado · ' + tSem(w), secs: [secMov('', despachosLog.filter(d => enRango(d.dia, w.r)), kgNum, true)] }));
+    IND_DET.desKg = sem.map(w => {
+      const dd = despachosLog.filter(d => enRango(d.dia, w.r)), neg = dd.filter(d => d.en_negro);
+      return { titulo: '🚚 Despachado · ' + tSem(w), secs: neg.length ? [secMov('Con remito', dd.filter(d => !d.en_negro), kgNum, true), secMov('🅱 En B (negro)', neg, kgNum, true)] : [secMov('', dd, kgNum, true)] };
+    });
     IND_DET.funKg = sem.map(w => ({ titulo: '🔥 Fundido · ' + tSem(w), secs: [secMov('', eventosProd.filter(e => e.tipo === 'fundido' && enRango(e.dia, w.r)), kgvE)] }));
     IND_DET.molKg = sem.map(w => ({ titulo: '🧱 Moldeado · ' + tSem(w), secs: [secMov('', eventosProd.filter(e => e.tipo === 'moldeado' && enRango(e.dia, w.r)), kgvE)] }));
     IND_DET.recKg = sem.map(w => ({ titulo: '❌ Rechazo · ' + tSem(w), secs: [secRz('', rechazosList.filter(x => enRango(x.dia, w.r)))] }));
@@ -3849,6 +3860,7 @@ function renderIndicadoresPanel() {
 
     <div class="ind-tiles">
       ${tile('Despachado', fmtN(A.desKg) + ' Kg', `${fmtN(A.desU)} u. · ${A.desN} despacho${A.desN === 1 ? '' : 's'}<br>${deltaHtml(A.desKg, B.desKg)}`, '#c084fc')}
+      ${hayNeg ? tile('Despachado en B (negro)', fmtN(A.desNegKg) + ' Kg', `${fmtN(A.desNegU)} u. · ${A.desNegN} despacho${A.desNegN === 1 ? '' : 's'}<br>${A.desKg > 0 ? fmtN(A.desNegKg / A.desKg * 100) + ' % del despachado<br>' : ''}${deltaHtml(A.desNegKg, B.desNegKg)}`, '#fbbf24') : ''}
       ${tile('Fundido', hayFundidos ? fmtN(A.funKg) + ' Kg' : '—', hayFundidos ? `${fmtN(A.funU)} u. pasaron a Terminación o se moldearon para kanban<br>${deltaHtml(A.funKg, B.funKg)}` : 'Se empieza a registrar con la próxima actualización de SGA', '#34d399')}
       ${hayMoldeado ? tile('Moldeado', fmtN(A.molKg) + ' Kg', `${fmtN(A.molU)} u. moldeadas (moldeo diario, se cuentan una sola vez)<br>${deltaHtml(A.molKg, B.molKg)}`, '#38bdf8') : ''}
       ${tile('Rechazo', fmtN(A.recKg) + ' Kg', `${fmtN(A.recU)} u. · ${A.recN} registro${A.recN === 1 ? '' : 's'}<br>${deltaHtml(A.recKg, B.recKg, true)}`, '#ef4444')}
@@ -3857,7 +3869,7 @@ function renderIndicadoresPanel() {
     </div>
 
     <div class="ind-grid">
-      ${card(`🚚 Despachado por ${uni}`, `Kg · ${subPer} · total ${tot8('desKg')} Kg`, semChart('desKg', 'Despachado', '#c084fc'))}
+      ${card(`🚚 Despachado por ${uni}`, `Kg · ${subPer} · total ${tot8('desKg')} Kg${hayNeg ? ' · <span style="color:#c084fc;">■</span> con remito <span style="color:#fbbf24;">■</span> en B (negro)' : ''}`, desChart())}
       ${card(`🔥 Fundido por ${uni}`, `Kg que pasaron a Terminación (más lo moldeado para kanban) · total ${tot8('funKg')} Kg`, hayFundidos ? semChart('funKg', 'Fundido', '#34d399') : '<div class="text-dim" style="padding:30px 8px; text-align:center; font-size:0.8rem;">Se empieza a registrar con la próxima actualización diaria de SGA.</div>')}
       ${hayMoldeado ? card(`🧱 Moldeado por ${uni}`, `Kg ${indState.kgTipo === 'bruto' ? 'brutos' : 'netos'} moldeados (moldeo diario) · total ${tot8('molKg')} Kg`, semChart('molKg', 'Moldeado', '#38bdf8')) : ''}
       ${card(`❌ Rechazo por ${uni}`, `Kg · total ${tot8('recKg')} Kg`, semChart('recKg', 'Rechazo', '#ef4444'))}
@@ -5897,7 +5909,7 @@ function showToast(message, kind) {
       for (let o = 0; o >= -7; o--) {
         const r = semanaRango(o);
         const del = despachosLog.filter(d => d.dia && d.dia >= r.ini && d.dia <= r.fin);
-        semanas.push({ ...r, n: del.length, cant: del.reduce((s, d) => s + (d.cantidad || 0), 0), kg: del.reduce((s, d) => s + (d.kg || 0), 0), actual: o === 0 });
+        semanas.push({ ...r, n: del.length, cant: del.reduce((s, d) => s + (d.cantidad || 0), 0), kg: del.reduce((s, d) => s + (d.kg || 0), 0), kgB: del.filter(d => d.en_negro).reduce((s, d) => s + (d.kg || 0), 0), actual: o === 0 });
       }
       const [esta, pasada] = semanas;
       // Lo que todavía falta despachar según fecha de entrega (pendiente de SGA menos lo ya despachado desde acá)
@@ -5921,18 +5933,18 @@ function showToast(message, kind) {
       const filasSem = semanas.map(w => `
         <div style="display:flex; align-items:center; gap:8px; margin:4px 0; font-size:0.78rem;">
           <span style="width:112px; flex:0 0 auto; color:${w.actual ? '#fff' : '#94a3b8'}; font-weight:${w.actual ? 700 : 400};">${w.actual ? 'Esta semana' : corto(w.ini) + ' – ' + corto(w.fin)}</span>
-          <div style="flex:1; min-width:40px; background:#0f172a; border-radius:5px; height:12px; overflow:hidden;"><div style="width:${Math.round(w.kg / maxKg * 100)}%; height:100%; background:${w.actual ? 'var(--accent)' : '#475569'};"></div></div>
-          <span style="width:150px; flex:0 0 auto; text-align:right; color:#e2e8f0;">${w.cant.toLocaleString()} u. · ${fmtKg(w.kg)} Kg</span>
+          <div style="flex:1; min-width:40px; background:#0f172a; border-radius:5px; height:12px; overflow:hidden;"><div style="width:${Math.round(w.kg / maxKg * 100)}%; height:100%; display:flex;"><div style="flex:${Math.max(w.kg - w.kgB, 0)} 1 0; background:${w.actual ? 'var(--accent)' : '#475569'};"></div><div style="flex:${w.kgB} 1 0; background:#fbbf24;"></div></div></div>
+          <span style="width:215px; flex:0 0 auto; text-align:right; color:#e2e8f0;">${w.cant.toLocaleString()} u. · ${fmtKg(w.kg)} Kg${w.kgB > 0 ? ' <span style="color:#fbbf24;">(B ' + fmtKg(w.kgB) + ')</span>' : ''}</span>
         </div>`).join('');
       box.innerHTML = `
         <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
-          ${tile('Despachado esta semana', fmtKg(esta.kg) + ' Kg', `${esta.cant.toLocaleString()} u. · ${esta.n} despacho${esta.n === 1 ? '' : 's'}<br>${deltaTxt}`, 'var(--accent)')}
+          ${tile('Despachado esta semana', fmtKg(esta.kg) + ' Kg', `${esta.cant.toLocaleString()} u. · ${esta.n} despacho${esta.n === 1 ? '' : 's'}<br>${deltaTxt}${esta.kgB > 0 ? '<br><span style="color:#fbbf24;">En B (negro): ' + fmtKg(esta.kgB) + ' Kg</span>' : ''}`, 'var(--accent)')}
           ${tile('Falta despachar esta semana', fmtKg(estaSem.kg) + ' Kg', `${estaSem.u.toLocaleString()} u. con entrega del ${corto(ini)} al ${corto(fin)}`, '#fbbf24', verBtn('semana'))}
           ${tile('Atrasado', fmtKg(atras.kg) + ' Kg', `${atras.u.toLocaleString()} u. con entrega anterior al ${corto(ini)}`, atras.u > 0 ? '#ef4444' : '#22c55e', verBtn('atrasadas'))}
           ${tile('Semana próxima', fmtKg(prox.kg) + ' Kg', `${prox.u.toLocaleString()} u. a entregar`, '#60a5fa', verBtn('prox'))}
         </div>
         <div style="border:1px solid var(--card-border); border-radius:12px; padding:10px 14px; margin-bottom:16px;">
-          <div class="text-dim" style="font-size:0.72rem; text-transform:uppercase; letter-spacing:.04em; margin-bottom:6px;">Despachado por semana (lunes a domingo)</div>
+          <div class="text-dim" style="font-size:0.72rem; text-transform:uppercase; letter-spacing:.04em; margin-bottom:6px;">Despachado por semana (lunes a domingo) <span style="text-transform:none; letter-spacing:0;">· <span style="color:#fbbf24;">■</span> parte que salió en B (negro)</span></div>
           ${filasSem}
         </div>`;
     }
@@ -5941,13 +5953,16 @@ function showToast(message, kind) {
       renderDespachadoSemanas();
       const el = document.getElementById('despachado-list');
       if (!el) return;
-      const filtrado = list || despachosLog;
+      _despListUlt = list || null;
+      const filtrado = (list || despachosLog).filter(d => despTipo === 'todos' || (despTipo === 'b' ? !!d.en_negro : !d.en_negro));
+      const chipTipo = (k, t) => `<button class="chip ${despTipo === k ? 'active' : ''}" onclick="setDespTipo('${k}')">${t}</button>`;
+      const chipsTipo = `<div class="quick-chips" style="margin:0 0 10px;"><span class="text-dim" style="font-size:0.75rem; align-self:center;">Ver:</span>${chipTipo('todos', 'Todos')}${chipTipo('remito', 'Con remito')}${chipTipo('b', '🅱 En B (negro)')}</div>`;
       if (!despachosLog.length) {
         el.innerHTML = '<div class="text-dim" style="padding: 20px 4px;">Todavía no se marcó nada como despachado desde acá. Usá el botón "🚚 Despachar" en cada ítem dentro de "Preparado para Despacho".</div>';
         return;
       }
       if (!filtrado.length) {
-        el.innerHTML = '<div class="text-dim" style="padding: 20px 4px;">Ningún despacho coincide con la búsqueda — probá con otro cliente, pieza, código o Nº de comprobante.</div>';
+        el.innerHTML = chipsTipo + '<div class="text-dim" style="padding: 20px 4px;">Ningún despacho coincide con la búsqueda — probá con otro cliente, pieza, código o Nº de comprobante.</div>';
         return;
       }
       const hoy = diaLocalStr();
@@ -5958,33 +5973,54 @@ function showToast(message, kind) {
         (byDay[dia] || (byDay[dia] = [])).push(d);
       });
       const dias = Object.keys(byDay).sort((a, b) => b.localeCompare(a));
-      el.innerHTML = dias.map(dia => {
+      el.innerHTML = chipsTipo + dias.map(dia => {
         const entries = byDay[dia].slice().sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
         const cant = entries.reduce((s, d) => s + (d.cantidad || 0), 0);
         const kg = entries.reduce((s, d) => s + (d.kg || 0), 0);
+        const kgBd = entries.filter(d => d.en_negro).reduce((s, d) => s + (d.kg || 0), 0);
         let label = dia === '(sin fecha)' ? 'Sin fecha' : formatDate(dia);
         if (dia === hoy) label = 'Hoy — ' + label;
         else if (dia === ayer) label = 'Ayer — ' + label;
         const cardsHtml = entries.map(d => `
           <div class="stock-card">
             <div class="info">
-              <div class="name">${escHtml(d.descripcion || '(sin descripción)')}</div>
+              <div class="name">${d.en_negro ? '<span title="Salió en B (negro)" style="background:#fbbf24; color:#1c1917; font-weight:800; font-size:0.68rem; border-radius:4px; padding:1px 6px; margin-right:6px;">B</span>' : ''}${escHtml(d.descripcion || '(sin descripción)')}</div>
               <div class="sub">${escHtml(d.cliente || '')} · NV ${escHtml(d.comprobante || '')}${d.codigo ? ' · Cód: ' + escHtml(d.codigo) : ''}</div>
             </div>
             <div class="qty">${(d.cantidad || 0).toLocaleString()} u.${d.kg ? ' <span class="kg">(' + d.kg.toLocaleString(undefined,{maximumFractionDigits:1}) + ' Kg)</span>' : ''}</div>
             <div class="actions">
-              <button onclick="openDespachoDetalleModal('${escJs(d.id)}')" title="Ver probetas y pieza asociadas a este despacho">👁️ Ver detalle</button>
+              <button onclick="openDespachoDetalleModal('${escJs(d.id)}')" title="Ver probetas y pieza asociadas a este despacho">👁️ Ver detalle</button>${(CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? `<button onclick="despToggleNegro('${escJs(d.id)}')" title="${d.en_negro ? 'Pasarlo a despacho con remito' : 'Marcar que este despacho salió en B (negro)'}">${d.en_negro ? '↩ Con remito' : '🅱 Marcar B'}</button>` : ''}
             </div>
           </div>`).join('');
         return `
           <div class="desp-day-header">
             <span class="desp-day-title">${label}</span>
-            <span class="desp-day-sub">${cant.toLocaleString()} u. · ${kg.toLocaleString(undefined,{maximumFractionDigits:1})} Kg</span>
+            <span class="desp-day-sub">${cant.toLocaleString()} u. · ${kg.toLocaleString(undefined,{maximumFractionDigits:1})} Kg${kgBd > 0 ? ' · <span style="color:#fbbf24;">B: ' + kgBd.toLocaleString(undefined,{maximumFractionDigits:1}) + ' Kg</span>' : ''}</span>
           </div>
           ${cardsHtml}`;
       }).join('');
     }
 
+    function setDespTipo(t) { despTipo = t; renderDespachadoPanel(_despListUlt); }
+    async function despToggleNegro(id) {
+      const d = despachosLog.find(x => String(x.id) === String(id));
+      if (!d) return;
+      const nuevo = !d.en_negro;
+      let ids = [d.id];
+      const mismos = despachosLog.filter(x => x.comprobante === d.comprobante && String(x.id) !== String(d.id) && !!x.en_negro !== nuevo);
+      if (mismos.length && confirm('Este comprobante (' + (d.comprobante || '') + ') tiene ' + mismos.length + ' línea' + (mismos.length === 1 ? '' : 's') + ' más que ' + (nuevo ? 'no están marcadas como B' : 'siguen marcadas como B') + '.\n\nAceptar: ' + (nuevo ? 'marcar' : 'desmarcar') + ' TODAS las líneas del comprobante.\nCancelar: solo esta línea.')) ids = ids.concat(mismos.map(x => x.id));
+      try {
+        const { error } = await supabaseClient.rpc('despachos_marcar_negro', { p_ids: ids.map(Number), p_negro: nuevo });
+        if (error) throw error;
+        despachosLog.forEach(x => { if (ids.some(i => String(i) === String(x.id))) x.en_negro = nuevo; });
+        renderDespachadoPanel(_despListUlt);
+        try { if (typeof currentFilter !== 'undefined' && currentFilter === 'indicadores') renderIndicadoresPanel(); } catch (e) { /* sin refrescar */ }
+        showToast(nuevo ? 'Marcado como salida en B' : 'Pasado a despacho con remito', 'success');
+      } catch (e) {
+        console.error('No se pudo marcar el despacho:', e);
+        alert(/Could not find the function|schema cache|en_negro/i.test(e.message || '') ? 'Falta correr el SQL 052 en Supabase.' : 'No se pudo guardar.' + (e && e.message ? ' ' + e.message : ''));
+      }
+    }
     function openDespachoDetalleModal(id) {
       const d = despachosLog.find(x => String(x.id) === String(id));
       if (!d) return;
@@ -5994,6 +6030,7 @@ function showToast(message, kind) {
         <div class="modal-row"><div class="k">Comprobante</div><div class="v">${escHtml(d.comprobante || '-')}${d.oc ? ' <span class="text-dim">(OC: ' + escHtml(d.oc) + ')</span>' : ''}</div></div>
         <div class="modal-row"><div class="k">Pieza</div><div class="v">${escHtml(d.descripcion || '-')}${d.codigo ? ' <span class="text-dim">(Cód. ' + escHtml(d.codigo) + ')</span>' : ''}</div></div>
         <div class="modal-row"><div class="k">Material</div><div class="v">${escHtml(d.material || '-')}</div></div>
+        <div class="modal-row"><div class="k">Tipo de salida</div><div class="v">${d.en_negro ? '<b style="color:#fbbf24;">🅱 En B (negro)</b>' : 'Con remito'}</div></div>
         <div class="modal-row"><div class="k">Fecha de despacho</div><div class="v">${d.dia ? formatDate(d.dia) : '-'}</div></div>
         <div class="modal-row"><div class="k">Cantidad / Kg</div><div class="v">${(d.cantidad || 0).toLocaleString()} u. · ${fmt1(d.kg || 0)} Kg</div></div>`;
       if (probetas.length) {
@@ -9014,7 +9051,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
 // =====================================================================
 (function () {
   'use strict';
-  const V = { loaded: false, loading: false, error: null, log: [], precios: new Map(), tc: null, tcTs: null, periodo: 'mes', desde: '', hasta: '', moneda: 'USD' };
+  const V = { loaded: false, loading: false, error: null, log: [], precios: new Map(), tc: null, tcTs: null, periodo: 'mes', desde: '', hasta: '', moneda: 'USD', neg: new Set(), negOk: false, tipoDes: 'todos' };
 
   const esc = s => (typeof escHtml === 'function' ? escHtml(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
   const pad = n => String(n).padStart(2, '0');
@@ -9039,6 +9076,8 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     return { cur: { ini, fin }, prev: { ini: addD(ini, -dias), fin: addD(ini, -1) }, nombre: 'el rango elegido' };
   }
   const enRango = (d, r) => !!d && d >= r.ini && d <= r.fin;
+  const esB = x => V.neg.has(String(x.ref));
+  const okDes = x => x.tipo === 'despacho' && (V.tipoDes === 'todos' || (V.tipoDes === 'b') === esB(x));
 
   // ---------- plata ----------
   const nf = (n, d) => (Number(n) || 0).toLocaleString('es-AR', { maximumFractionDigits: d == null ? 0 : d, minimumFractionDigits: d == null ? 0 : d });
@@ -9093,10 +9132,12 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     V.loading = true; V.error = null; render();
     try {
       const [log, precios, cfg] = await Promise.all([
-        page('ventas_log', 'id,tipo,item_id,dia,cantidad,kg,monto,moneda,valorizado,cliente,comprobante,codigo,descripcion', q => q.order('id')),
+        page('ventas_log', 'id,tipo,item_id,dia,cantidad,kg,monto,moneda,valorizado,cliente,comprobante,codigo,descripcion,ref', q => q.order('id')),
         page('items_precios', 'item_id,importe_final,moneda,vta', q => q.order('item_id')),
         supabaseClient.from('ventas_config').select('valor,updated_at').eq('clave', 'tipo_cambio').maybeSingle(),
       ]);
+      // despachos que salieron en B (negro): se identifican por el id del despacho (ventas_log.ref)
+      try { const neg = await page('despachos_log', 'id', q => q.eq('en_negro', true).order('id')); V.neg = new Set(neg.map(x => String(x.id))); V.negOk = true; } catch (e) { V.neg = new Set(); V.negOk = false; }
       V.log = log; V.precios = new Map(precios.map(p => [p.item_id, p]));
       V.tc = cfg && cfg.data && Number(cfg.data.valor) > 0 ? Number(cfg.data.valor) : null; V.tcTs = cfg && cfg.data ? cfg.data.updated_at : null;
       V.loaded = true;
@@ -9227,7 +9268,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
   function detLog(titulo, rows) {
     const s = sumar(rows); rows = rows.slice().sort((a, b) => String(b.dia).localeCompare(String(a.dia)));
     const mostrar = rows.slice(0, 400);
-    return { titulo, tot: s.por, sub: `${rows.length} líneas${s.sin ? ` · ${s.sin} sin valorizar` : ''}`, html: `<table><tr><th>Fecha</th><th>Cliente</th><th>NV</th><th>Pieza</th><th class="num">Cant.</th><th class="num">Importe</th></tr>${mostrar.map(x => `<tr><td>${esc(String(x.dia || '').split('-').reverse().join('/'))}</td><td>${esc(x.cliente || '—')}</td><td>${esc(x.comprobante || '')}</td><td>${esc(String(x.descripcion || '').slice(0, 46))}<div class="dim" style="font-size:.7rem">${esc(x.codigo || '')}</div></td><td class="num">${nf(x.cantidad)}</td><td class="num">${x.valorizado && x.monto != null ? money(x.monto, x.moneda === 'ARS' ? 'ARS' : 'USD') : '<span class="dim">sin valorizar</span>'}</td></tr>`).join('')}</table>${rows.length > mostrar.length ? `<div class="sub">Se muestran las primeras ${mostrar.length} de ${rows.length}.</div>` : ''}` };
+    return { titulo, tot: s.por, sub: `${rows.length} líneas${s.sin ? ` · ${s.sin} sin valorizar` : ''}`, html: `<table><tr><th>Fecha</th><th>Cliente</th><th>NV</th><th>Pieza</th><th class="num">Cant.</th><th class="num">Importe</th></tr>${mostrar.map(x => `<tr><td>${esc(String(x.dia || '').split('-').reverse().join('/'))}</td><td>${esc(x.cliente || '—')}</td><td>${esc(x.comprobante || '')}</td><td>${x.tipo === 'despacho' && esB(x) ? '<span class="warn" style="font-weight:800">B</span> ' : ''}${esc(String(x.descripcion || '').slice(0, 46))}<div class="dim" style="font-size:.7rem">${esc(x.codigo || '')}</div></td><td class="num">${nf(x.cantidad)}</td><td class="num">${x.valorizado && x.monto != null ? money(x.monto, x.moneda === 'ARS' ? 'ARS' : 'USD') : '<span class="dim">sin valorizar</span>'}</td></tr>`).join('')}</table>${rows.length > mostrar.length ? `<div class="sub">Se muestran las primeras ${mostrar.length} de ${rows.length}.</div>` : ''}` };
   }
   window.venDet = (tipo, k) => {
     const { cur } = rangos(); let d;
@@ -9236,7 +9277,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     else if (tipo === 'cliente') d = detPend('📦 Cartera pendiente de ' + k, filtroPend('cliente', k));
     else if (tipo === 'cartera') d = detPend('📦 Cartera pendiente de entrega', pendItems());
     else if (tipo === 'ing') d = detLog('💵 Ingresó (notas de venta del período)', V.log.filter(x => x.tipo === 'ingreso' && enRango(x.dia, cur)));
-    else if (tipo === 'des') d = detLog('🚚 Despachó (período)', V.log.filter(x => x.tipo === 'despacho' && enRango(x.dia, cur)));
+    else if (tipo === 'des') d = detLog('🚚 Despachó (período)' + (V.tipoDes === 'b' ? ' — solo B (negro)' : V.tipoDes === 'remito' ? ' — solo con remito' : ''), V.log.filter(x => okDes(x) && enRango(x.dia, cur)));
     else if (tipo === 'cliper') d = detLog('👤 ' + k + ' en el período', V.log.filter(x => (x.cliente || '—') === k && enRango(x.dia, cur)));
     else return;
     const el = document.getElementById('ven-det'); if (!el) return;
@@ -9263,7 +9304,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     for (let k = -5; k <= 0; k++) {
       const r = mes(k); labels.push(MESES[parse(r.ini).getMonth()]);
       ing.push(valorSerie(sumar(V.log.filter(x => x.tipo === 'ingreso' && enRango(x.dia, r))).por));
-      des.push(valorSerie(sumar(V.log.filter(x => x.tipo === 'despacho' && enRango(x.dia, r))).por));
+      des.push(valorSerie(sumar(V.log.filter(x => okDes(x) && enRango(x.dia, r))).por));
     }
     if (typeof barChartSvg !== 'function') return '';
     return barChartSvg({ labels, series: [{ name: 'Ingresó', color: '#38bdf8', values: ing }, { name: 'Despachó', color: '#34d399', values: des }], marcarUltimo: true });
@@ -9276,8 +9317,9 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     if (!V.loaded) { body.innerHTML = ''; return; }
     const { cur, prev, nombre } = rangos();
     const ingC = V.log.filter(x => x.tipo === 'ingreso' && enRango(x.dia, cur)), ingP = V.log.filter(x => x.tipo === 'ingreso' && enRango(x.dia, prev));
-    const desC = V.log.filter(x => x.tipo === 'despacho' && enRango(x.dia, cur)), desP = V.log.filter(x => x.tipo === 'despacho' && enRango(x.dia, prev));
+    const desC = V.log.filter(x => okDes(x) && enRango(x.dia, cur)), desP = V.log.filter(x => okDes(x) && enRango(x.dia, prev));
     const sI = sumar(ingC), sD = sumar(desC), pI = sumar(ingP), pD = sumar(desP);
+    const sB = sumar(V.log.filter(x => x.tipo === 'despacho' && esB(x) && enRango(x.dia, cur)));
     const mon = V.moneda === 'ARS' ? 'ARS' : 'USD';
     const vI = valorSerie(sI.por), vD = valorSerie(sD.por);
     // pedido más grande del período (para mostrar el ingreso "sin" ese pedido)
@@ -9299,10 +9341,11 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
         <span class="rng"><input type="date" id="ven-desde" value="${esc(V.periodo === 'rango' ? V.desde : cur.ini)}"> – <input type="date" id="ven-hasta" value="${esc(V.periodo === 'rango' ? V.hasta : cur.fin)}"> <button class="chip ${V.periodo === 'rango' ? 'on' : ''}" onclick="venRango()">Ver</button></span></div>
       <div class="chips"><span class="dim" style="align-self:center">Mostrar en:</span>${mchip('USD', 'USD')}${mchip('ARS', '$ pesos')}${mchip('ambas', 'USD y $')}
         <span class="tc">Tipo de cambio: ${V.tc > 0 ? `<b>$ ${nf(V.tc, 2)}</b> por USD` : '<b class="warn">sin cargar</b>'} <button class="chip" onclick="venTc()">${V.tc > 0 ? 'Cambiar' : 'Cargar'}</button></span></div>
+      ${V.negOk ? `<div class="chips"><span class="dim" style="align-self:center">Despachos:</span>${['todos|Todos', 'remito|Con remito', 'b|🅱 En B (negro)'].map(s => { const [k, t] = s.split('|'); return `<button class="chip ${V.tipoDes === k ? 'on' : ''}" onclick="venTipoDes('${k}')">${t}</button>`; }).join('')}</div>` : ''}
       ${sinTc ? '<div class="alert">Hay montos en pesos y todavía no cargaste el tipo de cambio: los pesos no están sumados a los dólares.</div>' : ''}
       <div class="tiles">
         <div class="tile clk" onclick="venDet('ing')" title="Tocá para ver el detalle"><div class="t">💵 Ingresó (notas de venta de ${nombre})</div><div class="b" style="color:#38bdf8">${grande(sI.por)}</div>${chico(sI.por)}<div class="s">${sI.n} líneas · ${deltaHtml(vI, valorSerie(pI.por))}</div>${sinMayor}</div>
-        <div class="tile clk" onclick="venDet('des')" title="Tocá para ver el detalle"><div class="t">🚚 Despachó (${nombre})</div><div class="b" style="color:#34d399">${grande(sD.por)}</div>${chico(sD.por)}<div class="s">${sD.n} despachos · ${deltaHtml(vD, valorSerie(pD.por))}</div></div>
+        <div class="tile clk" onclick="venDet('des')" title="Tocá para ver el detalle"><div class="t">🚚 Despachó (${nombre})</div><div class="b" style="color:#34d399">${grande(sD.por)}</div>${chico(sD.por)}<div class="s">${sD.n} despachos · ${deltaHtml(vD, valorSerie(pD.por))}</div>${V.negOk && V.tipoDes === 'todos' && (sB.n + sB.sin) > 0 ? `<div class="s" style="color:#fbbf24">de los cuales en B (negro): <b>${grande(sB.por)}</b> · ${sB.n + sB.sin} despachos</div>` : ''}</div>
         <div class="tile"><div class="t">⚖️ Despachado / Ingresado</div><div class="b">${ratio == null ? '—' : nf(ratio, 2)}</div><div class="s">${ratio == null ? 'sin ingresos en el período' : ratio < 1 ? 'menor a 1: la cartera crece' : 'mayor o igual a 1: la cartera baja'}</div></div>
         <div class="tile clk" onclick="venDet('cartera')" title="Tocá para ver el detalle"><div class="t">📦 Cartera pendiente de entrega</div><div class="b" style="color:#38bdf8">${grande(car.tot)}</div>${chico(car.tot)}<div class="s">${car.n - car.sin} de ${car.n} renglones valorizados</div></div>
       </div>
@@ -9327,7 +9370,8 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
 
   // ---------- acciones ----------
   window.venPeriodo = p => { V.periodo = p; render(); };
-  window.venMoneda = m => { V.moneda = m; render(); };
+  window.venMoneda = m => { V.moneda = m; render(); }
+  window.venTipoDes = t => { V.tipoDes = t; render(); };
   window.venRango = () => { const d = document.getElementById('ven-desde').value, h = document.getElementById('ven-hasta').value; if (!d) return; V.desde = d; V.hasta = h || d; V.periodo = 'rango'; render(); };
   window.venTc = async () => {
     const actual = V.tc > 0 ? String(V.tc) : '';
