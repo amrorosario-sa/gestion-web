@@ -3131,6 +3131,7 @@ async function initDb() {
     });
     db.collection('despachos_log').onSnapshot(qs => {
       despachosLog = qs.docs.filter(d => d.exists).map(d => ({ ...d.data(), id: d.id }));
+      try { actualizarBadgeDesap(); } catch (e) { /* el contador se recalcula al cargar */ }
       refrescarDiferido();
     }, err => {
       console.error('despachos_log onSnapshot error:', err && err.code, err && err.message);
