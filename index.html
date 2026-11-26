@@ -3463,14 +3463,10 @@ function indRangos() {
   const dias = Math.max(1, Math.round((new Date(fin) - new Date(ini)) / 86400000) + 1);
   return { cur: { ini, fin }, prev: { ini: addDaysIso(ini, -dias), fin: addDaysIso(ini, -1) } };
 }
-// Para un rango propio: los gráficos se arman con el rango elegido (por día hasta 31 días, por semana hasta ~200 días, por mes más allá)
+// Para un rango propio: los gráficos se arman con el rango elegido (por semana hasta ~200 días, por mes más allá; el detalle de cada barra muestra los días)
 function indBuckets(cur) {
   const ini = cur.ini, fin = cur.fin, list = [];
   const dias = Math.round((new Date(fin + 'T00:00:00Z') - new Date(ini + 'T00:00:00Z')) / 86400000) + 1;
-  if (dias <= 31) {
-    for (let d = ini; d <= fin; d = addDaysIso(d, 1)) list.push({ r: { ini: d, fin: d }, label: cortoIso(d), t: 'Día ' + cortoIso(d) });
-    return { unidad: 'día', list };
-  }
   if (dias <= 200) {
     const dow = (new Date(ini + 'T00:00:00Z').getUTCDay() + 6) % 7;
     for (let s = addDaysIso(ini, -dow); s <= fin; s = addDaysIso(s, 7)) {
