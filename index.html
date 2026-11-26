@@ -6794,7 +6794,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     '2027-01-01': 'Año Nuevo',
     '2026-03-23': 'Puente turístico (no laborable)', '2026-07-10': 'Puente turístico (no laborable)', '2026-12-07': 'Puente turístico (no laborable)',
   };
-  const C = { kanTab: 'sector_z', kanFilter: 'todos', kanQ: '', rechazos: [], motivos: null, mode: 'full', tab: 'plan', loaded: false, error: null, stock: {}, planes: [], moldeos: [], k: [], exc: [], recetas: [], cfg: {}, movs: [], recepciones: [] };
+  const C = { kanTab: 'sector_z', kanFilter: 'todos', kanTipo: 'todos', kanQ: '', rechazos: [], motivos: null, mode: 'full', tab: 'plan', loaded: false, error: null, stock: {}, planes: [], moldeos: [], k: [], exc: [], recetas: [], cfg: {}, movs: [], recepciones: [] };
 
   // ---------- utilidades ----------
   const esc = s => (typeof escHtml === 'function' ? escHtml(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
@@ -7937,10 +7937,11 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     const nRev = all.filter(x => x.rev).length;
     const cnt = n => all.filter(x => x.nf === n).length;
     const q = sane(C.kanQ);
-    const lista = all.filter(x => (C.kanFilter === 'todos' || (C.kanFilter === 'krev' ? !!x.rev : x.nf === C.kanFilter)) && q.every(w => buscable(x.c).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(w)))
+    const lista = all.filter(x => (C.kanTipo === 'todos' || (C.kanTipo === 'aros') === esAro(x.c)) && (C.kanFilter === 'todos' || (C.kanFilter === 'krev' ? !!x.rev : x.nf === C.kanFilter)) && q.every(w => buscable(x.c).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(w)))
       .sort((a, b) => SEV[a.nf] - SEV[b.nf] || SEV[a.nv] - SEV[b.nv] || nombre(a.c).localeCompare(nombre(b.c), 'es'));
     const sinK = Object.keys(C.stock[u] || {}).filter(c => stock(c, u) > 0 && kOf(u, c) == null).sort((a, b) => nombre(a).localeCompare(nombre(b), 'es'));
     const tabBtn = (k, t) => `<button class="tab ${C.kanTab === k ? 'on' : ''}" onclick="cirKanTab('${k}')">${t}</button>`;
+    const tchip = (k, t) => `<button class="tab ${C.kanTipo === k ? 'on' : ''}" onclick="cirKanTipo('${k}')">${t}</button>`;
     const fchip = (k, t) => `<button class="tab ${C.kanFilter === k ? 'on' : ''}" onclick="cirKanFilter('${k}')">${t}</button>`;
     const nivCell = n => `<span class="${n === 'verde' ? 'ok' : n === 'rojo' ? 'rep' : 'soon'}">${NIV[n]}</span>`;
     const rows = lista.map(x => { const alerta = x.nf === 'amarillo' || x.nf === 'rojo';
@@ -7958,7 +7959,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
           Nivel según k: verde 2k o más · amarillo entre k y 2k (avisa reponer) · rojo menos de k.</div>
         <div class="dia-tiles" style="margin:10px 0;"><div class="tile"><div class="n">${all.length}</div><div class="l">piezas con kanban</div></div><div class="tile ${cnt('rojo') ? 'rojo' : ''}"><div class="n">${cnt('rojo')}</div><div class="l">🔴 rojo</div></div><div class="tile ${cnt('amarillo') ? 'hoy' : ''}"><div class="n">${cnt('amarillo')}</div><div class="l">🟡 amarillo</div></div><div class="tile"><div class="n">${cnt('verde')}</div><div class="l">🟢 verde</div></div></div>
         ${kvPanel(u, nRev)}
-        <div class="tabs">${fchip('todos', 'Todas (' + all.length + ')')}${nRev ? fchip('krev', '⚠ K a revisar (' + nRev + ')') : ''}${fchip('rojo', '🔴 Rojo (' + cnt('rojo') + ')')}${fchip('amarillo', '🟡 Amarillo (' + cnt('amarillo') + ')')}${fchip('verde', '🟢 Verde (' + cnt('verde') + ')')}
+        <div class="tabs">${fchip('todos', 'Todas (' + all.length + ')')}${nRev ? fchip('krev', '⚠ K a revisar (' + nRev + ')') : ''}${fchip('rojo', '🔴 Rojo (' + cnt('rojo') + ')')}${fchip('amarillo', '🟡 Amarillo (' + cnt('amarillo') + ')')}${fchip('verde', '🟢 Verde (' + cnt('verde') + ')')}<span class="code" style="align-self:center; padding:0 4px;">·</span>${tchip('todos', 'Aros y otras (' + all.length + ')')}${tchip('aros', '🔩 Solo aros (' + all.filter(x => esAro(x.c)).length + ')')}${tchip('otras', '🧩 Otras piezas (' + all.filter(x => !esAro(x.c)).length + ')')}
           <input id="kan-q" class="kq" placeholder="Buscar pieza…" value="${esc(C.kanQ)}" oninput="cirKanQ(this.value)"></div>
         ${rows ? `<table><tr><th>Pieza</th><th class="num">Físico</th><th class="num">Virtual</th><th>Físico ▮ · virtual ▯</th><th>Nivel físico</th><th>Nivel virtual</th><th class="num">Kg/u</th><th class="num">Ventas/mes</th><th class="num">K sugerido</th><th></th></tr>${rows}</table>`
           : `<div class="empty">${all.length ? 'Ninguna pieza coincide con el filtro.' : 'Todavía no hay piezas con kanban acá. Tocá "+ Agregar pieza al kanban", elegí la pieza y definí su k.'}</div>`}</div>
@@ -7966,6 +7967,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
   }
   window.cirKanTab = t => { C.kanTab = t; render(); };
   window.cirKanFilter = f => { C.kanFilter = f; render(); };
+  window.cirKanTipo = f => { C.kanTipo = f; render(); };
   window.cirKanQ = t => { C.kanQ = t; render(); const e = document.getElementById('kan-q'); if (e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); } };
   // ---------- Kanban y Stock › Aros por receta: cada aro con su macho y su hembra juntos (las piezas compartidas, una sola vez) ----------
   (function () { const st = document.createElement('style'); st.textContent = `
