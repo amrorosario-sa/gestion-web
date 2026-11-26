@@ -3974,6 +3974,13 @@ function rechazoCardHtml(r, conBoton) {
     </div>`;
 }
 
+// Solo se puede rechazar lo que ya está fundido (en Terminación). Lo de Mecanizado se rechaza desde cada plan.
+function rzFundidoQty(r) { return window.pfFundidoPedido ? window.pfFundidoPedido(r) : null; }
+function rzEsFundido(r) {
+  const q = rzFundidoQty(r);
+  if (q != null) return q > 0.0001;
+  return r.estado_general === 'Fundido / En Terminación';
+}
 function rzMatch(fields, q) {
   const toks = q.split(/\s+/).filter(Boolean);
   if (!toks.length) return false;
@@ -3985,13 +3992,13 @@ function rzBuscar(q) {
   const box = document.getElementById('rz-results');
   if (!box) return;
   const t = q.trim().toLowerCase();
-  if (t.length < 2) { box.innerHTML = '<div class="text-dim" style="padding:6px 2px; font-size:0.75rem;">Escribí cliente, NV, código o descripción (mínimo 2 letras, se puede escribir más de una palabra suelta). Las piezas de kanban/stock se buscan por código, colada o descripción.</div>'; return; }
-  const res = BASE.filter(r => r.estado_general !== 'Cancelado' && rzMatch([r.cliente, r.comprobante, r.codigo, r.descripcion, r.oc], t)).slice(0, 20);
+  if (t.length < 2) { box.innerHTML = '<div class="text-dim" style="padding:6px 2px; font-size:0.75rem;">Escribí cliente, NV, código o descripción (mínimo 2 letras, se puede escribir más de una palabra suelta). Solo aparecen piezas ya fundidas (en Terminación). Un rechazo de Mecanizado se registra desde cada plan.</div>'; return; }
+  const res = BASE.filter(r => r.estado_general !== 'Cancelado' && rzEsFundido(r) && rzMatch([r.cliente, r.comprobante, r.codigo, r.descripcion, r.oc], t)).slice(0, 20);
   const resPf = rzKanbanLineas.filter(l => rzMatch([l.codigo, l.descripcion, l.cliente, l.oc, l.colada], t)).slice(0, 10);
   const resSuelto = rzKanbanSueltos.filter(x => rzMatch([x.codigo, x.descripcion, x.material], t)).slice(0, 10);
   const htmlBase = res.map(r => `
     <button type="button" onclick="rzElegir(${r.id})" style="display:block; width:100%; text-align:left; background:${rz.sel === r.id ? '#1e3a5f' : '#0f172a'}; border:1px solid var(--card-border); color:#e2e8f0; border-radius:8px; padding:7px 9px; margin-bottom:5px; font-size:0.78rem; cursor:pointer;">
-      <b>${escHtml(r.descripcion)}</b><br><span class="text-dim">${escHtml(r.cliente)} · NV ${escHtml(r.comprobante)} · Cód ${escHtml(r.codigo)} · pend. ${fmtN(r.pend)}</span>
+      <b>${escHtml(r.descripcion)}</b><br><span class="text-dim">${escHtml(r.cliente)} · NV ${escHtml(r.comprobante)} · Cód ${escHtml(r.codigo)} · pend. ${fmtN(r.pend)}${rzFundidoQty(r) != null ? ' · fundido en Terminación: ' + fmtN(rzFundidoQty(r)) : ''}</span>
     </button>`).join('');
   const htmlPf = resPf.map(l => `
     <button type="button" onclick="rzElegirPf(${l.id})" style="display:block; width:100%; text-align:left; background:${rz.selPf === l.id ? '#1e3a5f' : '#0f172a'}; border:1px solid #a855f7; color:#e2e8f0; border-radius:8px; padding:7px 9px; margin-bottom:5px; font-size:0.78rem; cursor:pointer;">
@@ -4092,6 +4099,7 @@ function openRechazoDialog() {
     : `<div class="stock-field"><label>Motivo</label><input type="text" placeholder="Ej.: porosidad, falta de llenado…" oninput="rz.otro = this.value; rz.motivo = '__otro__'"></div>`;
   showStockDialog(`
     <h3>❌ Registrar rechazo</h3>
+    <div class="text-dim" style="font-size:0.75rem; margin:-4px 0 10px; line-height:1.4;">Solo piezas ya fundidas (en Terminación). El rechazo en Mecanizado se registra desde cada plan.</div>
     <div class="stock-field"><label>Pieza</label><input type="text" id="rz-buscar" placeholder="Buscar por cliente, NV, código o descripción" oninput="rzBuscar(this.value)" autocomplete="off"></div>
     <div id="rz-results" style="max-height:26vh; overflow:auto; margin-bottom:8px;"></div>
     <div id="rz-sel" class="text-dim" style="margin-bottom:10px; font-size:0.8rem;">Todavía no elegiste ninguna pieza.</div>
@@ -4113,7 +4121,7 @@ function openRechazoDialog() {
       <button class="stock-btn-primary" id="rz-save-btn" onclick="saveRechazo()">Registrar rechazo</button>
     </div>`);
   rzBuscar('');
-  rzCargarKanban().then(() => rzBuscar(rz.q || ''));
+  Promise.all([rzCargarKanban(), window.pfFundidoCargar ? window.pfFundidoCargar() : null]).then(() => rzBuscar(rz.q || ''));
   setTimeout(() => { const i = document.getElementById('rz-buscar'); if (i) i.focus(); }, 50);
 }
 async function saveRechazo() {
@@ -4123,6 +4131,8 @@ async function saveRechazo() {
   if (!b) { alert('Elegí la pieza rechazada.'); return; }
   const cant = Number(rz.cant);
   if (!(cant > 0)) { alert('Poné la cantidad rechazada.'); return; }
+  const fq = rzFundidoQty(b);
+  if (fq != null && cant > fq + 0.0001) { alert('Solo se puede rechazar lo fundido que está en Terminación: ' + fmtN(fq) + ' u. (lo de Mecanizado se rechaza desde el plan).'); return; }
   const motivo = (rz.motivo === '__otro__' || (!rz.motivo && rz.otro)) ? (rz.otro || '').trim() : (rz.motivo || '').trim();
   if (!motivo) { alert('Elegí o escribí el motivo del rechazo.'); return; }
   if (!rz.traza) { alert('Indicá si la pieza lleva trazabilidad (Sí o No lleva).'); return; }
@@ -10278,6 +10288,13 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     for (const l of ls) { if (q <= 0) break; const n = Math.min(q, term(l)); await rpc('pf_rechazar_pedido', { p_linea: l.id, p_cant: n }); q -= n; }
     if (ls.length) await recargar();
   };
+  // Rechazos: cuánto de este pedido está realmente fundido y en Terminación según el parte (null = el parte no tiene líneas de este pedido)
+  window.pfFundidoPedido = row => {
+    if (!P.loaded || P.error || !P.idx) return null;
+    const ls = vincRaw(row); if (!ls.length) return null;
+    return ls.reduce((a, l) => a + Math.max(0, term(l)), 0);
+  };
+  window.pfFundidoCargar = async () => { try { await load(false); } catch (e) { /* sigue con lo que hay */ } };
   window.pfQuitar = async id => { if (!confirm('¿Sacar esta línea del seguimiento? También se resta de lo moldeado.')) return;
     try { await rpc('pf_quitar', { p_linea: Number(id) }); dlgClose(); toast('Línea sacada'); await recargar(); } catch (e) { alert(errTxt(e)); } };
   window.pfRegla = async (cod, campo, val) => { const l = P.L.find(x => x.codigo === cod); if (!l) return;
