@@ -4243,6 +4243,31 @@ async function saveReplan(id) {
 // borrarlos sin dejar rastro (y perder esos Kg del indicador de Despachado),
 // el pipeline los manda a items_desaparecidos para que un admin elija qué
 // pasó con cada uno — ver SQL 028. ----
+function desapYaRem(d) {
+  const t0 = d.desaparecio_dia ? new Date(d.desaparecio_dia + 'T00:00:00').getTime() : null;
+  if (t0 == null) return [];
+  return (despachosLog || []).filter(x => x.remito_ref && x.codigo === d.codigo && x.dia && Math.abs(new Date(x.dia + 'T00:00:00').getTime() - t0) <= 20 * 864e5);
+}
+function desapYaRemHtml(d) {
+  const L = desapYaRem(d); if (!L.length) return '';
+  return `<div style="margin-top:8px; background:#451a03; border:1px solid #b45309; border-radius:8px; padding:8px 10px; font-size:0.78rem; color:#fde68a;">⚠ Este código ya figura en Despachado desde un remito (${L.map(x => escHtml(String(x.comprobante || '').replace(/^REM /, '')) + ' · ' + fmtN(x.cantidad) + ' u. · ' + fmtDiaIso(x.dia)).join('; ')}). Si es la misma salida, no la marques como despachada otra vez (se contaría dos veces): tocá "Ya está registrado".<div style="margin-top:6px;"><button class="view-toggle-btn" onclick="cerrarDesapYaRegistrado(${d.id})">🔗 Ya está registrado por remito</button></div></div>`;
+}
+async function cerrarDesapYaRegistrado(id) {
+  const d = itemsDesaparecidosList.find(x => String(x.id) === String(id)); if (!d) return;
+  const ref = desapYaRem(d).map(x => String(x.comprobante || '').replace(/^REM /, '')).join(', ');
+  if (!confirm('Se cierra este caso sin sumar nada a Despachado, porque ya figura desde el remito ' + ref + '. ¿Confirmás?')) return;
+  const nota = 'Ya registrado como despachado desde el remito ' + ref;
+  try {
+    const { error } = await supabaseClient.rpc('items_desaparecidos_resolver', { p_id: id, p_como: 'descartado', p_nota: nota });
+    if (error) throw error;
+    d.resuelto = true; d.resuelto_como = 'descartado'; d.resuelto_nota = nota;
+    actualizarBadgeDesap(); applyFilters();
+    showToast('Cerrado: ya estaba registrado por remito', 'success');
+  } catch (e) {
+    console.error('No se pudo cerrar el desaparecido:', e);
+    alert(e && e.code === '42501' ? 'Tu usuario no tiene permiso para resolver esto (hace falta ser Administrador).' : 'No se pudo guardar.' + (e && e.message ? ' ' + e.message : ''));
+  }
+}
 function desapCardHtml(d) {
   const kgPend = Math.round((Number(d.pend) || 0) * (Number(d.kxu) || 0) * 10) / 10;
   const diaTxt = d.desaparecio_dia ? new Date(d.desaparecio_dia + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
@@ -4252,7 +4277,7 @@ function desapCardHtml(d) {
         : `<div style="margin-top:6px;"><span class="pill pill-warning">❌ No fue despacho</span>${d.resuelto_nota ? ` <span class="text-dim">— ${escHtml(d.resuelto_nota)}</span>` : ''}</div>`)
     : '';
   const acciones = (!d.resuelto && CURRENT_PROFILE && CURRENT_PROFILE.es_admin)
-    ? `<div class="row-actions" style="margin-top:8px;"><button class="view-toggle-btn" onclick="openDesapDespacharDialog(${d.id})">✅ Fue despachado</button><button class="view-toggle-btn" onclick="openDesapDescartarDialog(${d.id})">❌ No fue despacho</button></div>`
+    ? desapYaRemHtml(d) + `<div class="row-actions" style="margin-top:8px;"><button class="view-toggle-btn" onclick="openDesapDespacharDialog(${d.id})">✅ Fue despachado</button><button class="view-toggle-btn" onclick="openDesapDescartarDialog(${d.id})">❌ No fue despacho</button></div>`
     : '';
   return `<div class="card" style="margin-bottom:10px;">
     <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
