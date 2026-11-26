@@ -3072,6 +3072,7 @@ async function initDb() {
       actualizarBadgeDesap();
       if (currentFilter === 'sgadesap') applyFilters();
     }, err => console.warn('items_bajas onSnapshot:', err && err.code, err && err.message));
+    cargarInformeAj();
     db.collection('rechazo_motivos').onSnapshot(qs => {
       motivosList = qs.docs.filter(d => d.exists).map(d => d.data()).sort((a, b) => (a.orden - b.orden) || String(a.nombre).localeCompare(String(b.nombre), 'es'));
     }, err => console.warn('rechazo_motivos onSnapshot:', err && err.code, err && err.message));
@@ -3413,6 +3414,7 @@ async function splitQuitarDivision() {
 let rechazosList = [], motivosList = [], eventosProd = [], eventosProdRaw = [];
 let itemsDesaparecidosList = [];
 let itemsBajasList = [];
+let informeAjList = [];
 let desapVerResueltos = false;
 window.pfReaplicarEventos = function () { if (typeof window.pfEventos === 'function') { eventosProd = window.pfEventos(eventosProdRaw); } if (typeof currentFilter !== 'undefined' && currentFilter === 'indicadores') applyFilters(); };
 let rechazoVerReplan = false;
@@ -3427,7 +3429,7 @@ function actualizarBadgeReplan() {
 function actualizarBadgeDesap() {
   const el = document.getElementById('desap-badge');
   if (!el) return;
-  const n = itemsDesaparecidosList.filter(d => !d.resuelto).length + itemsBajasList.filter(d => !d.resuelto).length;
+  const n = itemsDesaparecidosList.filter(d => !d.resuelto).length + itemsBajasList.filter(d => !d.resuelto).length + informeAjList.filter(r => informeAjPend(r).pend > 0).length;
   el.textContent = n > 0 ? ' (' + n + ')' : '';
 }
 function mesRango(offset) {
@@ -4268,7 +4270,7 @@ function renderSgaDesapPanel() {
     .sort((a, b) => (!!a.resuelto === !!b.resuelto) ? String(b.desaparecio_dia || '').localeCompare(String(a.desaparecio_dia || '')) : (a.resuelto ? 1 : -1));
   const bajas = itemsBajasList.filter(d => desapVerResueltos || !d.resuelto)
     .sort((a, b) => (!!a.resuelto === !!b.resuelto) ? String(b.dia || '').localeCompare(String(a.dia || '')) : (a.resuelto ? 1 : -1));
-  let html = '';
+  let html = informeAjHtml();
   if (bajas.length) {
     const pend = bajas.filter(b => !b.resuelto);
     const esAdmin = CURRENT_PROFILE && CURRENT_PROFILE.es_admin;
@@ -4278,7 +4280,7 @@ function renderSgaDesapPanel() {
     </div>` + bajas.map(bajaCardHtml).join('');
   }
   if (lista.length) {
-    if (bajas.length) html += '<div style="font-weight:700; color:#fff; margin:16px 0 8px;">⚠️ Desaparecieron del Excel de SGA</div>';
+    if (html) html += '<div style="font-weight:700; color:#fff; margin:16px 0 8px;">⚠️ Desaparecieron del Excel de SGA</div>';
     html += lista.map(desapCardHtml).join('');
   }
   if (!html) html = '<div class="text-dim" style="padding: 20px 4px;">No hay ítems de SGA pendientes de revisar. 🎉</div>';
@@ -4392,6 +4394,156 @@ async function saveBajasResolver(ids, como) {
   } catch (e) {
     console.error('No se pudo resolver la baja de pendiente de SGA:', e);
     alert(bajasErrorMsg(e));
+    if (btn) { btn.disabled = false; btn.textContent = como === 'despachado' ? '✅ Confirmar' : 'Confirmar'; }
+  }
+}
+// ---- Salidas SIN remito según el Informe Diario de Pedidos de SGA (SQL 050) ----
+async function cargarInformeAj() {
+  try {
+    const { data, error } = await supabaseClient.from('informe_ajustes').select('*').order('id');
+    if (error) { informeAjList = []; return; }
+    informeAjList = data || [];
+    actualizarBadgeDesap();
+    if (currentFilter === 'sgadesap') applyFilters();
+  } catch (e) { informeAjList = []; }
+}
+function informeAjPend(r) {
+  const reg = (despachosLog || []).filter(d => d.comprobante === r.comprobante && d.codigo === r.codigo).reduce((a, d) => a + (Number(d.cantidad) || 0), 0);
+  return { reg, pend: Math.max(0, Math.round(((Number(r.ajuste) || 0) - reg - (Number(r.descartado) || 0)) * 1000) / 1000) };
+}
+const fmtDiaIso = s => s ? new Date(s + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
+function informeAjCardHtml(x) {
+  const r = x.r, kg = Math.round(x.pend * (Number(r.kxu) || 0) * 10) / 10;
+  const esAdmin = CURRENT_PROFILE && CURRENT_PROFILE.es_admin;
+  const hecho = x.pend <= 0;
+  const estado = hecho ? `<div style="margin-top:6px;">${x.reg > 0 ? `<span class="pill pill-despachado">✅ Registrado en Despachado: ${fmtN(x.reg)} u.</span> ` : ''}${Number(r.descartado) > 0 ? `<span class="pill pill-warning">❌ No fue despacho: ${fmtN(r.descartado)} u.</span>` : ''}</div>` : '';
+  const acciones = (!hecho && esAdmin) ? `<div class="row-actions" style="margin-top:8px;"><button class="view-toggle-btn" onclick="openInformeDespachadoDialog(${r.id})">✅ Fue despachado</button><button class="view-toggle-btn" onclick="openInformeDescartarDialog(${r.id})">❌ No fue despacho</button></div>` : '';
+  return `<div class="card" style="margin-bottom:10px;">
+    <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+      <div><b style="color:#fff;">${escHtml(r.descripcion || r.codigo)}</b><br><span class="text-dim">${escHtml(r.cliente)} · NV ${escHtml(r.comprobante)} · Cód ${escHtml(r.codigo)}</span></div>
+      <div class="text-dim" style="font-size:0.75rem; text-align:right;">Pedido del ${fmtDiaIso(r.fecha_pedido)}</div>
+    </div>
+    <div style="margin-top:6px;">Informe: pedido <b>${fmtN(r.pedida)}</b> · con remito <b>${fmtN(r.enviada)}</b> · <b>sin remito (ajuste) ${fmtN(r.ajuste)}</b> · saldo ${fmtN(r.saldo)}</div>
+    ${hecho ? '' : `<div style="margin-top:4px;">Falta revisar: <b>${fmtN(x.pend)} u.</b>${kg ? ' · ' + fmtN(kg, 1) + ' Kg' : ''}${x.reg > 0 || Number(r.descartado) > 0 ? ` <span class="text-dim">(ya registrado ${fmtN(x.reg)} · descartado ${fmtN(r.descartado || 0)})</span>` : ''}</div>`}
+    ${estado}${acciones}
+  </div>`;
+}
+function informeAjHtml() {
+  const esAdmin = CURRENT_PROFILE && CURRENT_PROFILE.es_admin;
+  const filas = informeAjList.map(r => Object.assign({ r }, informeAjPend(r)));
+  const porFecha = (a, b) => String(a.r.fecha_pedido || '').localeCompare(String(b.r.fecha_pedido || '')) || String(a.r.comprobante).localeCompare(String(b.r.comprobante));
+  const pend = filas.filter(x => x.pend > 0).sort(porFecha);
+  const hechas = desapVerResueltos ? filas.filter(x => x.pend <= 0).sort((a, b) => porFecha(b, a)) : [];
+  if (!esAdmin && !pend.length && !hechas.length) return '';
+  const ult = informeAjList.reduce((m, r) => String(r.actualizado || '') > m ? String(r.actualizado) : m, '');
+  const ultTxt = ult ? new Date(ult).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : null;
+  return `<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin:4px 0 8px;">
+      <div><div style="font-weight:700; color:#fff;">📋 Salió sin remito (según el Informe de pedidos)</div><div class="text-dim" style="font-size:0.78rem; margin-top:2px;">Cantidades que en SGA se ajustaron porque la mercadería salió sin remito y el tablero no las tiene como despachadas. ${ultTxt ? 'Último Informe cargado: ' + ultTxt + '.' : 'Todavía no se cargó ningún Informe.'} Si después sale otra parte, cargá el Informe de nuevo y aparece solo la diferencia.</div></div>
+      ${esAdmin ? '<button class="view-toggle-btn" onclick="informeAjElegirArchivo()">📥 Cargar Informe diario de pedidos (.xlsx)</button>' : ''}
+    </div>` + (pend.length ? pend.map(informeAjCardHtml).join('') : '<div class="text-dim" style="padding:6px 4px 12px;">Nada pendiente de revisar del Informe. ✅</div>') + hechas.map(informeAjCardHtml).join('') + '<div style="height:8px;"></div>';
+}
+function informeAjElegirArchivo() {
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.xlsx,.xls';
+  inp.onchange = () => { const f = inp.files && inp.files[0]; if (f) informeAjCargar(f); };
+  inp.click();
+}
+function informeAjXlsx() { return new Promise((ok, no) => { if (window.XLSX) return ok(); const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; s.onload = ok; s.onerror = () => no(new Error('No se pudo cargar el lector de Excel (¿hay internet?)')); document.head.appendChild(s); }); }
+function informeAjParse(aoa) {
+  const porClave = {}; let cur = null, nPed = 0;
+  const num = v => { const n = Number(v); return isNaN(n) ? 0 : n; };
+  aoa.forEach(r => {
+    if (typeof r[0] === 'number' && Number(r[4]) > 0 && typeof r[5] === 'string') {
+      const fecha = new Date(Math.round((r[0] - 25569) * 86400000)).toISOString().slice(0, 10);
+      cur = { comprobante: 'NP 0001-' + String(Math.round(Number(r[4]))).padStart(8, '0'), cliente: String(r[5]).trim(), fecha }; nPed++;
+    } else if (cur && r[3] && String(r[3]).trim() !== 'Código' && (r[0] === '' || r[0] == null)) {
+      const codigo = String(r[3]).trim(), k = cur.comprobante + '|' + codigo;
+      const o = porClave[k] || (porClave[k] = { comprobante: cur.comprobante, codigo, cliente: cur.cliente, fecha: cur.fecha, descripcion: String(r[5] || '').trim(), pedida: 0, enviada: 0, ajuste: 0, saldo: 0 });
+      o.pedida += num(r[7]); o.enviada += num(r[9]); o.ajuste += num(r[10]); o.saldo += num(r[11]);
+    }
+  });
+  return { filas: Object.values(porClave), pedidos: nPed };
+}
+async function informeAjCargar(file) {
+  try {
+    showToast('Leyendo el Informe…', 'info');
+    await informeAjXlsx();
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
+    const { filas, pedidos } = informeAjParse(aoa);
+    if (!pedidos || !filas.length) { alert('No reconozco este archivo. Tiene que ser el "Informe Diario de Pedidos" de SGA (con Cant. Pedida, Cant. Enviada, Cant. Ajuste y Saldo).'); return; }
+    const { data, error } = await supabaseClient.rpc('informe_ajustes_cargar', { p_filas: filas });
+    if (error) throw error;
+    await cargarInformeAj();
+    const pend = informeAjList.filter(r => informeAjPend(r).pend > 0).length;
+    showToast(`Informe cargado: ${pedidos} pedidos · ${data.nuevas} líneas nuevas con ajuste · ${data.cambiaron} con cantidad cambiada · ${pend} por revisar`, 'success');
+  } catch (e) {
+    console.error('No se pudo cargar el Informe:', e);
+    alert(e && (e.code === '42883' || e.code === 'PGRST202' || /informe_ajustes_cargar/i.test(e.message || '')) ? 'La base todavía no tiene esta función. Falta correr el SQL 050 en Supabase.' : e && e.code === '42501' ? 'Hace falta ser Administrador.' : 'No se pudo cargar el Informe.' + (e && e.message ? ' ' + e.message : ''));
+  }
+}
+function openInformeDespachadoDialog(id) {
+  const r = informeAjList.find(x => String(x.id) === String(id)); if (!r) return;
+  const p = informeAjPend(r);
+  const abrir = () => {
+    const kan = window.cirKanbanInfo ? window.cirKanbanInfo(r.codigo) : null;
+    const hoyIso = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+    const kxu = Number(r.kxu) || 0;
+    showStockDialog(`
+      <h3>✅ Salió sin remito: marcar como despachado</h3>
+      <div class="text-dim" style="margin-bottom:12px; line-height:1.5;"><span style="color:#fff;">${escHtml(r.descripcion || r.codigo)}</span><br>${escHtml(r.cliente)} · NV ${escHtml(r.comprobante)} · Cód ${escHtml(r.codigo)}<br>El Informe de SGA muestra ${fmtN(r.ajuste)} u. ajustadas (sin remito). Falta revisar ${fmtN(p.pend)} u.</div>
+      <div class="stock-field"><label>Cantidad a sumar a Despachado</label><input type="number" id="inf-cant" value="${p.pend}" min="0" max="${p.pend}" step="any" oninput="(function(){const k=${kxu};const c=Number(document.getElementById('inf-cant').value)||0;if(k)document.getElementById('inf-kg').value=Math.round(c*k*10)/10;})()"></div>
+      <div class="stock-field"><label>Kg${kxu ? '' : ' (no tengo el peso unitario de esta pieza: cargalo si lo sabés)'}</label><input type="number" id="inf-kg" value="${Math.round(p.pend * kxu * 10) / 10}" min="0" step="any"></div>
+      <div class="stock-field"><label>Fecha en que salió (el Informe solo trae la fecha del pedido)</label><input type="date" id="inf-dia" value="${escHtml(r.fecha_pedido || hoyIso)}" max="${hoyIso}"></div>
+      ${kan ? `<div class="stock-field"><label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer;"><input type="checkbox" id="inf-kan" style="margin-top:3px;"> <span>📦 Descontar de la ${escHtml(kan.nom)} (hay ${kan.hay} · k ${kan.k})<br><span class="text-dim" style="font-size:0.72rem;">Destildado por defecto: si el conteo físico es posterior a la salida, ya la refleja y se descontaría dos veces.</span></span></label></div>` : ''}
+      <div class="stock-field"><label>Nota (opcional)</label><input type="text" id="inf-nota" autocomplete="off" placeholder="ej. salió sin remito"></div>
+      <div class="stock-actions">
+        <button class="stock-btn-cancel" onclick="closeStockDialog()">Cancelar</button>
+        <button class="stock-btn-primary" id="inf-save-btn" onclick="saveInformeResolver(${r.id}, 'despachado')">✅ Confirmar</button>
+      </div>`);
+  };
+  if (window.cirEstimadoEnsure) window.cirEstimadoEnsure().then(abrir, abrir); else abrir();
+}
+function openInformeDescartarDialog(id) {
+  const r = informeAjList.find(x => String(x.id) === String(id)); if (!r) return;
+  const p = informeAjPend(r);
+  showStockDialog(`
+    <h3>❌ No fue un despacho</h3>
+    <div class="text-dim" style="margin-bottom:12px; line-height:1.5;"><span style="color:#fff;">${escHtml(r.descripcion || r.codigo)}</span><br>${escHtml(r.cliente)} · NV ${escHtml(r.comprobante)} · Cód ${escHtml(r.codigo)}<br>Falta revisar ${fmtN(p.pend)} u. de lo ajustado en SGA.</div>
+    <div class="stock-field"><label>Cantidad que NO fue despacho</label><input type="number" id="inf-cant" value="${p.pend}" min="0" max="${p.pend}" step="any"></div>
+    <div class="stock-field"><label>Motivo (ej. se corrigió el pedido, cancelado)</label><input type="text" id="inf-nota" autocomplete="off"></div>
+    <div class="text-dim" style="font-size:0.75rem; margin-bottom:10px;">No suma nada a Despachado ni toca la estantería. Esa cantidad no vuelve a aparecer (solo si el ajuste del Informe sigue subiendo).</div>
+    <div class="stock-actions">
+      <button class="stock-btn-cancel" onclick="closeStockDialog()">Cancelar</button>
+      <button class="stock-btn-primary" id="inf-save-btn" onclick="saveInformeResolver(${r.id}, 'descartado')">Confirmar</button>
+    </div>`);
+}
+async function saveInformeResolver(id, como) {
+  const r = informeAjList.find(x => String(x.id) === String(id)); if (!r) return;
+  const v = k => { const e = document.getElementById(k); return e ? e.value : null; };
+  const cant = Number(v('inf-cant'));
+  if (isNaN(cant) || cant <= 0) { alert('Poné una cantidad válida.'); return; }
+  const nota = (v('inf-nota') || '').trim() || null;
+  const args = { p_id: id, p_como: como, p_cant: cant, p_nota: nota };
+  if (como === 'despachado') {
+    if (v('inf-dia')) args.p_dia = v('inf-dia');
+    const kg = v('inf-kg'); if (kg !== null && kg !== '' && !isNaN(Number(kg))) args.p_kg = Number(kg);
+    const kanEl = document.getElementById('inf-kan'); args.p_descontar = !!(kanEl && kanEl.checked);
+  }
+  const btn = document.getElementById('inf-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+  try {
+    const { data: resu, error } = await supabaseClient.rpc('informe_ajustes_resolver', args);
+    if (error) throw error;
+    if (como === 'despachado' && typeof despachosLog !== 'undefined') despachosLog.push({ id: 'inf-' + id + '-' + Date.now(), itemId: 0, cliente: r.cliente, comprobante: r.comprobante, codigo: r.codigo, descripcion: r.descripcion, cantidad: cant, kg: args.p_kg != null ? args.p_kg : Math.round(cant * (Number(r.kxu) || 0) * 10) / 10, dia: args.p_dia || r.fecha_pedido });
+    await cargarInformeAj();
+    closeStockDialog();
+    applyFilters();
+    const descK = resu && Number(resu.descontado) > 0 ? Number(resu.descontado) : 0;
+    showToast(como === 'despachado' ? 'Marcado como despachado' + (descK ? ' · se descontaron ' + fmtN(descK) + ' de la estantería' : '') : 'Descartado', 'success');
+    if (descK && window.cirRefreshStock) window.cirRefreshStock();
+  } catch (e) {
+    console.error('No se pudo resolver el ajuste del Informe:', e);
+    alert(e && (e.code === '42883' || e.code === 'PGRST202' || /informe_ajustes_resolver/i.test(e.message || '')) ? 'La base todavía no tiene esta función. Falta correr el SQL 050 en Supabase.' : e && e.code === '42501' ? 'Tu usuario no tiene permiso para resolver esto (hace falta ser Administrador).' : 'No se pudo guardar.' + (e && e.message ? ' ' + e.message : ''));
     if (btn) { btn.disabled = false; btn.textContent = como === 'despachado' ? '✅ Confirmar' : 'Confirmar'; }
   }
 }
@@ -5032,7 +5184,7 @@ function applyFilters() {
     if (currentFilter === 'indicadores') renderIndicadoresPanel();
     else if (currentFilter === 'rechazo') { renderRechazoPanel(); n = rechazosList.length; }
     else if (currentFilter === 'replanificar') { renderReplanificarPanel(); n = rechazosList.filter(r => r.estado === 'pendiente').length; }
-    else { renderSgaDesapPanel(); n = itemsDesaparecidosList.filter(d => !d.resuelto).length + itemsBajasList.filter(d => !d.resuelto).length; }
+    else { renderSgaDesapPanel(); n = itemsDesaparecidosList.filter(d => !d.resuelto).length + itemsBajasList.filter(d => !d.resuelto).length + informeAjList.filter(r => informeAjPend(r).pend > 0).length; }
     document.getElementById('count-filtered').textContent = n;
     document.getElementById('count-total').textContent = DATA.length;
     document.getElementById('kg-filtered').textContent = '—';
