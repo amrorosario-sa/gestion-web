@@ -3458,9 +3458,37 @@ function indRangos() {
   if (p === 'semana_ant') return { cur: semanaRango(-1), prev: semanaRango(-2) };
   if (p === 'mes') return { cur: mesRango(0), prev: mesRango(-1) };
   if (p === 'mes_ant') return { cur: mesRango(-1), prev: mesRango(-2) };
-  const ini = indState.desde || TODAY_ISO, fin = indState.hasta || indState.desde || TODAY_ISO;
+  let ini = indState.desde || indState.hasta || TODAY_ISO, fin = indState.hasta || indState.desde || TODAY_ISO;
+  if (fin < ini) { const tmp = ini; ini = fin; fin = tmp; }
   const dias = Math.max(1, Math.round((new Date(fin) - new Date(ini)) / 86400000) + 1);
   return { cur: { ini, fin }, prev: { ini: addDaysIso(ini, -dias), fin: addDaysIso(ini, -1) } };
+}
+// Para un rango propio: los gráficos se arman con el rango elegido (por día hasta 31 días, por semana hasta ~200 días, por mes más allá)
+function indBuckets(cur) {
+  const ini = cur.ini, fin = cur.fin, list = [];
+  const dias = Math.round((new Date(fin + 'T00:00:00Z') - new Date(ini + 'T00:00:00Z')) / 86400000) + 1;
+  if (dias <= 31) {
+    for (let d = ini; d <= fin; d = addDaysIso(d, 1)) list.push({ r: { ini: d, fin: d }, label: cortoIso(d), t: 'Día ' + cortoIso(d) });
+    return { unidad: 'día', list };
+  }
+  if (dias <= 200) {
+    const dow = (new Date(ini + 'T00:00:00Z').getUTCDay() + 6) % 7;
+    for (let s = addDaysIso(ini, -dow); s <= fin; s = addDaysIso(s, 7)) {
+      const e = addDaysIso(s, 6), r = { ini: s < ini ? ini : s, fin: e > fin ? fin : e };
+      list.push({ r, label: cortoIso(r.ini), t: 'Semana del ' + cortoIso(r.ini) + ' al ' + cortoIso(r.fin) });
+    }
+    return { unidad: 'semana', list };
+  }
+  let y = Number(ini.slice(0, 4)), m = Number(ini.slice(5, 7));
+  for (;;) {
+    const mi = new Date(Date.UTC(y, m - 1, 1)).toISOString().slice(0, 10);
+    if (mi > fin) break;
+    const mf = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+    const r = { ini: mi < ini ? ini : mi, fin: mf > fin ? fin : mf };
+    list.push({ r, label: MESES_CORTO[m - 1] + (m === 1 ? ' ' + String(y).slice(2) : ''), t: 'Mes ' + MESES_CORTO[m - 1] + ' ' + y });
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return { unidad: 'mes', list: list.slice(-60) };
 }
 function enRango(dia, r) { return !!dia && dia >= r.ini && dia <= r.fin; }
 function sumPeriodo(r) {
@@ -3535,9 +3563,9 @@ function barChartSvg(o) {
       g += `<rect x="${x.toFixed(1)}" y="${(padT + innerH - bh).toFixed(1)}" width="${(barW - 1).toFixed(1)}" height="${Math.max(bh, v > 0 ? 1 : 0).toFixed(1)}" fill="${color}" opacity="${op}" rx="2"${clk}><title>${escHtml(lab)} — ${escHtml(sr.name)}: ${fmtN(v, 1)}</title></rect>`;
       const ev = jx === 0 ? estV(i) : 0, eh = innerH * ev / maxV;
       if (ev > 0) g += `<rect x="${x.toFixed(1)}" y="${(padT + innerH - bh - eh).toFixed(1)}" width="${(barW - 1).toFixed(1)}" height="${Math.max(eh, 1).toFixed(1)}" fill="url(#estHatch)" stroke="#7dd3fc" stroke-width=".8" stroke-dasharray="2 2" rx="2"${clk}><title>${escHtml(lab)} — estimado (no son pedidos): ${fmtN(ev, 1)}</title></rect>`;
-      if ((v + ev) > 0 && (ns === 1 || n <= 7)) g += `<text x="${(x + (barW - 1) / 2).toFixed(1)}" y="${(padT + innerH - bh - eh - 3).toFixed(1)}" text-anchor="middle" font-size="8" fill="#e2e8f0">${fmtK(v + ev)}</text>`;
+      if ((v + ev) > 0 && (ns === 1 || n <= 7) && groupW >= 14) g += `<text x="${(x + (barW - 1) / 2).toFixed(1)}" y="${(padT + innerH - bh - eh - 3).toFixed(1)}" text-anchor="middle" font-size="8" fill="#e2e8f0">${fmtK(v + ev)}</text>`;
     });
-    const txt = escHtml(String(lab).length > 13 ? String(lab).slice(0, 12) + '…' : lab);
+    const txt = (o.labelEvery > 1 && i % o.labelEvery !== 0) ? '' : escHtml(String(lab).length > 13 ? String(lab).slice(0, 12) + '…' : lab);
     const ly = padT + innerH + 12;
     g += o.rotate
       ? `<text x="${cx.toFixed(1)}" y="${ly}" text-anchor="end" transform="rotate(-38 ${cx.toFixed(1)} ${ly})" font-size="8" fill="#cbd5e1"><title>${escHtml(lab)}</title>${txt}</text>`
@@ -3633,25 +3661,34 @@ function renderIndicadoresPanel() {
   const pctRecPrev = B.funKgN > 0 ? (B.recKg / B.funKgN * 100) : null;
 
   // 1-3) Semanales: despachado, fundido, rechazo (últimas 8 semanas)
+  // Con "rango" propio los gráficos de arriba siguen ese rango; con los períodos fijos muestran la tendencia (8 semanas / 6 meses)
+  const bk = indState.periodo === 'rango' ? indBuckets(cur) : null;
+  const uni = bk ? bk.unidad : 'semana';
+  const subPer = bk ? cortoIso(cur.ini) + ' al ' + cortoIso(cur.fin) : 'últimas 8 semanas';
   const sem = [];
-  for (let o = -7; o <= 0; o++) { const r = semanaRango(o); sem.push({ r, v: sumPeriodo(r) }); }
-  const semLabels = sem.map(w => cortoIso(w.r.ini));
-  const semChart = (clave, nombre, color) => barChartSvg({ labels: semLabels, series: [{ name: nombre, color, values: sem.map(w => w.v[clave]) }], fadeOld: true, marcarUltimo: true, det: clave });
+  if (bk) bk.list.forEach(b => sem.push({ r: b.r, v: sumPeriodo(b.r), label: b.label, t: b.t }));
+  else for (let o = -7; o <= 0; o++) { const r = semanaRango(o); sem.push({ r, v: sumPeriodo(r) }); }
+  const semLabels = sem.map(w => w.label || cortoIso(w.r.ini));
+  const bkEvery = bk && sem.length > 12 ? Math.ceil(sem.length / 10) : 1;
+  const bkRot = !!bk && sem.length > 6;
+  const semChart = (clave, nombre, color) => barChartSvg({ labels: semLabels, series: [{ name: nombre, color, values: sem.map(w => w.v[clave]) }], fadeOld: !bk, marcarUltimo: !bk, rotate: bkRot, labelEvery: bkEvery, h: bkRot ? 230 : undefined, det: clave });
   const tot8 = clave => fmtN(sem.reduce((a, w) => a + w.v[clave], 0));
 
   // 4) Mensual: ingresado vs despachado (últimos 6 meses)
-  const meses = [];
-  for (let o = -5; o <= 0; o++) {
+  const mesesR = [];
+  if (bk) sem.forEach(w => mesesR.push({ r: w.r, label: w.label }));
+  else for (let o = -5; o <= 0; o++) {
     const r = mesRango(o);
     const mm = Number(r.ini.slice(5, 7));
-    meses.push({
-      r, label: MESES_CORTO[mm - 1] + (mm === 1 ? ' ' + r.ini.slice(2, 4) : ''),
-      ing: eventosProd.filter(e => e.tipo === 'ingreso' && enRango(e.dia, r)).reduce((a, e) => a + (Number(e.kg) || 0), 0),
-      des: despachosLog.filter(d => enRango(d.dia, r)).reduce((a, d) => a + (Number(d.kg) || 0), 0),
-    });
+    mesesR.push({ r, label: MESES_CORTO[mm - 1] + (mm === 1 ? ' ' + r.ini.slice(2, 4) : '') });
   }
+  const meses = mesesR.map(({ r, label }) => ({
+    r, label,
+    ing: eventosProd.filter(e => e.tipo === 'ingreso' && enRango(e.dia, r)).reduce((a, e) => a + (Number(e.kg) || 0), 0),
+    des: despachosLog.filter(d => enRango(d.dia, r)).reduce((a, d) => a + (Number(d.kg) || 0), 0),
+  }));
   const hayIngresos = eventosProd.some(e => e.tipo === 'ingreso');
-  const ingDes = barChartSvg({ labels: meses.map(m => m.label), series: [{ name: 'Ingresado (pedidos nuevos)', color: '#38bdf8', values: meses.map(m => m.ing) }, { name: 'Despachado', color: '#c084fc', values: meses.map(m => m.des) }], marcarUltimo: true, det: 'ingdes' });
+  const ingDes = barChartSvg({ labels: meses.map(m => m.label), series: [{ name: 'Ingresado (pedidos nuevos)', color: '#38bdf8', values: meses.map(m => m.ing) }, { name: 'Despachado', color: '#c084fc', values: meses.map(m => m.des) }], marcarUltimo: !bk, rotate: bkRot, labelEvery: bkEvery, h: bkRot ? 230 : undefined, det: 'ingdes' });
 
   // 5) Pareto de rechazos del período seleccionado
   const med = indState.medida;
@@ -3753,7 +3790,7 @@ function renderIndicadoresPanel() {
         rows: s.map(x => [E(x.dia ? formatDate(x.dia) : '—'), E(x.cliente || ''), E(x.comprobante || ''), E(x.codigo || ''), E(x.descripcion || ''), fmtN(x.cantidad), fmtN(x.kg, 1), E(x.motivo || '')]) };
     };
     const kgNum = x => Number(x.kg) || 0;
-    const tSem = w => `Semana del ${cortoIso(w.r.ini)} al ${cortoIso(w.r.fin)}`;
+    const tSem = w => w.t || `Semana del ${cortoIso(w.r.ini)} al ${cortoIso(w.r.fin)}`;
     IND_DET.desKg = sem.map(w => ({ titulo: '🚚 Despachado · ' + tSem(w), secs: [secMov('', despachosLog.filter(d => enRango(d.dia, w.r)), kgNum, true)] }));
     IND_DET.funKg = sem.map(w => ({ titulo: '🔥 Fundido · ' + tSem(w), secs: [secMov('', eventosProd.filter(e => e.tipo === 'fundido' && enRango(e.dia, w.r)), kgvE)] }));
     IND_DET.molKg = sem.map(w => ({ titulo: '🧱 Moldeado · ' + tSem(w), secs: [secMov('', eventosProd.filter(e => e.tipo === 'moldeado' && enRango(e.dia, w.r)), kgvE)] }));
@@ -3812,7 +3849,7 @@ function renderIndicadoresPanel() {
       <input type="date" id="ind-desde" value="${escHtml(indState.desde)}" onchange="setIndRango()" style="background:#0f172a; border:1px solid var(--card-border); color:#fff; border-radius:8px; padding:5px 8px; font-size:0.78rem;">
       <input type="date" id="ind-hasta" value="${escHtml(indState.hasta)}" onchange="setIndRango()" style="background:#0f172a; border:1px solid var(--card-border); color:#fff; border-radius:8px; padding:5px 8px; font-size:0.78rem;">
     </div>
-    <div class="text-dim" style="font-size:0.78rem; margin-bottom:10px;">Período: <b style="color:#fff;">${cortoIso(cur.ini)} al ${cortoIso(cur.fin)}</b> · comparado con ${cortoIso(prev.ini)} al ${cortoIso(prev.fin)} · <span style="color:#38bdf8;">👆 tocá una barra de cualquier gráfico para ver el detalle</span></div>
+    <div class="text-dim" style="font-size:0.78rem; margin-bottom:10px;">Período: <b style="color:#fff;">${cortoIso(cur.ini)} al ${cortoIso(cur.fin)}</b> · comparado con ${cortoIso(prev.ini)} al ${cortoIso(prev.fin)} · <span style="color:#38bdf8;">👆 tocá una barra de cualquier gráfico para ver el detalle</span>${bk ? '<br><span class="text-dim">Con rango propio, los gráficos de despachado, fundido, moldeado, rechazo e ingresado siguen ese rango. "A despachar por mes" y "Kg en cada etapa" muestran la situación de hoy.</span>' : ''}</div>
 
     <div class="ind-tiles">
       ${tile('Despachado', fmtN(A.desKg) + ' Kg', `${fmtN(A.desU)} u. · ${A.desN} despacho${A.desN === 1 ? '' : 's'}<br>${deltaHtml(A.desKg, B.desKg)}`, '#c084fc')}
@@ -3824,11 +3861,11 @@ function renderIndicadoresPanel() {
     </div>
 
     <div class="ind-grid">
-      ${card('🚚 Despachado por semana', `Kg · últimas 8 semanas · total ${tot8('desKg')} Kg`, semChart('desKg', 'Despachado', '#c084fc'))}
-      ${card('🔥 Fundido por semana', `Kg que pasaron a Terminación (más lo moldeado para kanban) · total ${tot8('funKg')} Kg`, hayFundidos ? semChart('funKg', 'Fundido', '#34d399') : '<div class="text-dim" style="padding:30px 8px; text-align:center; font-size:0.8rem;">Se empieza a registrar con la próxima actualización diaria de SGA.</div>')}
-      ${hayMoldeado ? card('🧱 Moldeado por semana', `Kg ${indState.kgTipo === 'bruto' ? 'brutos' : 'netos'} moldeados (moldeo diario) · total ${tot8('molKg')} Kg`, semChart('molKg', 'Moldeado', '#38bdf8')) : ''}
-      ${card('❌ Rechazo por semana', `Kg · total ${tot8('recKg')} Kg`, semChart('recKg', 'Rechazo', '#ef4444'))}
-      ${card('📥 Ingresado vs despachado por mes', 'Kg · últimos 6 meses · <span style="color:#38bdf8;">■</span> ingresado <span style="color:#c084fc;">■</span> despachado', ingDes + (hayIngresos ? '<div class="text-dim" style="font-size:0.66rem; padding:2px 2px 6px;">Los meses anteriores a la activación solo incluyen lo que sigue pendiente en SGA, así que quedan incompletos.</div>' : '<div class="text-dim" style="font-size:0.66rem; padding:2px 2px 6px;">Falta correr el SQL 007 para cargar los ingresos.</div>'))}
+      ${card(`🚚 Despachado por ${uni}`, `Kg · ${subPer} · total ${tot8('desKg')} Kg`, semChart('desKg', 'Despachado', '#c084fc'))}
+      ${card(`🔥 Fundido por ${uni}`, `Kg que pasaron a Terminación (más lo moldeado para kanban) · total ${tot8('funKg')} Kg`, hayFundidos ? semChart('funKg', 'Fundido', '#34d399') : '<div class="text-dim" style="padding:30px 8px; text-align:center; font-size:0.8rem;">Se empieza a registrar con la próxima actualización diaria de SGA.</div>')}
+      ${hayMoldeado ? card(`🧱 Moldeado por ${uni}`, `Kg ${indState.kgTipo === 'bruto' ? 'brutos' : 'netos'} moldeados (moldeo diario) · total ${tot8('molKg')} Kg`, semChart('molKg', 'Moldeado', '#38bdf8')) : ''}
+      ${card(`❌ Rechazo por ${uni}`, `Kg · total ${tot8('recKg')} Kg`, semChart('recKg', 'Rechazo', '#ef4444'))}
+      ${card(`📥 Ingresado vs despachado por ${bk ? uni : 'mes'}`, `Kg · ${bk ? subPer : 'últimos 6 meses'} · <span style="color:#38bdf8;">■</span> ingresado <span style="color:#c084fc;">■</span> despachado`, ingDes + (hayIngresos ? '<div class="text-dim" style="font-size:0.66rem; padding:2px 2px 6px;">Los meses anteriores a la activación solo incluyen lo que sigue pendiente en SGA, así que quedan incompletos.</div>' : '<div class="text-dim" style="font-size:0.66rem; padding:2px 2px 6px;">Falta correr el SQL 007 para cargar los ingresos.</div>'))}
       ${card('📅 A despachar por mes (según fecha de entrega)', `Todo lo que falta despachar de los pedidos abiertos, agrupado por el mes de entrega · lo atrasado se suma en <b style="color:#ef4444;">${mesesDespFut[0].label}</b> · pedidos ${fmtN(totalDespFutKg)} Kg${EST ? ` · <b style="color:#7dd3fc;">+ ${fmtN(totalEstKg)} Kg estimados</b> (rayado: sale del promedio de ventas de las piezas de kanban, no son pedidos)` : ''}`, despPorMesChart, (window.cirConciliar && typeof puedeDividir === 'function' && (puedeDividir() || (CURRENT_PROFILE && CURRENT_PROFILE.es_admin))) ? `<button class="chip" title="Remitos de SGA que el tablero no tiene como despachados" onclick="cirConciliar()">🧾 Conciliar remitos</button>` : '')}
       ${card('📉 Pareto de rechazos por motivo', `Total del período: ${fmtN(totalP, med === 'kg' ? 1 : 0)} ${med === 'kg' ? 'Kg' : 'u.'} · línea amarilla = % acumulado`, pareto, medBtns)}
       ${card('🏭 Kg en cada etapa, hoy', 'Lo que hay ahora en el circuito', etapasChart)}
