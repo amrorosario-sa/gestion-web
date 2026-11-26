@@ -3977,9 +3977,8 @@ function rechazoCardHtml(r, conBoton) {
 // Solo se puede rechazar lo que ya está fundido (en Terminación). Lo de Mecanizado se rechaza desde cada plan.
 function rzFundidoQty(r) { return window.pfFundidoPedido ? window.pfFundidoPedido(r) : null; }
 function rzEsFundido(r) {
-  const q = rzFundidoQty(r);
-  if (q != null) return q > 0.0001;
-  return r.estado_general === 'Fundido / En Terminación';
+  const q = rzFundidoQty(r);   // solo vale lo que el parte de fusión tiene fundido y en Terminación
+  return q != null && q > 0.0001;
 }
 function rzMatch(fields, q) {
   const toks = q.split(/\s+/).filter(Boolean);
