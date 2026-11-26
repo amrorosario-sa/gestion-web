@@ -4077,6 +4077,7 @@ async function saveRechazo() {
       probeta: rz.traza === 'si' ? (rz.probeta || '').trim() : null, motivo, detalle: (rz.detalle || '').trim() || null,
       area_detecta: 'Terminación', dia: diaLocalStr(), estado: 'pendiente',
     });
+    try { if (window.pfRechazoPedido) await window.pfRechazoPedido(b, cant); } catch (e3) { console.warn('No se pudo cerrar la línea de la colada (¿falta el SQL 049?):', e3); }
     closeStockDialog();
     showToast('Rechazo registrado — pasa a Planificación', 'success');
   } catch (e) {
@@ -9373,7 +9374,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
   const term = l => Number(l.fundido) - Number(l.terminado) - Number(l.consumido);
   const kgU = l => P.kg === 'bruto' ? Number(l.peso_bruto) : Number(l.peso_neto);
   const TIPO = { pedido: ['Pedido de cliente', 'ped'], kanban: ['Kanban', 'kan'], interno: ['Interno AMRO', 'int'] };
-  const DEST = { pedido: '📦 Lista para despacho', pedido_mec: '⚙️ Mecanizado → vuelve al pedido', kanban: '🏬 Estantería kanban', sector_z: '🗄️ Sector Z → Mecanizado' };
+  const DEST = { rechazo: '❌ Rechazada en Terminación', pedido: '📦 Lista para despacho', pedido_mec: '⚙️ Mecanizado → vuelve al pedido', kanban: '🏬 Estantería kanban', sector_z: '🗄️ Sector Z → Mecanizado' };
   const LPROD = { '03': 'Línea grande', '04': 'Línea chica', '05': 'Modelo suelto' };
   const errTxt = e => { const m = (e && e.message) || String(e); return /moldeo_diario|colada_comp|colada_forzada|moldeo_cargas|moldeo_cargar|colada_forzar|moldeo_quitar|origen|md_id/i.test(m) && /schema cache|does not exist|Could not find/i.test(m) ? 'Falta correr el parche 034 en Supabase (moldeo diario y composición de coladas).' : /pf_lineas|pf_movs|pf_reglas|pf_cargas|schema cache|does not exist|Could not find/i.test(m) ? 'Falta correr el parche 023 en Supabase (ver instrucciones).' : m; };
   const rpc = async (fn, args) => { const { data, error } = await supabaseClient.rpc(fn, args); if (error) throw new Error(/Could not find the function|schema cache/i.test(error.message || '') ? (/^(moldeo_|colada_)/.test(fn) ? 'Falta correr el parche 034 en Supabase (función ' + fn + ').' : 'Falta correr el parche 023 en Supabase (función ' + fn + ').') : error.message); return data; };
@@ -9437,6 +9438,10 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     const orden = ls.slice().sort((a, b) => a.id - b.id);
     rz.forEach(x => {
       let q = Number(x.cantidad) || 0, tsR = new Date(x.replanificado_ts).getTime();
+      // 1) líneas que ya se cerraron en la colada como "rechazo": esas unidades ya no existen
+      orden.forEach(o => { const l = cp.get(o.id); if (q <= 0 || !l || l.destino !== 'rechazo' || !(new Date(l.created_at).getTime() <= tsR)) return;
+        const c = Math.min(Number(l.terminado), q); l.terminado = Number(l.terminado) - c; l.fundido = Number(l.fundido) - c; l.cant = Number(l.cant) - c; q -= c; });
+      // 2) lo que quede por descontar sale de lo que estaba en Terminación y después de lo pendiente de fusión
       orden.forEach(o => { const l = cp.get(o.id); if (q <= 0 || !l || !(new Date(l.created_at).getTime() <= tsR)) return;
         const enT = Math.max(0, Number(l.fundido) - Number(l.terminado) - Number(l.consumido)), a = Math.min(enT, q);
         l.fundido = Number(l.fundido) - a; l.cant = Number(l.cant) - a; q -= a;
@@ -9444,7 +9449,8 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     });
     return [...cp.values()].filter(l => Number(l.cant) > 0);
   };
-  const vinc = r => sinRechazadas((P.idx.get((r.codigo || '') + '|' + nOC(r.oc)) || []).filter(l => l.tipo === 'pedido' && cliOk(l, r)), r);
+  const vincRaw = r => (P.idx.get((r.codigo || '') + '|' + nOC(r.oc)) || []).filter(l => l.tipo === 'pedido' && cliOk(l, r));
+  const vinc = r => sinRechazadas(vincRaw(r), r);
   const pedidoDe = l => (typeof DATA === 'undefined' ? [] : DATA).filter(r => r.codigo === l.codigo && nOC(r.oc) === l.oc_norm && cliOk(l, r));
   // etapa mínima que le corresponde a un pedido de SGA según el parte: 4 = Moldeo / Fusión (ya moldeada), 5 = En Terminación (todo fundido)
   window.pfRank = row => {
@@ -9994,6 +10000,14 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     } catch (e) { dlg(`<div class="err">${E(errTxt(e))}</div><div class="row"><button class="btn" onclick="pfDlgClose()">Cerrar</button></div>`); } };
   window.pfDeshacer = async (mid, tipo) => { if (!confirm('¿Deshacer este movimiento?')) return;
     try { await rpc(tipo === 'fusion' ? 'pf_deshacer_fusion' : 'pf_deshacer_terminado', { p_mov: Number(mid) }); dlgClose(); toast('Movimiento deshecho'); try { if (window.cirReload) await window.cirReload(); } catch (e) { /* sin circuito */ } await recargar(); } catch (e) { alert(errTxt(e)); } };
+  // Rechazo de una pieza de PEDIDO: si ya está fundida (en Terminación) en el parte, esa cantidad se cierra en la colada como "rechazo" (SQL 049).
+  window.pfRechazoPedido = async (row, cant) => {
+    if (!P.loaded || P.error || !P.idx) return;
+    let q = Number(cant) || 0;
+    const ls = vincRaw(row).filter(l => term(l) > 0).sort((a, b) => a.id - b.id);
+    for (const l of ls) { if (q <= 0) break; const n = Math.min(q, term(l)); await rpc('pf_rechazar_pedido', { p_linea: l.id, p_cant: n }); q -= n; }
+    if (ls.length) await recargar();
+  };
   window.pfQuitar = async id => { if (!confirm('¿Sacar esta línea del seguimiento? También se resta de lo moldeado.')) return;
     try { await rpc('pf_quitar', { p_linea: Number(id) }); dlgClose(); toast('Línea sacada'); await recargar(); } catch (e) { alert(errTxt(e)); } };
   window.pfRegla = async (cod, campo, val) => { const l = P.L.find(x => x.codigo === cod); if (!l) return;
