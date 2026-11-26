@@ -4169,11 +4169,44 @@ function openReplanDialog(id) {
     <h3>🔁 Marcar como replanificada</h3>
     <div class="text-dim" style="margin-bottom:12px; line-height:1.5;"><span style="color:#fff;">${escHtml(r.descripcion || '')}</span><br>${escHtml(r.cliente || '')} · NV ${escHtml(r.comprobante || '')} · ${fmtN(r.cantidad)} u.${r.probeta ? ' · Probeta ' + escHtml(r.probeta) : ''}<br>Motivo: ${escHtml(r.motivo || '—')}</div>
     <div class="stock-field"><label>Nota (opcional): nueva fecha, orden de fabricación, etc.</label><input type="text" id="replan-nota" autocomplete="off"></div>
-    <div class="text-dim" style="font-size:0.75rem; margin-bottom:10px;">Sale de esta lista y queda en el registro de rechazos.</div>
+    <div class="text-dim" style="font-size:0.75rem; margin-bottom:10px;">Sale de esta lista y queda en el registro de rechazos. Si el pedido figuraba en Terminación, la cantidad rechazada vuelve a Moldeo / Fusión.</div>
     <div class="stock-actions">
       <button class="stock-btn-cancel" onclick="closeStockDialog()">Cancelar</button>
       <button class="stock-btn-primary" id="replan-save-btn" onclick="saveReplan(${r.id})">✅ Replanificada</button>
     </div>`);
+}
+// Al replanificar una pieza de pedido rechazada, la cantidad rechazada vuelve a "Moldeo / Fusión" (hay que fabricarla de nuevo):
+// se deshace el avance manual a Terminación y/o el parcial que se había pasado a mano. Devuelve un texto con lo que hizo
+// (empieza con ⚠ si no pudo volver el estado), o null si no había nada que volver.
+async function volverRechazoAMoldeo(r) {
+  const id = r && r.item_id, base = id ? baseRow(id) : null;
+  if (!base || !dbRef) return null;
+  const st = realStatusFromFlags(base);
+  if (st.cancelado) return null;
+  const enTerm = () => DATA.filter(x => x.id === id && x.area_actual === 'En Terminación').reduce((a, x) => a + (Number(x.pend) || 0), 0);
+  const antes = enTerm();
+  if (antes <= 0) return null;
+  if (st.rank >= 5) return '⚠ SGA ya lo tiene en Terminación: el estado no se puede volver atrás desde el tablero. Cambia cuando SGA lo actualice.';
+  const qty = Math.min(Math.max(1, Math.round(Number(r.cantidad) || 1)), antes);
+  const pend = Number(base.pend) || 0, man = manualRankFor(id), av = avanceEtapasMap[String(id)] || { a_moldeo: 0, a_term: 0 };
+  const parcial = async (k, n) => { if (n > 0) { const { error } = await supabaseClient.rpc('avance_parcial', { p_item: id, p_accion: k, p_cant: n }); if (error) throw error; } };
+  if (man != null && man >= 5) {
+    const resto = Math.max(0, pend - qty);   // lo que sigue en Terminación (no se rechazó)
+    if (st.rank < 2) {   // todavía en Comercial / Adm: no se puede partir el pedido; todo el pedido vuelve a Moldeo / Fusión
+      await dbRef.collection('avance_manual').doc(String(id)).set({ rank: 4, ts: new Date().toISOString() });
+    } else {
+      if (st.rank < 4) await parcial('a_moldeo', pend - Math.min(Math.max(av.a_moldeo, av.a_term), pend));
+      await parcial('a_term', Math.max(0, resto - Math.min(av.a_term, pend)));
+      await dbRef.collection('avance_manual').doc(String(id)).delete();
+    }
+  } else if (av.a_term > 0) {
+    await parcial('v_moldeo', Math.min(av.a_term, qty));
+  }
+  await loadAvanceEtapas();
+  rebuildData(); renderKpis();
+  const vuelven = antes - enTerm();
+  if (vuelven >= qty || vuelven >= antes) return vuelven.toLocaleString() + ' u. vuelven a Moldeo / Fusión';
+  return vuelven > 0 ? '⚠ Solo ' + vuelven.toLocaleString() + ' de ' + qty.toLocaleString() + ' u. volvieron a Moldeo / Fusión; el resto figura en Terminación por SGA o por el Parte de fusión.' : '⚠ El pedido sigue en Terminación porque SGA o el Parte de fusión lo tienen como fundido.';
 }
 async function saveReplan(id) {
   const nota = (document.getElementById('replan-nota').value || '').trim() || null;
@@ -4187,10 +4220,13 @@ async function saveReplan(id) {
     if (error) throw error;
     const r = rechazosList.find(x => String(x.id) === String(id));
     if (r) { r.estado = 'replanificado'; r.replanificado_dia = diaLocalStr(); r.replanificado_nota = nota; }
+    let vuelta = null;
+    try { vuelta = r ? await volverRechazoAMoldeo(r) : null; } catch (e2) { console.warn('No se pudo volver a Moldeo/Fusión:', e2); vuelta = '⚠ No pude volver el estado a Moldeo / Fusión: ' + ((e2 && e2.message) || e2); }
     closeStockDialog();
     actualizarBadgeReplan();
     applyFilters();
-    showToast('Marcada como replanificada', 'success');
+    showToast('Marcada como replanificada' + (vuelta && vuelta.charAt(0) !== '⚠' ? ' · ' + vuelta : ''), 'success');
+    if (vuelta && vuelta.charAt(0) === '⚠') alert(vuelta);
   } catch (e) {
     console.error('No se pudo marcar como replanificada:', e);
     alert('No se pudo guardar. ' + ((e && e.code === '42501') ? 'Tu usuario no tiene permiso para replanificar (hace falta Colaborador o Editor y la sección Replanificar).' : ((e && e.message) || '')));
