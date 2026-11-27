@@ -3549,8 +3549,12 @@ function barChartSvg(o) {
   const innerW = W - padL - padR, innerH = H - padT - padB;
   const n = o.labels.length, ns = o.series.length;
   const estV = i => o.est ? (Number(o.est[i]) || 0) : 0;
-  const maxV = niceMax(Math.max(0, ...o.series.flatMap(s => s.values.map((v, i) => (Number(v) || 0) + estV(i)))));
-  const groupW = innerW / Math.max(1, n), barW = Math.min(30, (groupW * 0.74) / ns);
+  // o.stack: las series se apilan en una sola columna (el total arriba) en vez de ir una al lado de la otra
+  const nsEff = o.stack ? 1 : ns;
+  const maxV = niceMax(Math.max(0, ...(o.stack
+    ? o.labels.map((_, i) => o.series.reduce((a, s) => a + (Number(s.values[i]) || 0), 0) + estV(i))
+    : o.series.flatMap(s => s.values.map((v, i) => (Number(v) || 0) + estV(i))))));
+  const groupW = innerW / Math.max(1, n), barW = Math.min(30, (groupW * 0.74) / nsEff);
   let g = o.est ? `<defs><pattern id="estHatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="5" height="5" fill="#0c4a6e" fill-opacity=".55"/><line x1="0" y1="0" x2="0" y2="5" stroke="#7dd3fc" stroke-width="2"/></pattern></defs>` : '';
   for (let k = 0; k <= 4; k++) {
     const y = padT + innerH - innerH * k / 4;
@@ -3562,16 +3566,19 @@ function barChartSvg(o) {
     const ultimo = !!o.marcarUltimo && i === n - 1;
     const clk = o.det ? ` style="cursor:pointer" onclick="${o.clickFn || 'indDetShow'}('${o.det}',${i})"` : '';
     if (o.det) g += `<rect x="${(cx - groupW / 2).toFixed(1)}" y="${padT}" width="${groupW.toFixed(1)}" height="${innerH}" fill="transparent"${clk}/>`;
+    let acc = 0;
     o.series.forEach((sr, jx) => {
       const v = Number(sr.values[i]) || 0;
       const bh = innerH * v / maxV;
-      const x = cx - (barW * ns) / 2 + barW * jx;
+      const base = o.stack ? innerH * acc / maxV : 0;
+      const x = o.stack ? cx - barW / 2 : cx - (barW * ns) / 2 + barW * jx;
       const color = sr.colors ? sr.colors[i] : sr.color;
       const op = (o.fadeOld && !ultimo) ? 0.55 : 1;
-      g += `<rect x="${x.toFixed(1)}" y="${(padT + innerH - bh).toFixed(1)}" width="${(barW - 1).toFixed(1)}" height="${Math.max(bh, v > 0 ? 1 : 0).toFixed(1)}" fill="${color}" opacity="${op}" rx="2"${clk}><title>${escHtml(lab)} — ${escHtml(sr.name)}: ${fmtN(v, 1)}</title></rect>`;
+      g += `<rect x="${x.toFixed(1)}" y="${(padT + innerH - bh - base).toFixed(1)}" width="${(barW - 1).toFixed(1)}" height="${Math.max(bh, v > 0 ? 1 : 0).toFixed(1)}" fill="${color}" opacity="${op}" rx="2"${clk}><title>${escHtml(lab)} — ${escHtml(sr.name)}: ${fmtN(v, 1)}</title></rect>`;
       const ev = jx === 0 ? estV(i) : 0, eh = innerH * ev / maxV;
-      if (ev > 0) g += `<rect x="${x.toFixed(1)}" y="${(padT + innerH - bh - eh).toFixed(1)}" width="${(barW - 1).toFixed(1)}" height="${Math.max(eh, 1).toFixed(1)}" fill="url(#estHatch)" stroke="#7dd3fc" stroke-width=".8" stroke-dasharray="2 2" rx="2"${clk}><title>${escHtml(lab)} — estimado (no son pedidos): ${fmtN(ev, 1)}</title></rect>`;
-      if ((v + ev) > 0 && (ns === 1 || n <= 7) && groupW >= 14) g += `<text x="${(x + (barW - 1) / 2).toFixed(1)}" y="${(padT + innerH - bh - eh - 3).toFixed(1)}" text-anchor="middle" font-size="8" fill="#e2e8f0">${fmtK(v + ev)}</text>`;
+      if (ev > 0) g += `<rect x="${x.toFixed(1)}" y="${(padT + innerH - bh - base - eh).toFixed(1)}" width="${(barW - 1).toFixed(1)}" height="${Math.max(eh, 1).toFixed(1)}" fill="url(#estHatch)" stroke="#7dd3fc" stroke-width=".8" stroke-dasharray="2 2" rx="2"${clk}><title>${escHtml(lab)} — estimado (no son pedidos): ${fmtN(ev, 1)}</title></rect>`;
+      if ((!o.stack || jx === ns - 1) && (v + ev + acc) > 0 && (ns === 1 || n <= 7 || o.stack) && groupW >= 14) g += `<text x="${(x + (barW - 1) / 2).toFixed(1)}" y="${(padT + innerH - bh - base - eh - 3).toFixed(1)}" text-anchor="middle" font-size="8" fill="#e2e8f0">${fmtK(v + ev + acc)}</text>`;
+      acc += v;
     });
     const txt = (o.labelEvery > 1 && i % o.labelEvery !== 0) ? '' : escHtml(String(lab).length > 13 ? String(lab).slice(0, 12) + '…' : lab);
     const ly = padT + innerH + 12;
@@ -3685,7 +3692,7 @@ function renderIndicadoresPanel() {
   const desChart = () => barChartSvg({ labels: semLabels, series: hayNeg
     ? [{ name: 'Con remito', color: '#c084fc', values: sem.map(w => w.v.desKg - w.v.desNegKg) }, { name: 'En B (negro)', color: '#fbbf24', values: sem.map(w => w.v.desNegKg) }]
     : [{ name: 'Despachado', color: '#c084fc', values: sem.map(w => w.v.desKg) }],
-    fadeOld: !bk, marcarUltimo: !bk, rotate: bkRot, labelEvery: bkEvery, h: bkRot ? 230 : undefined, det: 'desKg' });
+    stack: true, fadeOld: !bk, marcarUltimo: !bk, rotate: bkRot, labelEvery: bkEvery, h: bkRot ? 230 : undefined, det: 'desKg' });
 
   // 4) Mensual: ingresado vs despachado (últimos 6 meses)
   const mesesR = [];
