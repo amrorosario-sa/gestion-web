@@ -2786,6 +2786,7 @@ const SECCIONES_DEF = [
   ['stock', '📦 Stock sin pedido (en desuso: ahora es la tarjeta Kanban)'],
   ['despachado', '🚚 Despachado (historial)'],
   ['armar_hoja', '🧾 Armar Hoja de Pesada'],
+  ['hojas_pesada', '📄 Ver las hojas de pesada ya armadas (historial y volver a bajar el PDF)'],
   ['indicadores', '📊 Indicadores'],
   ['rechazo', '❌ Registrar rechazos'],
   ['replanificar', '🔁 Replanificar rechazos'],
@@ -2820,6 +2821,7 @@ const SECCIONES_GRUPOS = [
   { g: '🔩 Mecanizado', items: ['circuito', 'prog_mecanizado', 'mec_stock', 'kan_mec'] },
   { g: '📦 Kanban y Stock', items: ['kan_aros'] },
   { g: '📥 Cargas', items: ['cargar_remitos', 'conciliar_remitos', 'cargar_moldeo'] },
+  { g: '🧾 Despacho', items: ['hojas_pesada'] },
   { g: '💰 Comercial', items: ['ventas'] },
   { g: '⚙️ Configuración', items: ['articulos'] },
 ];
@@ -2949,6 +2951,145 @@ function applyInspectorVisibility() {
   aplicarAccesoPedidos();
 }
 
+// ---- Hojas de pesada ya armadas: historial + volver a bajar el PDF (sección 'hojas_pesada') ----
+// Los datos de cada hoja quedan en preparados_log (número, cliente, día, pieza, probeta, cantidad, peso real). El PDF no se guarda:
+// se vuelve a armar con esos datos (transporte y condición de pago no se guardan, salen en blanco).
+(function () {
+  const H = { q: '', cli: '', abiertas: new Set() };
+  const esc = s => escHtml(s == null ? '' : String(s));
+  const puede = () => typeof puedeVer === 'function' && puedeVer('hojas_pesada');
+  const nro = n => Number(n) || 0;
+  function hojas() {
+    const by = new Map();
+    (typeof preparadosLogList !== 'undefined' ? preparadosLogList : []).forEach(l => {
+      if (!l.hojaNumero) return;
+      let h = by.get(l.hojaNumero);
+      if (!h) { h = { n: l.hojaNumero, cliente: l.cliente || '', dia: l.dia || '', ts: l.ts || '', rows: [], u: 0, kg: 0 }; by.set(l.hojaNumero, h); }
+      h.rows.push(l); h.u += Number(l.cantidad) || 0; h.kg += Number(l.pesoReal) || 0;
+      if (l.dia && (!h.dia || l.dia > h.dia)) h.dia = l.dia;
+    });
+    return [...by.values()].sort((a, b) => nro(b.n) - nro(a.n));
+  }
+  const textoHoja = h => amroNormQ([h.n, nro(h.n), h.cliente, h.dia, formatDate(h.dia)].concat(h.rows.map(r => [r.descripcion, r.comprobante, r.codigo, r.probeta, r.material, amroAlias(r.codigo)].join(' '))).join(' '));
+  function render() {
+    const el = document.getElementById('hojas-body');
+    if (!el) return;
+    const all = hojas();
+    const clientes = [...new Set(all.map(h => h.cliente))].sort((a, b) => a.localeCompare(b));
+    const toks = amroNormQ(H.q).split(/\s+/).filter(Boolean);
+    const list = all.filter(h => (!H.cli || h.cliente === H.cli) && (!toks.length || (t => toks.every(k => t.includes(k)))(textoHoja(h))));
+    const sel = document.getElementById('hojas-cli');
+    if (sel) sel.innerHTML = '<option value="">Todos los clientes</option>' + clientes.map(c => `<option value="${esc(c)}"${c === H.cli ? ' selected' : ''}>${esc(c)}</option>`).join('');
+    const cnt = document.getElementById('hojas-cnt');
+    if (cnt) cnt.textContent = list.length === all.length ? `${all.length} hoja${all.length === 1 ? '' : 's'}` : `${list.length} de ${all.length} hojas`;
+    if (!all.length) { el.innerHTML = '<div class="text-dim" style="padding:20px 4px;">Todavía no hay hojas de pesada guardadas.</div>'; return; }
+    if (!list.length) { el.innerHTML = '<div class="text-dim" style="padding:20px 4px;">Ninguna hoja coincide con la búsqueda.</div>'; return; }
+    el.innerHTML = list.map(h => {
+      const abierta = H.abiertas.has(h.n);
+      const comps = [...new Set(h.rows.map(r => r.comprobante).filter(Boolean))];
+      const filas = h.rows.slice().sort((a, b) => String(a.ts || '').localeCompare(String(b.ts || '')) || (a.id || 0) - (b.id || 0));
+      const det = abierta ? `<div style="margin-top:10px; overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:0.76rem;">
+        <tr style="color:#94a3b8; text-align:left;"><th style="padding:4px 8px;">Pieza</th><th style="padding:4px 8px;">NV</th><th style="padding:4px 8px;">Probeta</th><th style="padding:4px 8px; text-align:right;">Cant.</th><th style="padding:4px 8px; text-align:right;">Kg real</th></tr>
+        ${filas.map(r => `<tr style="border-top:1px solid #1e293b;"><td style="padding:4px 8px;">${esc(r.descripcion)}<div class="text-dim" style="font-size:0.68rem;">${esc(r.codigo)}${amroAlias(r.codigo) ? ' · ' + esc(amroAlias(r.codigo)) : ''}</div></td><td style="padding:4px 8px; white-space:nowrap;">${esc(r.comprobante)}</td><td style="padding:4px 8px;">${esc(r.probeta && r.probeta !== '-' ? r.probeta : '—')}</td><td style="padding:4px 8px; text-align:right;">${fmtN(r.cantidad)}</td><td style="padding:4px 8px; text-align:right;">${fmtN(r.pesoReal, 1)}</td></tr>`).join('')}
+      </table></div>` : '';
+      return `<div class="stock-card" style="display:block;">
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div class="info" style="flex:1; min-width:220px;">
+            <div class="name">🧾 Hoja Nº ${esc(h.n)} · ${esc(h.cliente)}</div>
+            <div class="sub">${esc(formatDate(h.dia))} · ${h.rows.length} renglón${h.rows.length === 1 ? '' : 'es'} · ${esc(comps.join(', '))}</div>
+          </div>
+          <div class="qty">${fmtN(h.u)} u. <span class="kg">(${fmtN(h.kg, 1)} Kg)</span></div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <button class="desp-btn" onclick="hojasToggle('${esc(h.n)}')">${abierta ? '▲ Ocultar detalle' : '▼ Ver detalle'}</button>
+            <button class="desp-btn" id="hojas-pdf-${esc(h.n)}" onclick="hojasPdf('${esc(h.n)}')">⬇️ Descargar PDF</button>
+          </div>
+        </div>${det}
+      </div>`;
+    }).join('');
+  }
+  window.hojasToggle = n => { if (H.abiertas.has(n)) H.abiertas.delete(n); else H.abiertas.add(n); render(); };
+  window.hojasBuscar = v => { H.q = v; render(); };
+  window.hojasCliente = v => { H.cli = v; render(); };
+  window.hojasClose = () => { const ov = document.getElementById('hojas-ov'); if (ov) ov.style.display = 'none'; };
+  window.hojasOpen = () => {
+    if (!puede()) { alert('Tu usuario no tiene permiso para ver las hojas de pesada.'); return; }
+    let ov = document.getElementById('hojas-ov');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'hojas-ov';
+      ov.style.cssText = 'position:fixed; inset:0; z-index:300; background:rgba(2,6,23,0.8); display:flex; align-items:flex-start; justify-content:center; padding:24px 12px; overflow:auto;';
+      ov.onclick = e => { if (e.target === ov) window.hojasClose(); };
+      document.body.appendChild(ov);
+    }
+    ov.style.display = 'flex';
+    ov.innerHTML = `<div style="background:#0b1220; border:1px solid var(--card-border); border-radius:14px; width:min(980px,100%); padding:16px 18px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+        <h3 style="margin:0;">🧾 Hojas de pesada <span id="hojas-cnt" class="text-dim" style="font-size:0.8rem; font-weight:400;"></span></h3>
+        <button onclick="hojasClose()" style="background:transparent; border:1px solid var(--card-border); color:#cbd5e1; border-radius:8px; padding:3px 10px; cursor:pointer;">✕</button>
+      </div>
+      <div class="text-dim" style="font-size:0.74rem; margin:6px 0 10px; line-height:1.4;">El PDF se vuelve a armar con lo que quedó guardado de cada hoja. El transporte y la condición de pago no se guardan, así que salen en blanco.</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+        <input type="search" id="hojas-q" placeholder="🔎 Buscar por Nº de hoja, cliente, pieza, NV, probeta…" value="${esc(H.q)}" oninput="hojasBuscar(this.value)" autocomplete="off" style="flex:1; min-width:240px; background:#0b1220; border:1px solid var(--card-border); color:#fff; border-radius:8px; padding:8px 11px; font-size:0.85rem;">
+        <select id="hojas-cli" onchange="hojasCliente(this.value)" style="background:#0b1220; border:1px solid var(--card-border); color:#fff; border-radius:8px; padding:8px 11px; font-size:0.85rem; max-width:260px;"></select>
+      </div>
+      <div id="hojas-body"></div>
+    </div>`;
+    render();
+  };
+  window.hojasPdf = async n => {
+    const h = hojas().find(x => x.n === n);
+    if (!h) return;
+    const btn = document.getElementById('hojas-pdf-' + n);
+    const lbl = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Generando...'; }
+    try {
+      // precios (si el usuario tiene acceso, la base los entrega; si no, la hoja sale como siempre sin precios)
+      const precios = new Map(); let preciosOk = false;
+      try {
+        const ids = [...new Set(h.rows.map(r => r.itemId).filter(Boolean))];
+        if (ids.length) {
+          const { data, error } = await supabaseClient.from('items_precios').select('item_id,importe_final,moneda,vta').in('item_id', ids);
+          if (!error && data && data.length) { data.forEach(p => precios.set(p.item_id, p)); preciosOk = true; }
+        }
+      } catch (e) { /* sin precios */ }
+      const filas = h.rows.slice().sort((a, b) => String(a.ts || '').localeCompare(String(b.ts || '')) || (a.id || 0) - (b.id || 0));
+      const items = filas.map(l => {
+        const b = typeof baseRow === 'function' ? baseRow(l.itemId) : null;
+        const kxu = b ? Number(b.kxu) || 0 : 0, cant = Number(l.cantidad) || 0, peso = Number(l.pesoReal) || 0;
+        const probetaTxt = l.probeta && l.probeta !== '-' ? ` (Probeta ${l.probeta})` : '';
+        const it = { precio: precios.get(l.itemId) || null };
+        const prH = preciosOk ? precioHoja(it) : null;
+        const impH = prH ? hojaImporteRg(it, { pesoReal: String(peso), cantidad: cant }) : null;
+        const nota = kxu > 0
+          ? `Pieza id ${l.itemId}${probetaTxt} - Kg/u teórico de SGA: ${kxu.toLocaleString(undefined, { maximumFractionDigits: 2 })} Kg/u × ${cant.toLocaleString()} = ${fmt1(Math.round(kxu * cant * 10) / 10)} Kg. Despacho pesó ${fmt1(peso)} Kg reales.`
+          : `Pieza id ${l.itemId}${probetaTxt} - Peso real pesado: ${fmt1(peso)} Kg.`;
+        return {
+          cant: cant.toLocaleString(), descripcion: l.descripcion, trazabilidad: '', material: l.material, oc: b ? b.oc : '-',
+          precio: prH ? fmtPlata(prH.importe_final) : '', peso: fmt1(peso),
+          importe: prH ? (impH != null ? fmtPlata(impH) : '') : '(a compl.)',
+          lista: prH ? `x ${esPorKg(prH) ? 'Kg.' : 'Un.'} ${monedaSym(prH.moneda)}` : 'x Kg. USD',
+          remito: '', probeta: l.probeta || '-', nota, pesoNum: peso,
+        };
+      });
+      const [y, m, d] = String(h.dia || '').split('-');
+      const fechaStr = y ? `${d}/${m}/${y}` : '';
+      const fechaFile = y ? `${d}-${m}-${y.slice(-2)}` : 'sin-fecha';
+      const logoPixels = await MiniPdf.loadAmroLogoPixels();
+      const blob = MiniPdf.buildHojaPesadaPdfBlob({
+        numero: h.n, fechaStr, cliente: h.cliente, transporte: '', condPago: '', items,
+        pesoTotal: fmt1(items.reduce((s, x) => s + x.pesoNum, 0)),
+        comprobantes: [...new Set(filas.map(l => l.comprobante).filter(Boolean))], logoPixels, totales: [],
+      });
+      await saveGeneratedFile(`HojaPesada_${sanitizeFilenamePart(h.cliente)}_${fechaFile}_${h.n}.pdf`, blob);
+    } catch (e) {
+      console.error('No se pudo volver a armar la hoja de pesada:', e);
+      alert('No se pudo generar el PDF. Probá de nuevo.');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = lbl || '⬇️ Descargar PDF'; }
+    }
+  };
+})();
+
 // ---- Menú lateral (Version 93): grupos que se despliegan, anclable; cada lugar es un permiso propio ----
 const SIDE_GROUPS = [
   { id: 'mec', ic: '🔩', nombre: 'Mecanizado', items: [
@@ -2981,6 +3122,9 @@ const SIDE_GROUPS = [
     { id: 'c_rem', ic: '🧾', t: 'Cargar remitos (Excel)', sec: 'cargar_remitos', run: () => window.cirCargarRemitos && window.cirCargarRemitos(), noMark: true },
     { id: 'c_mold', ic: '🧱', t: 'Cargar moldeo y composición de coladas', sec: 'cargar_moldeo', run: () => window.pfCargarOpen && window.pfCargarOpen() },
     { id: 'c_conc', ic: '⚖️', t: 'Conciliar remitos', sec: 'conciliar_remitos', run: () => window.cirConciliar && window.cirConciliar(), noMark: true },
+  ] },
+  { id: 'desp', ic: '🧾', nombre: 'Despacho', items: [
+    { id: 'hojas', ic: '📄', t: 'Hojas de pesada', sec: 'hojas_pesada', run: () => window.hojasOpen && window.hojasOpen(), noMark: true },
   ] },
   { id: 'com', ic: '💰', nombre: 'Comercial', items: [
     { id: 'ventas', ic: '💰', t: 'Ventas', sec: 'ventas', run: () => window.venOpen && window.venOpen() },
