@@ -6786,6 +6786,9 @@ function showToast(message, kind) {
     let termHojaSel = new Set();   // ids de ítem tildados
     function termHojaDisp(b) {
       if (!b) return 0;
+      // Si Terminación ya guardó algo como Preparado (ej. 15 de 30), la hoja trae SOLO eso: lo que falta se guarda primero desde Terminación.
+      // Solo si todavía no se guardó nada se puede pesar directo todo lo que está en Terminación.
+      if (prepCantClamped(b) > 0.0001) return prepSinHojaDisponible(b);
       return Math.max(0, prepSinHojaDisponible(b) + Math.max(0, (Number(b.pend) || 0) - prepCantClamped(b)));
     }
     function puedeArmarHojaDesdeTerm(r) {
