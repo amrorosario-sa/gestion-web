@@ -1955,6 +1955,15 @@ async function runMecSearch() {
   if (res.error) { el.innerHTML = '<div style="color:#f87171; font-size:0.8rem;">No se pudo buscar: ' + escHtml(res.error.message || String(res.error)) + '</div>'; return; }
   MEC_RESULTS = res.data || [];
   MEC_TOTAL = (typeof res.count === 'number') ? res.count : MEC_RESULTS.length;
+  // también por la abreviatura del aro / macho / hembra (la descripción de SGA no la trae)
+  try {
+    const qa = ((document.getElementById('mec-q') || {}).value || '').trim();
+    const cods = (window.cirAliasCodigos ? window.cirAliasCodigos(qa) : []).filter(c => !MEC_RESULTS.some(r => r.codigo === c));
+    if (cods.length) {
+      const { data: ex } = await supabaseClient.from('catalogo_articulos').select(MEC_SINCOL ? 'codigo,descripcion,material' : (MEC_SINKG ? 'codigo,descripcion,material,lleva_mecanizado' : 'codigo,descripcion,material,lleva_mecanizado,kg_unitario')).in('codigo', cods);
+      if (my === mecSeq && ex) MEC_RESULTS = ex.concat(MEC_RESULTS);
+    }
+  } catch (e) { /* sigue sin la abreviatura */ }
   MEC_RESULTS.forEach(r => { if (r.lleva_mecanizado) CATALOGO_MEC.add(r.codigo); else CATALOGO_MEC.delete(r.codigo); });
   renderMecResults();
 }
@@ -3610,7 +3619,7 @@ function indDetFiltrar() {
 function indDetShow(key, i) {
   const d = (window.IND_DET[key] || [])[i];
   if (!d) return;
-  d.secs.forEach(s => { s._txt = s.rows.map(r => indDetNorm(r.join(' ').replace(/<[^>]*>/g, ' '))); });
+  d.secs.forEach(s => { s._txt = s.rows.map(r => { const tx = r.join(' ').replace(/<[^>]*>/g, ' '); return indDetNorm(tx + ' ' + amroAliasEnTexto(tx)); }); });
   _indDetCur = d;
   let ov = document.getElementById('ind-det-overlay');
   if (!ov) {
@@ -3992,9 +4001,9 @@ function rzBuscar(q) {
   if (!box) return;
   const t = q.trim().toLowerCase();
   if (t.length < 2) { box.innerHTML = '<div class="text-dim" style="padding:6px 2px; font-size:0.75rem;">Escribí cliente, NV, código o descripción (mínimo 2 letras, se puede escribir más de una palabra suelta). Solo aparecen piezas ya fundidas (en Terminación). Un rechazo de Mecanizado se registra desde cada plan.</div>'; return; }
-  const res = BASE.filter(r => r.estado_general !== 'Cancelado' && rzEsFundido(r) && rzMatch([r.cliente, r.comprobante, r.codigo, r.descripcion, r.oc], t)).slice(0, 20);
-  const resPf = rzKanbanLineas.filter(l => rzMatch([l.codigo, l.descripcion, l.cliente, l.oc, l.colada], t)).slice(0, 10);
-  const resSuelto = rzKanbanSueltos.filter(x => rzMatch([x.codigo, x.descripcion, x.material], t)).slice(0, 10);
+  const res = BASE.filter(r => r.estado_general !== 'Cancelado' && rzEsFundido(r) && rzMatch([r.cliente, r.comprobante, r.codigo, r.descripcion, r.oc, amroAlias(r.codigo)], t)).slice(0, 20);
+  const resPf = rzKanbanLineas.filter(l => rzMatch([l.codigo, l.descripcion, l.cliente, l.oc, l.colada, amroAlias(l.codigo)], t)).slice(0, 10);
+  const resSuelto = rzKanbanSueltos.filter(x => rzMatch([x.codigo, x.descripcion, x.material, amroAlias(x.codigo)], t)).slice(0, 10);
   const htmlBase = res.map(r => `
     <button type="button" onclick="rzElegir(${r.id})" style="display:block; width:100%; text-align:left; background:${rz.sel === r.id ? '#1e3a5f' : '#0f172a'}; border:1px solid var(--card-border); color:#e2e8f0; border-radius:8px; padding:7px 9px; margin-bottom:5px; font-size:0.78rem; cursor:pointer;">
       <b>${escHtml(r.descripcion)}</b><br><span class="text-dim">${escHtml(r.cliente)} · NV ${escHtml(r.comprobante)} · Cód ${escHtml(r.codigo)} · pend. ${fmtN(r.pend)}${rzFundidoQty(r) != null ? ' · fundido en Terminación: ' + fmtN(rzFundidoQty(r)) : ''}</span>
@@ -4743,6 +4752,20 @@ async function toggleMotivo(id, activar) {
 
 // ---- Stock sin pedido: cálculo y diálogos ----
 const CODIGO_GENERICO = 'R99999999';
+// Abreviaturas formales de aros / machos / hembras (Excel de alias de Mecanizado, por código): las usan TODOS los buscadores.
+function amroAlias(c) { try { return (window.cirAlias && window.cirAlias(c)) || ''; } catch (e) { return ''; } }
+function amroNormQ(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
+// ¿lo escrito coincide con la abreviatura de este código? ("dh 90" encuentra DH 90 y DH 90 NOD…; "dh" encuentra todos los DH)
+function amroAliasHit(c, q) { const a = amroAlias(c); const qn = amroNormQ(q).trim(); return !!(a && qn && amroNormQ(a).includes(qn)); }
+// Búsqueda por palabras sueltas (todas deben estar) sobre el texto + abreviatura + código. Los códigos que vienen dentro del nombre
+// ("TTR2418-4", "17355", "PL. 104") se encuentran porque son parte del texto.
+function amroBusca(q, codigo, texto) {
+  const toks = amroNormQ(q).split(/\s+/).filter(Boolean);
+  if (!toks.length) return true;
+  const hay = amroNormQ(String(texto || '') + ' ' + amroAlias(codigo) + ' ' + (codigo || ''));
+  return toks.every(t => hay.includes(t)) || amroAliasHit(codigo, q);
+}
+function amroAliasEnTexto(t) { return String(t || '').split(/\s+/).map(x => amroAlias(x)).filter(Boolean).join(' '); }
 function normTxt(s) { return String(s || '').trim().toLowerCase(); }
 function stockKey(codigo, descripcion) {
   return (codigo === CODIGO_GENERICO) ? (codigo + '|' + normTxt(descripcion)) : codigo;
@@ -5312,7 +5335,8 @@ function applyFilters() {
                       (d.comprobante || '').toLowerCase().includes(despSearch) ||
                       (d.oc || '').toLowerCase().includes(despSearch) ||
                       (d.codigo || '').toLowerCase().includes(despSearch) ||
-                      (d.descripcion || '').toLowerCase().includes(despSearch);
+                      (d.descripcion || '').toLowerCase().includes(despSearch) ||
+                      amroBusca(despSearch, d.codigo, [d.cliente, d.comprobante, d.oc, d.descripcion].join(' '));
         if (!match) return false;
       }
       return true;
@@ -5383,7 +5407,8 @@ function applyFilters() {
                     row.oc.toLowerCase().includes(search) ||
                     row.codigo.toLowerCase().includes(search) ||
                     row.descripcion.toLowerCase().includes(search) ||
-                    (row.notas && row.notas.toLowerCase().includes(search));
+                    (row.notas && row.notas.toLowerCase().includes(search)) ||
+                    amroBusca(search, row.codigo, [row.cliente, row.comprobante, row.oc, row.descripcion, row.notas].join(' '));
       if (!match) return false;
     }
     if (client && row.cliente !== client) return false;
@@ -7105,6 +7130,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
   // Nombres abreviados (los que cargó Martin en el Excel): por código. Se usan en TODAS las pantallas; el nombre completo queda en el tooltip y en las búsquedas.
   const ALIAS = { 'R0002': "SH 90", 'R0003': "SH 70", 'R0004': "DH 90", 'R0007': "DH 90 C/T NOD", 'R0023': "DH 70", 'R0042': "DH 80", 'R0045': "LIV 90 C/T", 'R0047': "LIV 70", 'R0051': "DH 70 NOD C/T", 'R0052': "LIV 70 C/T", 'R0053': "DH 90 NOD S/T", 'R0054': "LIV 90 S/T", 'R0056': "DH 80 NOD", 'R0059': "DH 1100 (RANDON)", 'R0060': "SH 90 MIXTO", 'R0061': "DH 100", '000000970015': "MSH", '000000970034': "MDH", '000000970076': "M LIV 70/90 S/T", '000000970165': "MSH P/MIXTO", '000000970176': "M LIV 70 C/T", '030000970169': "M LIV 90 C/T", '030000970203': "MDH 90 NOD", '030000970205': "MDH 90 NOD C/T", '050000970178': "M 1100", '000000970013': "HSH 90", '000000970014': "HSH 70", '000000970035': "HDH 90", '000000970042': "HDH 70", '000000970075': "H LIV 90", '000000970077': "HDH 80", '020000970175': "H LIV 70", '030000970202': "HDH 90 NOD", '050000970173': "HDH 100", '050000970187': "H 1100" };
   window.cirAlias = c => ALIAS[c] || '';
+  window.cirAliasCodigos = q => { const qn = String(q || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim(); return qn ? Object.keys(ALIAS).filter(c => String(ALIAS[c]).toLowerCase().includes(qn)) : []; };
   const nombreFull = c => { if (NAMES[c]) return NAMES[c]; const it = (typeof catalogoByCodigo !== 'undefined' && catalogoByCodigo && catalogoByCodigo.get(c)); if (it) return it[1]; const d = (typeof DATA !== 'undefined') && DATA.find(r => r.codigo === c); return d ? d.descripcion : c; };
   const nombre = c => ALIAS[c] || nombreFull(c);
   const recNom = r => (r && (ALIAS[r.salida] || r.nombre)) || '?';
@@ -8062,7 +8088,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     });
     CONC.rows = rows; CONC.sel = new Set([...CONC.sel].filter(r => rows.some(x => x.ref === r)));
   }
-  const concVisibles = () => { const toks = concNorm(CONC.q).split(' ').filter(Boolean); return CONC.rows.filter(x => !toks.length || toks.every(t => concNorm([x.l.cliente, x.l.comprobante, x.l.codigo, x.l.descripcion].join(' ')).includes(t))); };
+  const concVisibles = () => { const toks = concNorm(CONC.q).split(' ').filter(Boolean); return CONC.rows.filter(x => !toks.length || toks.every(t => concNorm([x.l.cliente, x.l.comprobante, x.l.codigo, x.l.descripcion, window.cirAlias ? window.cirAlias(x.l.codigo) : ''].join(' ')).includes(t))); };
   function concDraw() {
     let ov = document.getElementById('cir-conc-ov');
     if (!ov) { ov = document.createElement('div'); ov.id = 'cir-conc-ov'; ov.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,.65); z-index:1600; display:flex; align-items:center; justify-content:center; padding:12px;'; ov.onclick = e => { if (e.target === ov) cirConcClose(); }; document.body.appendChild(ov); }
@@ -8075,7 +8101,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
       : !vis.length ? `<tr><td colspan="9" style="padding:16px; color:#94a3b8;">${CONC.rows.length ? 'Ninguna línea coincide con la búsqueda.' : '✔ No hay remitos sin registrar en este período: todo lo que salió figura en los despachos del tablero.'}</td></tr>`
       : vis.map(x => `<tr><td style="${td}"><input type="checkbox" ${CONC.sel.has(x.ref) ? 'checked' : ''} onchange="cirConcSel('${esc(x.ref)}',this.checked)"></td><td style="${td}">${kvFecha(x.l.fecha)}</td><td style="${td}">${esc(x.l.comprobante)}</td><td style="${td}">${x.l.oc ? esc(x.l.oc) : '<span style="color:#64748b;">sin OC</span>'}</td><td style="${td}">${esc(x.l.cliente || '')}</td><td style="${td}">${esc(x.l.codigo)}</td><td style="${td}">${esc(x.l.descripcion || '')}${x.cand.map(d => `<div style="font-size:.7rem; color:#fbbf24; margin-top:3px;">${d.baja ? `⚠ Posible entrega parcial hecha en SGA: NV ${esc(d.comprobante)} · bajó el pendiente (${fmtN(d.pend)} u. sin registrar) · detectado el ${kvFecha(d.desaparecio_dia)}` : `⚠ Posible desaparecido de SGA: NV ${esc(d.comprobante)} · pendiente ${fmtN(d.pend)} · desapareció el ${kvFecha(d.desaparecio_dia)}`} ${(typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE && CURRENT_PROFILE.es_admin) ? `<button onclick="cirConcEsEste('${esc(x.ref)}',${d.id},${d.baja ? 'true' : 'false'})" style="padding:2px 8px; font-size:.7rem;">${d.baja ? 'Es esta' : 'Es este'}</button>` : ''}</div>`).join('')}</td><td style="${td} text-align:right;">${fmtN(x.falta, x.falta % 1 ? 1 : 0)}${x.falta < Number(x.l.cantidad) ? `<div class="code">de ${fmtN(x.l.cantidad)}</div>` : ''}</td><td style="${td} text-align:right;">${fmtN(x.kg, 1)}</td></tr>`).join('');
     const toks = concNorm(CONC.q).split(' ').filter(Boolean);
-    const est = CONC.estado.filter(x => !toks.length || toks.every(t => concNorm([x.l.cliente, x.l.comprobante, x.l.codigo, x.l.descripcion].join(' ')).includes(t)));
+    const est = CONC.estado.filter(x => !toks.length || toks.every(t => concNorm([x.l.cliente, x.l.comprobante, x.l.codigo, x.l.descripcion, window.cirAlias ? window.cirAlias(x.l.codigo) : ''].join(' ')).includes(t)));
     const estTabla = `<div style="margin:16px 0 6px; font-weight:700; color:#fff; font-size:.82rem;">Líneas de remito que NO figuran arriba (${est.length}) y por qué</div><table style="width:100%; border-collapse:collapse;"><thead><tr><th style="${th}">Fecha</th><th style="${th}">Remito</th><th style="${th}">Cliente</th><th style="${th}">Código</th><th style="${th}">Descripción</th><th style="${th} text-align:right;">Cant.</th><th style="${th}">Estado</th></tr></thead><tbody>${est.length ? est.map(x => `<tr><td style="${td}">${kvFecha(x.l.fecha)}</td><td style="${td}">${esc(x.l.comprobante)}</td><td style="${td}">${esc(x.l.cliente || '')}</td><td style="${td}">${esc(x.l.codigo)}</td><td style="${td}">${esc(x.l.descripcion || '')}</td><td style="${td} text-align:right;">${fmtN(x.l.cantidad, x.l.cantidad % 1 ? 1 : 0)}</td><td style="${td} color:#94a3b8;">${x.txt}${x.forz && (typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE && (CURRENT_PROFILE.es_admin || ['colaborador', 'editor'].includes(CURRENT_PROFILE.rol))) ? ` <button onclick="cirConcForzar('${esc(x.ref)}')" style="padding:2px 8px; font-size:.7rem;" title="Si esa salida NO era la de este remito, registrarlo igual">No es ese despacho: registrar igual</button>` : ''}</td></tr>`).join('') : `<tr><td colspan="7" style="padding:12px; color:#94a3b8;">Ninguna.</td></tr>`}</tbody></table>`;
     const chip = n => `<button class="chip ${CONC.dias === n ? 'active' : ''}" onclick="cirConcDias(${n})">${n} días</button>`;
     const conKan = CONC.rows.filter(x => CONC.sel.has(x.ref) && ['kanban', 'sector_z'].some(u => kOf(u, x.l.codigo) != null)), uKan = conKan.reduce((a, x) => a + x.falta, 0);
@@ -9796,7 +9822,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
   window.pfBusquedaBox = search => {
     const q = nn(search || ''); let box = document.getElementById('pf-sbox');
     if (!P.loaded) { if (!P.loading && typeof supabaseClient !== 'undefined' && q.length >= 3) load().then(() => { if (!P.error) window.pfBusquedaBox(search); }); return; }
-    const ls = (P.error || q.length < 3) ? [] : P.L.filter(l => !(l.tipo === 'pedido' && pedidoDe(l).length) && !(l.tipo === 'pedido' && l.destino === 'pedido' && pend(l) <= 0 && term(l) <= 0) && nn([l.colada, l.codigo, l.oc, l.cliente, l.descripcion, l.probeta].join(' ')).includes(q));
+    const ls = (P.error || q.length < 3) ? [] : P.L.filter(l => !(l.tipo === 'pedido' && pedidoDe(l).length) && !(l.tipo === 'pedido' && l.destino === 'pedido' && pend(l) <= 0 && term(l) <= 0) && nn([l.colada, l.codigo, l.oc, l.cliente, l.descripcion, l.probeta, window.amroAlias ? window.amroAlias(l.codigo) : ''].join(' ')).includes(q));
     if (!ls.length) { if (box) box.style.display = 'none'; return; }
     if (!box) { const ri = document.querySelector('.result-info'); if (!ri) return; box = document.createElement('div'); box.id = 'pf-sbox'; box.style.cssText = 'border:1px solid #f97316;background:rgba(249,115,22,.08);border-radius:10px;padding:10px 12px;margin:0 0 10px;font-size:.82rem'; ri.parentNode.insertBefore(box, ri); }
     const g = new Map(); ls.forEach(l => { const k = l.codigo + '|' + l.oc_norm + '|' + nn(l.cliente); if (!g.has(k)) g.set(k, []); g.get(k).push(l); });
@@ -9969,7 +9995,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
       <div class="kpi"><b>${nf(salioKg, 0)} kg ${kgW}</b><span>ya salieron a su destino · ${nf(salioCant, 0)} piezas</span></div></div>`;
     const F = { todas: l => true, pend: l => pend(l) > 0, atr: l => pend(l) > 0 && l.fecha_parte && dif(hoy(), l.fecha_parte) > 2, term: l => term(l) > 0, out: l => Number(l.terminado) > 0, nofig: l => l.no_figura && pend(l) > 0 };
     const q = nn(P.q);
-    const base = ls.filter(l => !q || nn([l.colada, l.codigo, l.oc, l.cliente, l.descripcion, l.probeta].join(' ')).includes(q));
+    const base = ls.filter(l => !q || nn([l.colada, l.codigo, l.oc, l.cliente, l.descripcion, l.probeta, window.amroAlias ? window.amroAlias(l.codigo) : ''].join(' ')).includes(q));
     const fb = (k, t) => `<button class="f ${P.filtro === k ? 'on' : ''}" onclick="pfFiltro('${k}')">${t} (${base.filter(F[k]).length})</button>`;
     const rows = base.filter(F[P.filtro]).sort((a, b) => (pend(b) > 0) - (pend(a) > 0) || String(a.fecha_parte || '').localeCompare(String(b.fecha_parte || '')) || Number(a.colada) - Number(b.colada)).slice(0, 400).map(l => {
       const p = pend(l), t = term(l), d = l.fecha_parte ? dif(hoy(), l.fecha_parte) : 0, est = estadoTxt(l).filter(x => !x.startsWith('⏳') && !x.startsWith('🧱'));
@@ -10077,7 +10103,7 @@ const UBIC = { terminacion: 'Terminación', sector_z: 'Sector Z Terminación - e
     const buscador = (P.msg ? `<div class="panel" style="border-color:var(--ok)">${P.msg}</div>` : '') + `<div class="panel"><div class="row" style="justify-content:space-between"><div>${P.solo ? '' : '<h2>🧱 Moldeo por día</h2>'}<p class="sub">¿Qué se moldeó cada día? Cada cantidad queda en el día real en que se moldeó. Elegí el día, o buscá una pieza para ver si se moldeó y cuándo.</p></div><div class="row">${kgBtns()}<button class="btn" onclick="pfExportar()">⬇ Descargar Excel</button></div></div>
       <div class="row"><input type="text" id="pf-q2" placeholder="🔍 Buscar una pieza en todos los días (artículo, colada, cliente, probeta, nombre)…" value="${E(P.q2)}" oninput="pfBusca2(this.value)" style="flex:1;min-width:260px"></div></div>`;
     if (q) {
-      const rs = ents.filter(e => nn([e.colada, e.codigo, e.cliente, e.descripcion, e.probeta].join(' ')).includes(q)).sort((a, b) => b.dia.localeCompare(a.dia) || Number(a.colada) - Number(b.colada));
+      const rs = ents.filter(e => nn([e.colada, e.codigo, e.cliente, e.descripcion, e.probeta, window.amroAlias ? window.amroAlias(e.codigo) : ''].join(' ')).includes(q)).sort((a, b) => b.dia.localeCompare(a.dia) || Number(a.colada) - Number(b.colada));
       return buscador + `<div class="panel"><h2>${rs.length ? rs.length + ' línea' + (rs.length === 1 ? '' : 's') + ' de moldeo' : 'No figura en ningún moldeo cargado'}</h2><p class="sub">${rs.length ? 'La columna "Moldeada el" dice el día en que se moldeó.' : 'Esa pieza no se moldeó (o todavía no se cargó el archivo de moldeo de ese día).'}</p>
         ${rs.length ? `<div class="tblwrap"><table style="min-width:700px"><tr><th>Colada</th><th>Pieza</th><th>Moldeada el</th><th class="num">Cant.</th><th>Estado</th>${ac ? '<th></th>' : ''}</tr>${rs.slice(0, 200).map(e => filaE(e, true)).join('')}</table></div>` : ''}</div>`;
     }
